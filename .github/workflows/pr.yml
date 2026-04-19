@@ -33,9 +33,7 @@ jobs:
           cache: true
 
       - name: Run unit tests
-        run: |
-          PKGS=$(go list ./... | grep -v '/kernel/')
-          go test $PKGS -race -coverprofile=coverage.out -covermode=atomic
+        run: go test ./cmd/... ./internal/... ./pkg/... -race -coverprofile=coverage.out -covermode=atomic
 
       - name: Coverage report
         run: go tool cover -func=coverage.out

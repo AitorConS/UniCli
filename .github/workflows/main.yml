@@ -33,9 +33,7 @@ jobs:
           cache: true
 
       - name: Run unit tests
-        run: |
-          PKGS=$(go list ./... | grep -v '/kernel/')
-          go test $PKGS -race -coverprofile=coverage.out -covermode=atomic
+        run: go test ./cmd/... ./internal/... ./pkg/... -race -coverprofile=coverage.out -covermode=atomic
 
   kernel-build:
     name: Kernel Build
@@ -151,8 +149,7 @@ jobs:
 
       - name: Generate coverage
         run: |
-          PKGS=$(go list ./... | grep -v '/kernel/')
-          go test $PKGS -coverprofile=coverage.out -covermode=atomic
+          go test ./cmd/... ./internal/... ./pkg/... -coverprofile=coverage.out -covermode=atomic
 
       - name: HTML report
         run: go tool cover -html=coverage.out -o coverage.html

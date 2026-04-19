@@ -57,9 +57,6 @@ func buildImage(t *testing.T, binaryPath string) string {
 
 func runQEMU(t *testing.T, imagePath string, timeout time.Duration) string {
 	t.Helper()
-	ctx, cancel := t.Deadline()
-	_ = ctx
-	defer cancel()
 
 	var out bytes.Buffer
 	cmd := exec.Command("qemu-system-x86_64",
