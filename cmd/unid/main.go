@@ -18,8 +18,8 @@ func main() {
 
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "unid",
-		Short: "Unikernel engine daemon",
+		Use:     "unid",
+		Short:   "Unikernel engine daemon",
 		Version: version,
 	}
 	return root

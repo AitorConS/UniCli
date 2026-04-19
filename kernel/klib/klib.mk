@@ -3,14 +3,8 @@ KLIB_DIR= $(ROOTDIR)/klib
 MBEDTLS_DIR=	$(VENDORDIR)/mbedtls
 
 KLIBS= \
-	azure \
-	cloud_init \
-	cloudwatch \
-	digitalocean \
 	firewall \
-	gcp \
 	ntp \
-	radar \
 	sandbox \
 	shmem \
 	special_files \
@@ -19,37 +13,12 @@ KLIBS= \
 	tmpfs \
 	tls \
 	tun \
-	userdata \
-
-SRCS-azure= \
-	$(KLIB_DIR)/azure.c \
-	$(KLIB_DIR)/azure_diagnostics.c \
-
-SRCS-cloud_init= \
-	$(KLIB_DIR)/cloud_azure.c \
-	$(KLIB_DIR)/cloud_init.c \
-	$(KLIB_DIR)/net_utils.c \
-	$(KLIB_DIR)/xml.c \
-
-SRCS-cloudwatch= \
-	$(KLIB_DIR)/aws.c \
-	$(KLIB_DIR)/cloudwatch.c \
-
-SRCS-digitalocean= \
-	$(KLIB_DIR)/crc32.c \
-	$(KLIB_DIR)/digitalocean.c \
 
 SRCS-firewall= \
 	$(KLIB_DIR)/firewall.c \
 
-SRCS-gcp= \
-	$(KLIB_DIR)/gcp.c \
-
 SRCS-ntp= \
 	$(KLIB_DIR)/ntp.c \
-
-SRCS-radar= \
-	$(KLIB_DIR)/radar.c \
 
 SRCS-sandbox= \
 	$(KLIB_DIR)/pledge.c \
@@ -80,10 +49,6 @@ SRCS-tmpfs= \
 
 SRCS-tun= \
 	$(KLIB_DIR)/tun.c \
-
-SRCS-userdata= \
-	$(KLIB_DIR)/userdata.c \
-	$(KLIB_DIR)/net_utils.c \
 
 SRCS-mbedtls= $(SRCS-mbedtls-crypto) $(SRCS-mbedtls-x509) $(SRCS-mbedtls-tls)
 
