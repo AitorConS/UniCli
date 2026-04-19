@@ -114,7 +114,7 @@ ifneq ($(NANOS_TARGET_ROOT),)
 TARGET_ROOT_OPT=	-r $(NANOS_TARGET_ROOT)
 endif
 
-$(OBJDIR)/gitversion.c: $(ROOTDIR)/.git/index $(ROOTDIR)/.git/HEAD
+$(OBJDIR)/gitversion.c: $(ROOTDIR)/../.git/index $(ROOTDIR)/../.git/HEAD
 	$(call cmd,version)
 
 $(VDSOGEN):
