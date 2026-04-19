@@ -1,0 +1,90 @@
+OUTPUT_FORMAT("elf64-x86-64")
+
+ENTRY(_start)
+
+INCLUDE klib-syms.lds
+
+PHDRS
+{
+    text PT_LOAD FLAGS(5);          /* R E */
+    rodata PT_LOAD FLAGS(4);        /* R */
+    data PT_LOAD FLAGS(6);          /* RW */
+    note PT_NOTE FLAGS(4);          /* R */
+}
+
+/* Note these are ordered such that sections are grouped together by write
+ * permission, delimited by the READONLY_END symbol */
+SECTIONS
+{
+    . = 0x200000;   /* KERNEL_BASE_PHYS */
+    START = .;
+
+    text_start = .;
+    .text :
+    {
+        *(.start)
+        *(.text)
+        *(.text.*)
+        . = ALIGN(4096);
+        vsyscall_start = .;
+        *(.vsyscall)        /* must be at end of section; we use text_end to determine its extent */
+        vsyscall_end = .;
+        . = ALIGN(4096);    /* pad out the page so that rodata will be aligned */
+    } :text
+    text_end = .;
+
+    .rodata :
+    {
+        *(.rodata)
+        *(.rodata.*)
+        *(.dynamic)
+        _DYNSYM = .;
+    } :rodata
+
+    . = ALIGN(4096);
+    READONLY_END = .;
+
+    .data :
+    {
+        ro_after_init_start = .;
+        *(.ro_after_init)
+        . = ALIGN(4096);
+        ro_after_init_end = .;
+        *(.data)
+        *(.data.*)
+    } :data
+
+    PROVIDE(bss_start = .);
+    .bss  ALIGN(4096):
+    {
+        bss_ro_after_init_start = .;
+        *(.bss.ro_after_init)
+        . = ALIGN(4096);
+        bss_ro_after_init_end = .;
+        *(.bss)
+        *(.bss.*)
+        *(COMMON)
+    } :data
+    PROVIDE(bss_end = .);
+
+    /* All kernel variables accessible to userspace
+     * Offsets from vvar_page must match the corresponding offsets specified
+     * in src/x86_64/vdso.lds
+     *
+     * We could look at generating them automatically, but for now it's easy enough
+     * to do it this way
+     */
+    .vvar ALIGN(4096):
+    {
+        vvar_page = .;
+        __vdso_vdso_dat = vvar_page + 128;
+        . += 4096; /* reserve a page since the linker seems to discard this section */
+    } :data
+
+    END = .;
+
+    .note :
+    {
+        KEEP(*(.note.*))
+    } :note
+}

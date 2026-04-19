@@ -1,0 +1,20 @@
+(
+    boot:(
+        children:(
+            klib:(children:(
+                strace:(contents:(host:ARCH_DIR/bin/strace))
+            ))
+        )
+    )
+    klibs:bootfs
+    children:(
+              #user program
+              hws:(contents:(host:output/test/runtime/bin/hws)))
+    # filesystem path to elf for kernel to run
+    program:/hws
+#    trace:t
+#    debugsyscalls:t
+#    fault:t
+    arguments:[webg poppy]
+    environment:(USER:bobby PWD:/)
+)

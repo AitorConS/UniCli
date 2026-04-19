@@ -1,0 +1,10 @@
+(
+    children:(
+              #user program
+              udploop:(contents:(host:output/test/runtime/bin/udploop)))
+    # filesystem path to elf for kernel to run
+    program:/udploop
+    fault:t
+    arguments:[udploop]
+    environment:(USER:bobby PWD:/)
+)

@@ -1,0 +1,9 @@
+(
+    children:(
+	      tt:(contents:(host:output/test/runtime/bin/thread_test)))
+    program:/tt
+    arguments:[thread_test]
+    environment:(USER:bobby PWD:/)
+#    trace:t
+#    debugsyscalls:t
+)

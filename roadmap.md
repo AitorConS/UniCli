@@ -4,7 +4,7 @@
 
 ---
 
-## Current status: Phase 0 — not started
+## Current status: Phase 0 — in progress
 
 ---
 
@@ -14,14 +14,14 @@
 
 ### Steps
 
-- [ ] 0.1 — Fork Nanos repo into `kernel/`, strip vendor/cloud-specific bits
-- [ ] 0.2 — Set up cross-compiler toolchain (x86_64-elf-gcc, nasm)
-- [ ] 0.3 — Write `Makefile` targets: `kernel`, `clean`, `test-kernel`
-- [ ] 0.4 — Verify kernel boots on `qemu-system-x86_64` (KVM mode)
-- [ ] 0.5 — Boot a static hello-world ELF binary end-to-end via QEMU
-- [ ] 0.6 — Document kernel/motor interface: image format, boot params
-- [ ] 0.7 — Add first C test under `kernel/test/` (boot integrity)
-- [ ] 0.8 — CI: `make kernel` passes in GitHub Actions (`ubuntu-latest`)
+- [x] 0.1 — Fork Nanos repo into `kernel/`, strip vendor/cloud-specific bits (AWS, HyperV, VMware, Xen, riscv64)
+- [ ] 0.2 — Set up cross-compiler toolchain (x86_64-elf-gcc, nasm) — runs in CI, verify locally on Linux runner
+- [x] 0.3 — Write `Makefile` targets: `kernel`, `clean`, `test-kernel`
+- [ ] 0.4 — Verify kernel boots on `qemu-system-x86_64` (KVM mode) — needs CI green first
+- [ ] 0.5 — Boot a static hello-world ELF binary end-to-end via QEMU — `tests/e2e/phase0_boot_test.go`
+- [x] 0.6 — Document kernel/motor interface: image format, boot params → `kernel/INTERFACE.md`
+- [x] 0.7 — Add C test suite under `kernel/test/` (full Nanos unit suite imported)
+- [ ] 0.8 — CI: `make kernel` passes in GitHub Actions (`ubuntu-latest`) — pending first push + CI run
 
 **Done when:** any developer can clone + run `make kernel && make test-kernel` and get a passing build. QEMU boots ELF. CI green.
 

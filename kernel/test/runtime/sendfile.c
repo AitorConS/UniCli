@@ -1,0 +1,271 @@
+#define _GNU_SOURCE
+#include <dirent.h>     /* Defines DT_* constants */
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/syscall.h>
+#include <sys/sendfile.h>
+#include <errno.h>
+#include <stdint.h>
+#include <string.h>
+
+#include "../test_utils.h"
+
+#define BUF_LEN 10
+
+#define SENDFILE_COUNT  8
+
+//#define SENDFILE_DEBUG
+#ifdef SENDFILE_DEBUG
+#define sf_dbg(fmt, args...)	printf("[%s]" fmt , __func__, ##args)
+#else
+#define sf_dbg(fmt, args...)
+#endif
+
+#define sf_err(fmt, args...)	fprintf(stderr, "[%s] !ERROR! " fmt , __func__, ##args)
+
+#define sf_err_goto(label, fmt, ...) do {   \
+ fprintf(stderr, "[%s] !ERROR! " fmt , __func__, ##__VA_ARGS__); \
+ goto label; \
+} while (0)
+
+
+static void test_sendfile(void)
+{
+    int ret;
+    int i, j;
+    int fd_in;
+    int fd_out;
+    char buf[BUF_LEN];
+    char cmp_buf[BUF_LEN];
+
+    fd_in = open("infile", O_WRONLY);
+    if (fd_in < 0)
+        sf_err_goto(err_fdin, "open write-only: %s\n", strerror(errno));
+    fd_out = open("outfile", O_RDWR);
+    if (fd_out < 0)
+        sf_err_goto(err_fdout, "open outfile: %s\n", strerror(errno));
+    ret = sendfile(fd_out, fd_in, NULL, BUF_LEN);
+    if (ret != -1)
+        sf_err_goto(err_fop, "could sendfile() %d bytes from write-only file\n",
+            ret);
+    else if (errno != EBADF)
+        sf_err_goto(err_fdout, "[line %d] unexpected error: %s\n",  __LINE__,
+            strerror(errno));
+    if (close(fd_out) < 0)
+        sf_err_goto(err_fdout, "close outfile: %s\n", strerror(errno));
+    if (close(fd_in) < 0)
+        sf_err_goto(err_fdin, "close infile: %s\n", strerror(errno));
+
+    fd_in = open("infile", O_RDWR);
+    if (fd_in < 0)
+        sf_err_goto(err_fdin, "open infile: %s\n", strerror(errno));
+    fd_out = open("outfile", O_RDONLY);
+    if (fd_out < 0)
+        sf_err_goto(err_fdout, "open read-only: %s\n", strerror(errno));
+    ret = sendfile(fd_out, fd_in, NULL, BUF_LEN);
+    if (ret != -1)
+        sf_err_goto(err_fop, "could sendfile() %d bytes to read-only file\n",
+            ret);
+    else if (errno != EBADF)
+        sf_err_goto(err_fdout, "[line %d] unexpected error: %s\n",  __LINE__,
+            strerror(errno));
+    if (close(fd_out) < 0)
+        sf_err_goto(err_fdout, "close outfile: %s\n", strerror(errno));
+    if (close(fd_in) < 0)
+        sf_err_goto(err_fdin, "close infile: %s\n", strerror(errno));
+
+    fd_in = open("infile", O_RDWR);
+    if (fd_in == -1)
+        sf_err_goto(err_fdin, "error %d opeing sendfile_test\n", errno);
+
+    fd_out = open("outfile", O_RDWR);
+    if (fd_out == -1) 
+        sf_err_goto(err_fdout, "error %d opeing sendfile_test_out\n", errno);
+
+    ret = sendfile(-1, fd_in, NULL, BUF_LEN);
+    if ((ret != -1) || (errno != EBADF))
+        sf_err_goto(err_fop, "sendfile returned %d (errno %d) with invalid output fd\n",
+            ret, errno);
+
+    sf_dbg("IN fd %d OUT fd %d\n", fd_in, fd_out);
+    lseek(fd_out, 0, SEEK_SET);
+    sf_dbg("Previous contents:\n");
+    for (j = 0; j < SENDFILE_COUNT; j++) {
+        if (read(fd_out, cmp_buf, sizeof(cmp_buf)) != sizeof(cmp_buf))
+            sf_err_goto(err_fop, "Error in reading out file\n");
+        for (i = 0; i < sizeof(cmp_buf); i++)
+            sf_dbg("outfile[%d] = 0x%02x\n", j * BUF_LEN + i, cmp_buf[i]);
+    }
+
+    lseek(fd_in, 0, SEEK_END);
+    ret = sendfile(fd_out, fd_in, NULL, BUF_LEN);
+    if (ret != 0)
+        sf_err_goto(err_fop, "sendfile returned %d when reading at end of file\n", ret);
+
+    lseek(fd_in, 0, SEEK_SET);
+    sf_dbg("Replaced with:\n");
+    for (j = 0; j < SENDFILE_COUNT; j++) {
+        ret = read(fd_in, buf, sizeof(buf));
+        if (ret != sizeof(buf))
+            sf_err_goto(err_fop, "Error reading. read %d of %d\n", ret, BUF_LEN);
+        for (i = 0; i < sizeof(buf); i++)
+            sf_dbg("infile[%d] = 0x%02x\n", j * BUF_LEN + i, buf[i]);
+    }
+
+    if (memcmp(buf, cmp_buf, sizeof(buf)) == 0)
+        sf_err_goto(err_fop, "Initial contents similar. replace output file.\n");
+
+    lseek(fd_out, 0, SEEK_SET);
+    lseek(fd_in, 0, SEEK_SET);
+    for (j = 0; j < SENDFILE_COUNT; j++) {
+        ret = sendfile(fd_out, fd_in, NULL, BUF_LEN);
+        if (ret != BUF_LEN)
+            sf_err_goto(err_fop, "sendfile error %d. wrote %d of %d\n", errno, ret, BUF_LEN);
+    }
+    	
+    printf("sendfile() success. validating contents\n");
+    lseek(fd_in, 0, SEEK_SET);
+    lseek(fd_out, 0,  SEEK_SET);
+    sf_dbg("New file contents:\n");
+    for (j = 0; j < SENDFILE_COUNT; j++) {
+        ret = read(fd_in, buf, sizeof(buf));
+        if (ret != sizeof(buf))
+            sf_err_goto(err_fop, "Error reading from IN, read %d of %d\n", ret, BUF_LEN);
+        ret = read(fd_out, cmp_buf, sizeof(cmp_buf));
+        if (ret != sizeof(buf))
+            sf_err_goto(err_fop, "Error reading from OUT, read %d of %d\n", ret, BUF_LEN);
+        for (i = 0; i < sizeof(cmp_buf); i++)
+            sf_dbg("buf[%d] = 0x%02x\n", j * BUF_LEN + i, cmp_buf[i]);
+        if (memcmp(buf, cmp_buf, sizeof(buf)) != 0)
+            sf_err_goto(err_fop, "sendfile() failed!!\n");
+    }
+
+    lseek(fd_in, 0, SEEK_SET);
+    ret = sendfile(fd_out, fd_in, FAULT_ADDR, BUF_LEN);
+    if ((ret != -1) || (errno != EFAULT))
+        sf_err_goto(err_fop, "sendfile with faulting offset test failed (%d, %d)\n", ret, errno);
+
+    close(fd_out);
+    close(fd_in);
+
+    printf("!!!Success!!!\n");
+    return;
+
+err_fop:
+    close(fd_out);
+err_fdout:
+    close(fd_in);
+err_fdin:
+
+    exit(1);
+}
+
+static ssize_t test_copy_op(int fd_in, off64_t *off_in, int fd_out, off64_t *off_out, size_t len)
+{
+    off_t off_in_before, off_out_before;
+    off64_t off_in_start, off_out_start;
+    ssize_t ret;
+    off_t off_in_after, off_out_after;
+
+    off_in_before = lseek(fd_in, 0, SEEK_CUR);
+    off_out_before = lseek(fd_out, 0, SEEK_CUR);
+    if (off_in)
+        off_in_start = *off_in;
+    if (off_out)
+        off_out_start = *off_out;
+    ret = copy_file_range(fd_in, off_in, fd_out, off_out, len, 0);
+    off_in_after = lseek(fd_in, 0, SEEK_CUR);
+    if (off_in) {
+        if ((fd_in != fd_out) || off_out)
+            test_assert(off_in_after == off_in_before);
+        test_assert(*off_in == off_in_start + ret);
+    } else {
+        test_assert(off_in_after == off_in_before + ret);
+    }
+    off_out_after = lseek(fd_out, 0, SEEK_CUR);
+    if (off_out) {
+        if ((fd_in != fd_out) || off_in)
+            test_assert(off_out_after == off_out_before);
+        test_assert(*off_out == off_out_start + ret);
+    } else {
+        test_assert(off_out_after == off_out_before + ret);
+    }
+    return ret;
+}
+
+static void test_copy_file_range(void)
+{
+    const int buf_len = 0x100;
+    int fd1, fd2;
+    off64_t off_in, off_out;
+    uint8_t buf1[buf_len], buf2[buf_len];
+    int i;
+    int offset;
+
+    fd1 = creat("file1", S_IRUSR | S_IWUSR);
+    test_assert(fd1 >= 0);
+    for (i = 0; i < buf_len; i++)
+        buf1[i] = i;
+    test_assert(write(fd1, buf1, buf_len) == buf_len);
+    fd2 = open("file2", O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
+    test_assert(fd2 >= 0);
+
+    /* input file not opened in read mode */
+    test_assert(copy_file_range(fd1, NULL, fd2, NULL, buf_len, 0) == -1);
+    test_assert(errno == EBADF);
+
+    close(fd1);
+    fd1 = open("file1", O_RDONLY);
+    test_assert(fd1 >= 0);
+
+    /* invalid flags */
+    test_assert(copy_file_range(fd1, NULL, fd2, NULL, buf_len, -1U) == -1);
+    test_assert(errno == EINVAL);
+
+    off_out = -1;    /* invalid offset */
+    test_assert(copy_file_range(fd1, NULL, fd2, &off_out, buf_len, 0) == -1);
+    test_assert(errno == EOVERFLOW);
+
+    test_assert(copy_file_range(fd1, NULL, fd2, FAULT_ADDR, buf_len, 0) == -1);
+    test_assert(errno == EFAULT);
+
+    offset = 1;
+    off_in = offset;
+    off_out = 0;
+    test_assert(test_copy_op(fd1, &off_in, fd2, &off_out, buf_len) == buf_len - offset);
+    test_assert(pread(fd2, buf2, buf_len, 0) == buf_len - offset);
+    test_assert(!memcmp(buf1 + offset, buf2, buf_len - offset));
+
+    test_assert(test_copy_op(fd1, NULL, fd2, NULL, buf_len) == buf_len);
+    test_assert(pread(fd2, buf2, buf_len, 0) == buf_len);
+    test_assert(!memcmp(buf1, buf2, buf_len));
+
+    off_in = offset;
+    off_out = 0;
+    test_assert(test_copy_op(fd1, &off_in, fd2, &off_out, offset) == offset);
+    test_assert(pread(fd2, buf2, offset, off_out - offset) == offset);
+    test_assert(!memcmp(buf1 + off_in - offset, buf2 + off_out - offset, offset));
+
+    /* copy a file to itself with NULL offset arguments */
+    test_assert(lseek(fd2, 0, SEEK_SET) == 0);
+    test_assert(copy_file_range(fd2, NULL, fd2, NULL, 1, 0) == -1);
+    test_assert(errno == EINVAL);
+
+    off_in = buf_len / 2;
+    test_assert(test_copy_op(fd2, &off_in, fd2, NULL, buf_len) == buf_len / 2);
+    test_assert(pread(fd2, buf2, buf_len / 2, 0) == buf_len / 2);
+    test_assert(!memcmp(buf1 + buf_len / 2, buf2, buf_len / 2));
+
+    close(fd1);
+    close(fd2);
+    unlink("file1");
+    unlink("file2");
+}
+
+int main(int argc, char *argv[])
+{
+    test_sendfile();
+    test_copy_file_range();
+    printf("Test passed\n");
+    return 0;
+}

@@ -1,0 +1,10 @@
+(
+    children:(
+              #user program
+              webs:(contents:(host:output/test/runtime/bin/webs)))
+    # filesystem path to elf for kernel to run
+    program:/webs
+    fault:t
+    arguments:[webs -poll 1]
+    environment:(USER:bobby PWD:/)
+)

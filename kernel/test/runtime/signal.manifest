@@ -1,0 +1,13 @@
+(
+    children:(
+              #user program
+	      signal:(contents:(host:output/test/runtime/bin/signal))
+	      )
+    # filesystem path to elf for kernel to run
+    program:/signal
+#    trace:t
+#    debugsyscalls:t
+#    fault:t
+    arguments:[test]
+    environment:(USER:bobby PWD:/)
+)

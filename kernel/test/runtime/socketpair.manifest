@@ -1,0 +1,13 @@
+(
+    children:(
+	      #user program
+	      socketpair:(contents:(host:output/test/runtime/bin/socketpair))
+	      )
+    # filesystem path to elf for kernel to run
+    program:/socketpair
+#    trace:t
+#    debugsyscalls:t
+#    fault:t
+    arguments:[socketpair]
+    environment:(USER:bobby PWD:/)
+)

@@ -1,0 +1,13 @@
+(
+    children:(
+              #user program
+	      epoll:(contents:(host:output/test/runtime/bin/epoll))
+	      )
+    # filesystem path to elf for kernel to run
+    program:/epoll
+#    trace:t
+#    debugsyscalls:t
+    fault:t
+    arguments:[webg poppy]
+    environment:(USER:bobby PWD:/)
+)

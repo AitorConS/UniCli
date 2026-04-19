@@ -1,0 +1,13 @@
+(
+    children:(
+	      #user program
+	      eventfd:(contents:(host:output/test/runtime/bin/eventfd))
+	      )
+    # filesystem path to elf for kernel to run
+    program:/eventfd
+#    trace:t
+#    debugsyscalls:t
+#    fault:t
+    arguments:[test]
+    environment:(USER:bobby PWD:/)
+)

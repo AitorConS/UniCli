@@ -1,0 +1,13 @@
+(
+    children:(
+              write:(contents:(host:output/test/runtime/bin/write))
+              hello:(contents:(host:test/runtime/write_contents/hello))
+	      )
+    program:/write
+#    trace:t
+#    debugsyscalls:t
+    fault:t
+#    arguments:[write -p]
+    environment:(USER:bobby PWD:/)
+    imagesize:64M
+)

@@ -1,0 +1,8 @@
+(
+    children:(
+        netsock:(contents:(host:output/test/runtime/bin/netsock))
+    )
+    program:/netsock
+    fault:t
+    environment:()
+)

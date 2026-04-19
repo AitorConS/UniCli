@@ -1,0 +1,22 @@
+(
+    boot:(
+        children:(
+            klib:(children:(
+                strace:(contents:(host:ARCH_DIR/bin/strace))
+                syslog:(contents:(host:ARCH_DIR/bin/syslog))
+            ))
+        )
+    )
+    children:(
+        syslog:(contents:(host:output/test/runtime/bin/syslog))
+    )
+    klibs:bootfs
+    syslog:(
+        file:var/log/syslog
+    )
+    consoles:[-serial -vga]
+    trace:t
+    debugsyscalls:t
+    environment:()
+    program:syslog
+)

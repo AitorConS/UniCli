@@ -1,0 +1,13 @@
+(
+    children:(
+              #user program
+	      time:(contents:(host:output/test/runtime/bin/time))
+	      )
+    # filesystem path to elf for kernel to run
+    program:/time
+#    trace:t
+#    debugsyscalls:t
+#    fault:t
+    arguments:[time -s]
+    environment:(USER:bobby PWD:/)
+)

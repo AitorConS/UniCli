@@ -1,0 +1,14 @@
+(
+    children:(
+              #user program
+	      hw:(contents:(host:output/test/runtime/bin/hw))
+	      etc:(children:(ld.so.cache:(contents:(host:/etc/ld.so.cache))))
+	      TEST-LIBS)
+    # filesystem path to elf for kernel to run
+    program:/hw
+#    trace:t
+#    debugsyscalls:t
+    fault:t
+    arguments:[hw poppy]
+    environment:(USER:bobby PWD:/)
+)

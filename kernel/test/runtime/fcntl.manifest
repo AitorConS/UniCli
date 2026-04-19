@@ -1,0 +1,22 @@
+(
+    boot:(
+        children:(
+            klib:(children:(
+                tmpfs:(contents:(host:ARCH_DIR/bin/tmpfs))
+                shmem:(contents:(host:ARCH_DIR/bin/shmem))
+            ))
+        )
+    )
+    children:(
+              #user program
+	      fcntl:(contents:(host:output/test/runtime/bin/fcntl))
+	      )
+    # filesystem path to elf for kernel to run
+    program:/fcntl
+    klibs:bootfs
+#    trace:t
+#    debugsyscalls:t
+    fault:t
+    arguments:[webg poppy]
+    environment:(USER:bobby PWD:/)
+)

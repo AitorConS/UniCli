@@ -1,0 +1,23 @@
+(
+    boot:(
+          children:(
+                    klib:(children:(
+                        test:(children:(
+                            klib:(contents:(host:ARCH_DIR/bin/test/klib))
+                            lock:(contents:(host:ARCH_DIR/bin/test/lock))
+                            page_table:(contents:(host:ARCH_DIR/bin/test/page_table))
+                            ))
+                        ))
+                    )
+          )
+    children:(
+              #user program
+	      ktest:(contents:(host:output/test/runtime/bin/ktest))
+	      etc:(children:(ld.so.cache:(contents:(host:/etc/ld.so.cache)))))
+    # filesystem path to elf for kernel to run
+    program:/ktest
+    klibs:bootfs
+    klib_test:t
+    arguments:[ktest]
+    environment:()
+)

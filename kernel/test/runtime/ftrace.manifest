@@ -1,0 +1,11 @@
+(
+    children:(
+        ftrace:(contents:(host:output/test/runtime/bin/ftrace))
+	infile:(contents:(host:test/runtime/read_contents/hello))
+    )
+    # filesystem path to elf for kernel to run
+    program:/ftrace
+    fault:t
+    arguments:[/ftrace]
+    environment:(USER:bobby PWD:/)
+)

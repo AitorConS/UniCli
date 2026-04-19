@@ -1,0 +1,18 @@
+(
+    children:(
+          # files
+   		  infile:(contents:(host:test/runtime/write_contents/infile))
+	      outfile:(contents:(host:test/runtime/write_contents/outfile))
+
+	      #user program
+	      sendfile:(contents:(host:output/test/runtime/bin/sendfile))
+	      etc:(children:(ld.so.cache:(contents:(host:/etc/ld.so.cache)))))
+    # filesystem path to elf for kernel to run
+    program:/sendfile
+    # put all the tracing arguments in subtree
+    #trace:
+    #debugsyscalls:t
+    fault:t
+    arguments:[sendfile longargument]
+    environment:(USER:bobby PWD:password)
+)

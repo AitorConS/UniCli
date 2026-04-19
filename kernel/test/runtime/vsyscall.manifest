@@ -1,0 +1,13 @@
+(
+    children:(
+              #user program
+	      vsyscall:(contents:(host:output/test/runtime/bin/vsyscall))
+	      )
+    # filesystem path to elf for kernel to run
+    program:/vsyscall
+#    trace:t
+#    debugsyscalls:t
+#    fault:t
+    arguments:[vsyscall]
+    environment:(USER:bobby PWD:/)
+)

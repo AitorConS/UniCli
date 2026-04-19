@@ -1,0 +1,12 @@
+(
+    children:(
+        paging:(contents:(host:output/test/runtime/bin/paging))
+    )
+    program:/paging
+#    trace:t
+#    debugsyscalls:t
+    fault:t
+# available tests: { write-exec, write-ro, exec-mmap, exec-heap, exec-stack }
+    arguments:[paging write-exec]
+    environment:(USER:bobby PWD:/)
+)

@@ -20,7 +20,7 @@ test-integration:
 	go test -tags integration -timeout 10m ./tests/integration/...
 
 test-kernel:
-	$(MAKE) -C kernel test
+	$(MAKE) -C kernel/test/unit test
 
 lint:
 	golangci-lint run ./...

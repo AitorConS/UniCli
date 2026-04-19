@@ -1,0 +1,13 @@
+(
+    children:(
+              #user program
+	      aio:(contents:(host:output/test/runtime/bin/aio))
+	      )
+    # filesystem path to elf for kernel to run
+    program:/aio
+#    trace:t
+#    debugsyscalls:t
+    fault:t
+    arguments:[aio]
+    environment:()
+)

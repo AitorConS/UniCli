@@ -1,0 +1,14 @@
+(
+    children:(
+        web:(contents:(host:output/test/runtime/bin/web))
+	etc:(children:(
+            ld.so.cache:(contents:(host:/etc/ld.so.cache))
+        ))
+        TEST-LIBS)
+    program:/web
+#    trace:t
+#    debugsyscalls:t
+    fault:t
+    arguments:[web]
+    environment:(USER:bobby PWD:/)
+)

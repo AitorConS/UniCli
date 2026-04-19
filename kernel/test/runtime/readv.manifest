@@ -1,0 +1,12 @@
+(
+    children:(
+              readv:(contents:(host:output/test/runtime/bin/readv))
+              hello:(contents:(host:test/runtime/read_contents/hello))
+	      )
+    program:/readv
+#    trace:t
+#    debugsyscalls:t
+    fault:t
+    arguments:[/]
+    environment:(USER:bobby PWD:/)
+)

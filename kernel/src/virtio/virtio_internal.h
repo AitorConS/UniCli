@@ -1,0 +1,138 @@
+/* VirtIO device IDs */
+#define VIRTIO_ID_NETWORK       1
+#define VIRTIO_ID_BLOCK         2
+#define VIRTIO_ID_CONSOLE       3
+#define VIRTIO_ID_ENTROPY       4
+#define VIRTIO_ID_BALLOON       5
+#define VIRTIO_ID_IOMEMORY      6
+#define VIRTIO_ID_RPMSG         7
+#define VIRTIO_ID_SCSI          8
+#define VIRTIO_ID_9P            9
+#define VIRTIO_ID_RPROC_SERIAL  11
+#define VIRTIO_ID_CAIF          12
+#define VIRTIO_ID_GPU           16
+#define VIRTIO_ID_INPUT         18
+#define VIRTIO_ID_VSOCK         19
+#define VIRTIO_ID_CRYPTO        20
+
+typedef struct virtqueue *virtqueue;
+
+closure_type(vqfinish, void, u64 len);
+
+/* Status byte for guest to report progress. */
+#define VIRTIO_CONFIG_STATUS_RESET	0x00
+#define VIRTIO_CONFIG_STATUS_ACK	0x01
+#define VIRTIO_CONFIG_STATUS_DRIVER	0x02
+#define VIRTIO_CONFIG_STATUS_DRIVER_OK	0x04
+#define VIRTIO_CONFIG_STATUS_FEATURE	0x08
+#define VIRTIO_CONFIG_STATUS_FAILED	0x80
+
+/*
+ * Generate interrupt when the virtqueue ring is
+ * completely used, even if we've suppressed them.
+ */
+#define VIRTIO_F_NOTIFY_ON_EMPTY U64_FROM_BIT(24)
+
+/* Arbitrary descriptor layouts. */
+#define VIRTIO_F_ANY_LAYOUT     U64_FROM_BIT(27)
+
+/* Support for indirect buffer descriptors. */
+#define VIRTIO_F_RING_INDIRECT_DESC	U64_FROM_BIT(28)
+
+/* Support to suppress interrupt until specific index is reached. */
+#define VIRTIO_F_RING_EVENT_IDX		U64_FROM_BIT(29)
+
+/*
+ * The guest should never negotiate this feature; it
+ * is used to detect faulty drivers.
+ */
+#define VIRTIO_F_BAD_FEATURE U64_FROM_BIT(30)
+
+/*
+ * Some VirtIO feature bits (currently bits 28 through 31) are
+ * reserved for the transport being used (eg. virtio_ring), the
+ * rest are per-device feature bits.
+ */
+#define VIRTIO_TRANSPORT_F_START	28
+#define VIRTIO_TRANSPORT_F_END		32
+
+/* Modern device */
+#define VIRTIO_F_VERSION_1 U64_FROM_BIT(32)
+
+closure_type(vtdev_notify, void, u16 queue_index, bytes notify_offset);
+
+typedef struct vtdev {
+    u64 dev_features;              // device features
+    u64 features;                  // negotiated features
+
+    backed_heap contiguous;
+    heap general;
+
+    enum vtio_transport {
+        VTIO_TRANSPORT_MMIO,
+        VTIO_TRANSPORT_PCI,
+    } transport;
+    vtdev_notify notify;
+} *vtdev;
+
+u8 vtdev_cfg_read_1(vtdev dev, u64 offset);
+u16 vtdev_cfg_read_2(vtdev dev, u64 offset);
+u32 vtdev_cfg_read_4(vtdev dev, u64 offset);
+void vtdev_cfg_write_1(vtdev dev, u64 offset, u8 value);
+void vtdev_cfg_write_2(vtdev dev, u64 offset, u16 value);
+void vtdev_cfg_write_4(vtdev dev, u64 offset, u32 value);
+void vtdev_cfg_read_mem(vtdev dev, u64 offset, void *dest, bytes len);
+void vtdev_set_status(vtdev dev, u8 status);
+
+static inline boolean vtdev_is_modern(vtdev dev)
+{
+    return (dev->features & VIRTIO_F_VERSION_1) != 0;
+}
+
+static inline void virtio_attach(heap h, backed_heap page_allocator,
+                                 enum vtio_transport transport, vtdev d)
+{
+    d->general = h;
+    d->contiguous = page_allocator;
+    d->transport = transport;
+}
+
+status virtio_alloc_vq_aff(vtdev dev, sstring name, int idx, range cpu_affinity,
+                           struct virtqueue **result);
+#define virtio_alloc_virtqueue(dev, name, idx, result)  \
+    virtio_alloc_vq_aff(dev, name, idx, irange(0, 0), result)
+status virtio_register_config_change_handler(vtdev dev, thunk handler);
+
+status virtqueue_alloc(vtdev dev,
+                       sstring name,
+                       u16 queue_index,
+                       u16 size,
+                       bytes notify_offset,
+                       int align,
+                       struct virtqueue **vqp,
+                       thunk *t);
+
+/* The Host uses this in used->flags to advise the Guest: don't kick me
+ * when you add a buffer.  It's unreliable, so it's simply an
+ * optimization.  Guest will still kick if it's out of buffers. */
+#define VRING_USED_F_NO_NOTIFY  1
+/* The Guest uses this in avail->flags to advise the Host: don't
+ * interrupt me when you consume a buffer.  It's unreliable, so it's
+ * simply an optimization.  */
+#define VRING_AVAIL_F_NO_INTERRUPT      1
+
+physical virtqueue_desc_paddr(struct virtqueue *vq);
+physical virtqueue_avail_paddr(struct virtqueue *vq);
+physical virtqueue_used_paddr(struct virtqueue *vq);
+u16 virtqueue_entries(virtqueue vq);
+u16 virtqueue_free_entries(virtqueue vq);
+void virtqueue_set_polling(virtqueue vq, boolean enable);
+
+typedef struct vqmsg *vqmsg;
+
+vqmsg allocate_vqmsg(virtqueue vq);
+void deallocate_vqmsg(virtqueue vq, vqmsg m);
+void vqmsg_push(virtqueue vq, vqmsg m, u64 phys_addr, u32 len, boolean write);
+void vqmsg_commit_seqno(virtqueue vq, vqmsg m, vqfinish completion, u32 *seqno, boolean kick);
+#define vqmsg_commit(vq, m, completion) vqmsg_commit_seqno(vq, m, completion, 0, true)
+void virtqueue_kick(virtqueue vq);

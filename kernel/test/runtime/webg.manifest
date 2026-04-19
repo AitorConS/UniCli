@@ -1,0 +1,18 @@
+(
+    children:(
+	      #user program
+	      webg:(contents:(host:output/test/runtime/bin/webg))
+	      etc:(children:(ld.so.cache:(contents:(host:/etc/ld.so.cache)) resolv.conf:(contents:(host:test/runtime/resolv.conf))))
+              TEST-LIBS)
+    # filesystem path to elf for kernel to run
+    program:/webg
+    # put all the tracing arguments in subtree
+#    trace:t
+#    debugsyscalls:t
+#    telnet:t
+#    http:t
+#    fault:t
+#    reboot_on_exit:t
+    arguments:[webg longargument]
+    environment:(USER:bobby PWD:password)
+)

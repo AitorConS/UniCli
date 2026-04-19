@@ -1,0 +1,14 @@
+(
+    children:(
+            #user program
+	        aslr:(contents:(host:output/test/runtime/bin/aslr))
+	        TEST-LIBS)
+    # filesystem path to elf for kernel to run
+    program:/aslr
+#    trace:t
+#    debugsyscalls:t
+#    noaslr:t
+    fault:t
+    arguments:[aslr]
+    environment:(USER:bobby PWD:/)
+)

@@ -1,0 +1,13 @@
+(
+    children:(
+              #user program
+	      unixsocket:(contents:(host:output/test/runtime/bin/unixsocket))
+	      )
+    # filesystem path to elf for kernel to run
+    program:/unixsocket
+#    trace:t
+#    debugsyscalls:t
+    fault:t
+    arguments:[unixsocket]
+    environment:()
+)

@@ -1,0 +1,13 @@
+(
+    children:(
+              #user program
+	      getrandom:(contents:(host:output/test/runtime/bin/getrandom))
+	      )
+    # filesystem path to elf for kernel to run
+    program:/getrandom
+#    trace:t
+#    debugsyscalls:t
+#    fault:t
+    arguments:[webg poppy]
+    environment:(USER:bobby PWD:/)
+)

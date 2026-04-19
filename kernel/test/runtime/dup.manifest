@@ -1,0 +1,13 @@
+(
+    children:(
+              #user program
+	      dup:(contents:(host:output/test/runtime/bin/dup))
+	      )
+    # filesystem path to elf for kernel to run
+    program:/dup
+#    trace:t
+#    debugsyscalls:t
+    fault:t
+    arguments:[dup]
+    environment:()
+)

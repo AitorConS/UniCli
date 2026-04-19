@@ -1,0 +1,11 @@
+(
+    children:(
+        nullpage:(contents:(host:output/test/runtime/bin/nullpage))
+    )
+    program:/nullpage
+#    trace:t
+#    debugsyscalls:t
+    fault:t
+    arguments:[nullpage]
+    environment:(USER:bobby PWD:/)
+)
