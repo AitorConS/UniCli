@@ -8,6 +8,10 @@ import (
 	"time"
 )
 
+// MkfsFunc creates an exec.Cmd that runs mkfs to package binaryPath into imgPath.
+// Defined here so callers can satisfy it without importing internal/tools.
+type MkfsFunc func(ctx context.Context, imgPath, binaryPath string) *exec.Cmd
+
 // BuildConfig holds the parameters for building a unikernel image.
 type BuildConfig struct {
 	// Name is the image name (e.g. "hello").
@@ -16,8 +20,9 @@ type BuildConfig struct {
 	Tag string
 	// BinaryPath is the path to the static ELF binary to package.
 	BinaryPath string
-	// MkfsBin is the path to the mkfs tool (kernel/output/tools/bin/mkfs).
-	MkfsBin string
+	// MkfsRun invokes mkfs to produce the disk image.
+	// Use internal/tools.ResolveMkfs to obtain a platform-appropriate func.
+	MkfsRun MkfsFunc
 	// Memory is the default VM memory string (e.g. "256M").
 	Memory string
 	// CPUs is the default number of virtual CPUs.
@@ -62,7 +67,7 @@ func (b *Builder) Build(ctx context.Context, cfg BuildConfig) (Manifest, error) 
 	}
 	defer func() { _ = os.Remove(tmpPath) }()
 
-	if err := runMkfs(ctx, cfg.MkfsBin, tmpPath, cfg.BinaryPath); err != nil {
+	if err := runMkfs(ctx, cfg.MkfsRun, tmpPath, cfg.BinaryPath); err != nil {
 		return Manifest{}, fmt.Errorf("build: %w", err)
 	}
 
@@ -101,8 +106,8 @@ func validateBuildConfig(cfg BuildConfig) error {
 	if cfg.BinaryPath == "" {
 		return fmt.Errorf("binary path is required")
 	}
-	if cfg.MkfsBin == "" {
-		return fmt.Errorf("mkfs binary path is required")
+	if cfg.MkfsRun == nil {
+		return fmt.Errorf("MkfsRun is required")
 	}
 	return nil
 }
@@ -127,12 +132,12 @@ func checkELF(path string) error {
 	return nil
 }
 
-func runMkfs(ctx context.Context, mkfsBin, imgPath, binaryPath string) error {
-	cmd := exec.CommandContext(ctx, mkfsBin, imgPath, binaryPath)
+func runMkfs(ctx context.Context, mkfsRun MkfsFunc, imgPath, binaryPath string) error {
+	cmd := mkfsRun(ctx, imgPath, binaryPath)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("mkfs %s: %w", mkfsBin, err)
+		return fmt.Errorf("mkfs: %w", err)
 	}
 	return nil
 }
