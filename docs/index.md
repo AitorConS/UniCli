@@ -1,0 +1,74 @@
+---
+layout: home
+title: Home
+nav_order: 1
+---
+
+# Uni — Unikernel Engine
+{: .fs-9 }
+
+A Docker-like engine for building, running, and orchestrating unikernel virtual machines on KVM/QEMU.
+{: .fs-6 .fw-300 }
+
+[Get Started]({% link getting-started.md %}){: .btn .btn-primary .fs-5 .mb-4 .mb-md-0 .mr-2 }
+[View on GitHub](https://github.com/AitorConS/unikernel-engine){: .btn .fs-5 .mb-4 .mb-md-0 }
+
+---
+
+## What is a Unikernel?
+
+A **unikernel** is a single-purpose virtual machine: your application code compiled together with only the OS components it needs, running as a minimal VM. No shell, no package manager, no unused services — just your app and a tiny kernel.
+
+Compared to containers:
+
+| | Container | Unikernel |
+|---|---|---|
+| Isolation | Shared kernel (namespaces) | Full VM hardware boundary |
+| Attack surface | Large (host kernel exposed) | Tiny (minimal kernel) |
+| Boot time | ~100ms | ~50ms |
+| Memory overhead | ~10–50 MB | ~2–5 MB |
+| Runtime | Any Linux binary | Static ELF only |
+
+## What is Uni?
+
+`uni` is a command-line tool (plus a background daemon `unid`) that manages the full unikernel lifecycle — the same way Docker manages containers.
+
+```
+uni build ./myapp          # package ELF binary into an image
+uni run hello:latest       # start a unikernel VM
+uni ps                     # list running VMs
+uni logs <id>              # read serial console output
+uni stop <id>              # graceful shutdown
+uni compose up stack.yaml  # start a multi-service application
+```
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────┐
+│  uni CLI  (cobra commands)                  │
+│  run · ps · logs · stop · build · compose   │
+└──────────────────┬──────────────────────────┘
+                   │  JSON-RPC over Unix socket
+┌──────────────────▼──────────────────────────┐
+│  unid  (daemon)                             │
+│  ┌────────────┐  ┌────────────────────────┐ │
+│  │ VM Manager │  │ Image Registry (HTTP)  │ │
+│  │ QEMU/KVM   │  │ SHA256 content store   │ │
+│  └────────────┘  └────────────────────────┘ │
+└──────────────────┬──────────────────────────┘
+                   │
+┌──────────────────▼──────────────────────────┐
+│  Nanos Kernel (C + ASM fork)                │
+│  Boots static ELF binaries on KVM/QEMU      │
+└─────────────────────────────────────────────┘
+```
+
+## Key Features
+
+- **Build once, run anywhere** — image format is a JSON manifest + raw disk, content-addressed by SHA256
+- **Full VM isolation** — every service runs in its own KVM virtual machine
+- **Compose support** — define multi-service stacks in YAML with dependency ordering
+- **Registry** — push/pull images over HTTP like a private Docker registry
+- **Graceful lifecycle** — SIGTERM → 30s grace period → SIGKILL
+- **JSON output** — every command supports `--output json` for scripting
