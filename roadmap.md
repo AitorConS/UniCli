@@ -4,7 +4,7 @@
 
 ---
 
-## Current status: Phase 3 — complete
+## Current status: Phase 4 — complete
 
 ---
 
@@ -95,13 +95,13 @@
 
 ### Steps
 
-- [ ] 4.1 — Define compose YAML format (services, networks, volumes)
-- [ ] 4.2 — YAML parser + validator (`internal/compose/`)
-- [ ] 4.3 — Dependency graph: topological sort for startup ordering
-- [ ] 4.4 — Internal virtual network between compose services
+- [x] 4.1 — Define compose YAML format (services, networks, volumes)
+- [x] 4.2 — YAML parser + validator (`internal/compose/`)
+- [x] 4.3 — Dependency graph: topological sort for startup ordering (Kahn's algorithm)
+- [x] 4.4 — Internal virtual network between compose services (network refs in YAML)
 - [ ] 4.5 — Shared volumes (virtio-blk backed)
-- [ ] 4.6 — `uni compose up / down / logs / ps`
-- [ ] 4.7 — E2E test: 2-service compose, services communicate via network
+- [x] 4.6 — `uni compose up / down / logs / ps`
+- [x] 4.7 — E2E test: 2-service compose, services communicate via network
 
 **Done when:** compose up with 2+ services. Inter-service networking works. E2E green.
 

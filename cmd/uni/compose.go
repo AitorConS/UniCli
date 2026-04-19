@@ -1,0 +1,296 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"text/tabwriter"
+
+	"github.com/AitorConS/unikernel-engine/internal/api"
+	"github.com/AitorConS/unikernel-engine/internal/compose"
+	"github.com/spf13/cobra"
+)
+
+const stateFileName = ".uni-compose-state.json"
+
+func newComposeCmd(socketPath, storePath, outputFmt *string) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "compose",
+		Short: "Manage multi-service unikernel applications",
+	}
+	cmd.AddCommand(
+		newComposeUpCmd(socketPath, storePath),
+		newComposeDownCmd(socketPath),
+		newComposePsCmd(socketPath, outputFmt),
+		newComposeLogsCmd(socketPath),
+	)
+	return cmd
+}
+
+func newComposeUpCmd(socketPath, storePath *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "up <compose-file>",
+		Short: "Start all services defined in a compose file",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			composeFile := args[0]
+			data, err := os.ReadFile(composeFile)
+			if err != nil {
+				return fmt.Errorf("compose up: read file: %w", err)
+			}
+			f, err := compose.Parse(data)
+			if err != nil {
+				return fmt.Errorf("compose up: %w", err)
+			}
+			order, err := compose.TopologicalSort(f.Services)
+			if err != nil {
+				return fmt.Errorf("compose up: %w", err)
+			}
+
+			client, err := api.Dial(*socketPath)
+			if err != nil {
+				return fmt.Errorf("compose up: connect to daemon: %w", err)
+			}
+			defer func() {
+				if closeErr := client.Close(); closeErr != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: close client: %v\n", closeErr)
+				}
+			}()
+
+			state := compose.State{
+				Project:  filepath.Base(filepath.Dir(composeFile)),
+				Services: make(map[string]string, len(f.Services)),
+			}
+
+			for _, name := range order {
+				svc := f.Services[name]
+				diskPath, resolveErr := resolveImage(svc.Image, *storePath, svc.Memory, svc.CPUs)
+				if resolveErr != nil {
+					return fmt.Errorf("compose up: service %q: %w", name, resolveErr)
+				}
+				mem := svc.Memory
+				if mem == "" {
+					mem = "256M"
+				}
+				info, runErr := client.Run(cmd.Context(), api.RunParams{
+					ImagePath: diskPath,
+					Memory:    mem,
+					CPUs:      svc.CPUs,
+				})
+				if runErr != nil {
+					return fmt.Errorf("compose up: service %q: %w", name, runErr)
+				}
+				state.Services[name] = info.ID
+				fmt.Fprintf(cmd.OutOrStdout(), "started %s → %s\n", name, info.ID)
+			}
+
+			return writeState(composeFile, state)
+		},
+	}
+}
+
+func newComposeDownCmd(socketPath *string) *cobra.Command {
+	var force bool
+	cmd := &cobra.Command{
+		Use:   "down <compose-file>",
+		Short: "Stop all services from a compose file",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			state, err := readState(args[0])
+			if err != nil {
+				return fmt.Errorf("compose down: %w", err)
+			}
+
+			client, err := api.Dial(*socketPath)
+			if err != nil {
+				return fmt.Errorf("compose down: connect to daemon: %w", err)
+			}
+			defer func() {
+				if closeErr := client.Close(); closeErr != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: close client: %v\n", closeErr)
+				}
+			}()
+
+			// Stop in reverse order (longest dependent first).
+			names := stateServiceNames(state)
+			for i := len(names) - 1; i >= 0; i-- {
+				name := names[i]
+				id := state.Services[name]
+				if stopErr := client.Stop(cmd.Context(), id, force); stopErr != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: stop %s (%s): %v\n", name, id, stopErr)
+					continue
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "stopped %s\n", name)
+			}
+			return removeState(args[0])
+		},
+	}
+	cmd.Flags().BoolVar(&force, "force", false, "send SIGKILL immediately")
+	return cmd
+}
+
+func newComposePsCmd(socketPath *string, outputFmt *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "ps <compose-file>",
+		Short: "List services and their VM state",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			state, err := readState(args[0])
+			if err != nil {
+				return fmt.Errorf("compose ps: %w", err)
+			}
+
+			client, err := api.Dial(*socketPath)
+			if err != nil {
+				return fmt.Errorf("compose ps: connect to daemon: %w", err)
+			}
+			defer func() {
+				if closeErr := client.Close(); closeErr != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: close client: %v\n", closeErr)
+				}
+			}()
+
+			type row struct {
+				Service string `json:"service"`
+				ID      string `json:"id"`
+				State   string `json:"state"`
+			}
+
+			rows := make([]row, 0, len(state.Services))
+			for _, name := range stateServiceNames(state) {
+				id := state.Services[name]
+				info, getErr := client.Get(cmd.Context(), id)
+				vmState := "unknown"
+				if getErr == nil {
+					vmState = info.State
+				}
+				rows = append(rows, row{Service: name, ID: id, State: vmState})
+			}
+
+			if *outputFmt == "json" {
+				return printJSON(cmd.OutOrStdout(), rows)
+			}
+
+			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+			fmt.Fprintln(w, "SERVICE\tID\tSTATE")
+			for _, r := range rows {
+				fmt.Fprintf(w, "%s\t%s\t%s\n", r.Service, r.ID, r.State)
+			}
+			return w.Flush()
+		},
+	}
+}
+
+func newComposeLogsCmd(socketPath *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "logs <compose-file> <service>",
+		Short: "Print captured serial output for a compose service",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			state, err := readState(args[0])
+			if err != nil {
+				return fmt.Errorf("compose logs: %w", err)
+			}
+			id, ok := state.Services[args[1]]
+			if !ok {
+				return fmt.Errorf("compose logs: service %q not found in state", args[1])
+			}
+
+			client, err := api.Dial(*socketPath)
+			if err != nil {
+				return fmt.Errorf("compose logs: connect to daemon: %w", err)
+			}
+			defer func() {
+				if closeErr := client.Close(); closeErr != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: close client: %v\n", closeErr)
+				}
+			}()
+
+			resp, err := client.Logs(cmd.Context(), id)
+			if err != nil {
+				return fmt.Errorf("compose logs: %w", err)
+			}
+			fmt.Fprint(cmd.OutOrStdout(), resp.Logs)
+			return nil
+		},
+	}
+}
+
+// --- state helpers ---
+
+func stateFilePath(composeFile string) string {
+	return filepath.Join(filepath.Dir(composeFile), stateFileName)
+}
+
+func writeState(composeFile string, state compose.State) error {
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return fmt.Errorf("compose: marshal state: %w", err)
+	}
+	if err := os.WriteFile(stateFilePath(composeFile), data, 0o600); err != nil {
+		return fmt.Errorf("compose: write state: %w", err)
+	}
+	return nil
+}
+
+func readState(composeFile string) (compose.State, error) {
+	data, err := os.ReadFile(stateFilePath(composeFile))
+	if err != nil {
+		return compose.State{}, fmt.Errorf("read state (run 'uni compose up' first): %w", err)
+	}
+	var state compose.State
+	if err := json.Unmarshal(data, &state); err != nil {
+		return compose.State{}, fmt.Errorf("parse state: %w", err)
+	}
+	return state, nil
+}
+
+func removeState(composeFile string) error {
+	if err := os.Remove(stateFilePath(composeFile)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("compose: remove state: %w", err)
+	}
+	return nil
+}
+
+// stateServiceNames returns service names in a deterministic sorted order.
+func stateServiceNames(state compose.State) []string {
+	names := make([]string, 0, len(state.Services))
+	for name := range state.Services {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// composeUpWithCtx is exposed for testing.
+func composeUpWithCtx(ctx context.Context, client *api.Client, f compose.File, storePath string) (compose.State, error) {
+	order, err := compose.TopologicalSort(f.Services)
+	if err != nil {
+		return compose.State{}, err
+	}
+	state := compose.State{Services: make(map[string]string, len(f.Services))}
+	for _, name := range order {
+		svc := f.Services[name]
+		mem := svc.Memory
+		if mem == "" {
+			mem = "256M"
+		}
+		diskPath, err := resolveImage(svc.Image, storePath, mem, svc.CPUs)
+		if err != nil {
+			return compose.State{}, fmt.Errorf("service %q: %w", name, err)
+		}
+		info, err := client.Run(ctx, api.RunParams{
+			ImagePath: diskPath,
+			Memory:    mem,
+			CPUs:      svc.CPUs,
+		})
+		if err != nil {
+			return compose.State{}, fmt.Errorf("service %q: %w", name, err)
+		}
+		state.Services[name] = info.ID
+	}
+	return state, nil
+}

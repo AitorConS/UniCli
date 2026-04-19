@@ -48,6 +48,7 @@ func newRootCmd() *cobra.Command {
 		newRmCmd(&socketPath),
 		newInspectCmd(&socketPath),
 		newExecCmd(&socketPath),
+		newComposeCmd(&socketPath, &storePath, &outputFmt),
 	)
 	return root
 }
