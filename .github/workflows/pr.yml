@@ -1,0 +1,79 @@
+name: PR Checks
+
+on:
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Run unit tests
+        run: go test ./... -race -coverprofile=coverage.out -covermode=atomic
+
+      - name: Coverage report
+        run: go tool cover -func=coverage.out
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.out
+
+  kernel-build:
+    name: Kernel Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cross-compiler toolchain
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y gcc-multilib nasm qemu-utils
+
+      - name: Build kernel
+        run: make kernel
+
+  integration-tests:
+    name: Integration Tests
+    if: false  # TODO: enable when self-hosted KVM runner is configured
+    runs-on: [self-hosted, linux, kvm]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Enable KVM
+        run: |
+          sudo modprobe kvm-intel || sudo modprobe kvm-amd || true
+          sudo chmod 666 /dev/kvm
+
+      - name: Run integration tests
+        run: go test -tags integration -timeout 10m ./tests/integration/...

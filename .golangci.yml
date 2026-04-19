@@ -1,0 +1,37 @@
+version: "2"
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - gosimple
+    - ineffassign
+    - gofmt
+    - goimports
+    - revive
+    - exhaustive
+    - noctx
+    - bodyclose
+    - gocritic
+    - wrapcheck
+
+linters-settings:
+  wrapcheck:
+    ignorePackageGlobs:
+      - "github.com/AitorConS/unikernel-engine/*"
+  revive:
+    rules:
+      - name: exported
+        arguments:
+          - checkPrivateReceivers
+          - sayRepetitiveInsteadOfStutters
+
+issues:
+  max-same-issues: 0
+  exclude-rules:
+    - path: "_test.go"
+      linters:
+        - wrapcheck
+        - errcheck

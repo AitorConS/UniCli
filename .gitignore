@@ -1,0 +1,6 @@
+dist/
+coverage.out
+coverage.html
+*.o
+*.a
+kernel/build/

@@ -1,0 +1,160 @@
+name: Main Branch
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Run unit tests
+        run: go test ./... -race -coverprofile=coverage.out -covermode=atomic
+
+  kernel-build:
+    name: Kernel Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cross-compiler toolchain
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y gcc-multilib nasm qemu-utils
+
+      - name: Build kernel
+        run: make kernel
+
+  e2e-tests:
+    name: E2E Tests
+    if: false  # TODO: enable when self-hosted KVM runner is configured
+    runs-on: [self-hosted, linux, kvm]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Enable KVM
+        run: |
+          sudo modprobe kvm-intel || sudo modprobe kvm-amd || true
+          sudo chmod 666 /dev/kvm
+
+      - name: Run E2E tests
+        run: make e2e
+
+  build-release:
+    name: Build Release Binaries
+    runs-on: ubuntu-latest
+    needs: [lint, unit-tests, kernel-build]  # swap needs to [e2e-tests] when KVM runner ready
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Build uni
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          go build -ldflags="-s -w -X main.version=${{ github.sha }}" \
+            -o dist/uni-${{ matrix.goos }}-${{ matrix.goarch }} \
+            ./cmd/uni
+
+      - name: Build unid
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          go build -ldflags="-s -w -X main.version=${{ github.sha }}" \
+            -o dist/unid-${{ matrix.goos }}-${{ matrix.goarch }} \
+            ./cmd/unid
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/
+
+  kernel-artifact:
+    name: Kernel Image Artifact
+    runs-on: ubuntu-latest
+    needs: kernel-build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cross-compiler toolchain
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y gcc-multilib nasm qemu-utils
+
+      - name: Build kernel
+        run: make kernel
+
+      - name: Upload kernel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-image-${{ github.sha }}
+          path: kernel/build/
+
+  coverage:
+    name: Coverage Report
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Generate coverage
+        run: go test ./... -coverprofile=coverage.out -covermode=atomic
+
+      - name: HTML report
+        run: go tool cover -html=coverage.out -o coverage.html
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html
+          path: coverage.html
