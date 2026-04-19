@@ -81,4 +81,30 @@ uni CLI (cobra) → Unix socket → unid daemon → KVM/QEMU wrapper
 
 ## Phase Status
 
-Currently at **Phase 0** (foundation). Phases must be fully tested and stable before advancing. A phase is not done if tests are skipped, lint fails, or only the happy path works.
+Currently stopped after **Phase 4** (Compose). Next up: **Phase 5 — Orchestrator**.
+
+| Phase | Status | Key deliverables |
+|---|---|---|
+| 0 — Foundation | ✅ done | Nanos fork, CI green, QEMU boots |
+| 1 — VM Manager | ✅ done | State machine, QEMU wrapper, Unix socket API, `uni run` |
+| 2 — Image System | ✅ done | Manifest, content-addressable store, registry, `uni build/images/rmi/push/pull` |
+| 3 — Full CLI | ✅ done | `uni ps/logs/stop/rm/inspect/exec`, `--output json`, 81% cmd/uni coverage |
+| 4 — Compose | ✅ done | YAML parser, topological sort, `uni compose up/down/ps/logs`, rolling GitHub Release |
+| 5 — Orchestrator | ⬜ next | Self-healing, scaling, health checks, `uni scale/status` |
+
+Phases must be fully tested and stable before advancing. A phase is not done if tests are skipped, lint fails, or only the happy path works.
+
+## Known Platform Notes
+
+- `Stop()` (graceful) sends SIGTERM → 30s → SIGKILL. On Windows SIGTERM is unsupported; falls back to SIGKILL immediately.
+- `isFilePath()` handles Windows drive-letter paths (`C:\...`) in addition to Unix prefixes.
+- TAP networking (`internal/network/tap.go`) is `//go:build linux` only.
+- `parseSig()` uses integer literals for SIGUSR1/SIGUSR2 (`syscall.Signal(10/12)`) for cross-platform compatibility.
+
+## Compose State
+
+`uni compose up` writes `.uni-compose-state.json` alongside the compose file. Format:
+```json
+{"project": "myproject", "services": {"frontend": "<vm-id>", "backend": "<vm-id>"}}
+```
+`uni compose down/ps/logs` reads this file — run `up` first.
