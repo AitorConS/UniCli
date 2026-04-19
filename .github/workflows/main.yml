@@ -52,8 +52,10 @@ jobs:
       - name: Stage mkfs for release
         run: |
           mkdir -p dist
+          test -f kernel/output/tools/bin/mkfs || (echo "ERROR: mkfs not built" && exit 1)
           cp kernel/output/tools/bin/mkfs dist/mkfs-linux-amd64
           chmod +x dist/mkfs-linux-amd64
+          file dist/mkfs-linux-amd64
 
       - name: Upload mkfs artifact
         uses: actions/upload-artifact@v4
@@ -143,12 +145,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download all artifacts
+      - name: Download binary artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: "{binaries-*,mkfs-*}"
+          pattern: binaries-*
           path: dist/
           merge-multiple: true
+
+      - name: Download mkfs artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mkfs-linux-amd64
+          path: dist/
 
       - name: Create or update latest release
         env:
