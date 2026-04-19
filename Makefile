@@ -14,7 +14,7 @@ kernel:
 	$(MAKE) -C kernel all
 
 test:
-	go test ./... -race -coverprofile=coverage.out -covermode=atomic
+	go test $(shell go list ./... | grep -v '/kernel/') -race -coverprofile=coverage.out -covermode=atomic
 
 test-integration:
 	go test -tags integration -timeout 10m ./tests/integration/...

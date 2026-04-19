@@ -2,7 +2,6 @@
 #include <pagecache.h>
 #include <pci.h>
 #include <tfs.h>
-#include <aws/aws.h>
 #include <boot/uefi.h>
 #include <drivers/acpi.h>
 #include <drivers/console.h>
@@ -15,7 +14,6 @@
 #include <devicetree.h>
 #include <gic.h>
 #include <gpio.h>
-#include <hyperv_platform.h>
 #include "serial.h"
 
 #define SERIAL_16550_COMPATIBLE 0x00
@@ -479,9 +477,7 @@ void init_platform_devices(kernel_heaps kh)
 
 void detect_hypervisor(kernel_heaps kh)
 {
-    if (hyperv_detect(kh)) {
-        init_debug("Hyper-V detected\n");
-    }
+    init_debug("KVM/QEMU virt platform\n");
 }
 
 void detect_devices(kernel_heaps kh, storage_attach sa)
@@ -494,26 +490,15 @@ void detect_devices(kernel_heaps kh, storage_attach sa)
         gpio_irq_enable(U64_FROM_BIT(gpio_key_power));
     }
     init_acpi(kh);
-    if (hyperv_detected()) {
-        boolean hv_storvsc_attached = false;
-        init_vmbus(kh);
-        status s = hyperv_probe_devices(sa, &hv_storvsc_attached);
-        if (!is_ok(s))
-            halt("Hyper-V probe failed: %v\n", s);
-        if (!hv_storvsc_attached)
-            msg_err("Hyper-V: cannot detect storage device");
-    } else {
-        init_virtio_network(kh);
-        init_aws_ena(kh);
-        init_gve(kh);
-        init_virtio_blk(kh, sa);
-        init_virtio_scsi(kh, sa);
-        init_nvme(kh, sa);
-        init_virtio_balloon(kh);
-        init_virtio_rng(kh);
-        init_virtio_9p(kh);
-        init_virtio_socket(kh);
-    }
+    init_virtio_network(kh);
+    init_gve(kh);
+    init_virtio_blk(kh, sa);
+    init_virtio_scsi(kh, sa);
+    init_nvme(kh, sa);
+    init_virtio_balloon(kh);
+    init_virtio_rng(kh);
+    init_virtio_9p(kh);
+    init_virtio_socket(kh);
     if (!vm_halt) {
         vm_halt = closure_func(heap_locked(kh), halt_handler, psci_vm_halt);
         assert(vm_halt != INVALID_ADDRESS);

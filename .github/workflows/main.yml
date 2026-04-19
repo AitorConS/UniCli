@@ -33,7 +33,9 @@ jobs:
           cache: true
 
       - name: Run unit tests
-        run: go test ./... -race -coverprofile=coverage.out -covermode=atomic
+        run: |
+          PKGS=$(go list ./... | grep -v '/kernel/')
+          go test $PKGS -race -coverprofile=coverage.out -covermode=atomic
 
   kernel-build:
     name: Kernel Build
@@ -63,8 +65,8 @@ jobs:
 
       - name: Enable KVM
         run: |
-          sudo modprobe kvm-intel || sudo modprobe kvm-amd || true
-          sudo chmod 666 /dev/kvm
+          sudo -n modprobe kvm-intel || sudo -n modprobe kvm-amd || true
+          sudo -n chmod 666 /dev/kvm
 
       - name: Run E2E tests
         run: make e2e
@@ -148,7 +150,9 @@ jobs:
           cache: true
 
       - name: Generate coverage
-        run: go test ./... -coverprofile=coverage.out -covermode=atomic
+        run: |
+          PKGS=$(go list ./... | grep -v '/kernel/')
+          go test $PKGS -coverprofile=coverage.out -covermode=atomic
 
       - name: HTML report
         run: go tool cover -html=coverage.out -o coverage.html

@@ -5,7 +5,6 @@
 #include <tfs.h>
 #include <management.h>
 #include <apic.h>
-#include <aws/aws.h>
 #include <drivers/acpi.h>
 #include <drivers/ata-pci.h>
 #include <drivers/console.h>
@@ -13,12 +12,9 @@
 #include <drivers/gve.h>
 #include <drivers/nvme.h>
 #include <drivers/vga.h>
-#include <hyperv_platform.h>
 #include <kvm_platform.h>
 #include <pci.h>
-#include <xen_platform.h>
 #include <virtio/virtio.h>
-#include <vmware/vmware.h>
 #include "pvm.h"
 #include "serial.h"
 
@@ -466,22 +462,13 @@ void detect_hypervisor(kernel_heaps kh)
     if (pvm_detected)
         pvm_setup(kh);
     if (!kvm_detect(kh)) {
-        init_debug("probing for Xen hypervisor");
-        if (!xen_detect(kh)) {
-            if (!hyperv_detect(kh)) {
-                init_debug("no hypervisor detected; assuming qemu full emulation");
-                if (init_tsc_timer(kh))
-                    init_debug("using calibrated TSC as timer source");
-                else if (init_hpet(kh))
-                    init_debug("using HPET as timer source");
-                else
-                    halt("timer initialization failed; no timer source");
-            } else {
-                init_debug("hyper-v hypervisor detected");
-            }
-        } else {
-            init_debug("xen hypervisor detected");
-        }
+        init_debug("no KVM detected; assuming qemu full emulation");
+        if (init_tsc_timer(kh))
+            init_debug("using calibrated TSC as timer source");
+        else if (init_hpet(kh))
+            init_debug("using HPET as timer source");
+        else
+            halt("timer initialization failed; no timer source");
     } else {
         init_debug("KVM detected");
     }
@@ -490,42 +477,21 @@ void detect_hypervisor(kernel_heaps kh)
 void detect_devices(kernel_heaps kh, storage_attach sa)
 {
     /* Probe for PV devices */
-    if (xen_detected()) {
-        init_debug("probing for Xen PV network...");
-        init_xennet(kh);
-        init_xenblk(kh, sa);
-        status s = xen_probe_devices();
-        if (!is_ok(s))
-            halt("xen probe failed: %v\n", s);
-    } else if (hyperv_detected()) {
-        boolean hyperv_storvsc_attached = false;
-        init_debug("probing for Hyper-V PV network...");
-        init_vmbus(kh);
-        status s = hyperv_probe_devices(sa, &hyperv_storvsc_attached);
-        if (!is_ok(s))
-            halt("Hyper-V probe failed: %v\n", s);
-        if (!hyperv_storvsc_attached)
-            init_ata_pci(kh, sa); /* hvm ata fallback */
-    } else {
-        init_debug("hypervisor undetected or HVM platform; registering all PCI drivers...");
-        virtio_mmio_enum_devs(kh);
+    init_debug("KVM/QEMU platform; registering virtio drivers...");
+    virtio_mmio_enum_devs(kh);
 
-        /* net */
-        init_virtio_network(kh);
-        init_vmxnet3_network(kh);
-        init_aws_ena(kh);
-        init_gve(kh);
+    /* net */
+    init_virtio_network(kh);
+    init_gve(kh);
 
-        /* storage */
-        init_virtio_blk(kh, sa);
-        init_virtio_scsi(kh, sa);
-        init_pvscsi(kh, sa);
-        init_nvme(kh, sa);
-        init_ata_pci(kh, sa);
+    /* storage */
+    init_virtio_blk(kh, sa);
+    init_virtio_scsi(kh, sa);
+    init_nvme(kh, sa);
+    init_ata_pci(kh, sa);
 
-        init_virtio_9p(kh);
-        init_virtio_socket(kh);
-    }
+    init_virtio_9p(kh);
+    init_virtio_socket(kh);
 
     /* misc / platform */
     init_acpi(kh);

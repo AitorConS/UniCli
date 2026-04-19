@@ -19,8 +19,8 @@ jobs:
 
       - name: Enable KVM
         run: |
-          sudo modprobe kvm-intel || sudo modprobe kvm-amd || true
-          sudo chmod 666 /dev/kvm
+          sudo -n modprobe kvm-intel || sudo -n modprobe kvm-amd || true
+          sudo -n chmod 666 /dev/kvm
 
       - name: Build kernel
         run: make kernel

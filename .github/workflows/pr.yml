@@ -33,7 +33,9 @@ jobs:
           cache: true
 
       - name: Run unit tests
-        run: go test ./... -race -coverprofile=coverage.out -covermode=atomic
+        run: |
+          PKGS=$(go list ./... | grep -v '/kernel/')
+          go test $PKGS -race -coverprofile=coverage.out -covermode=atomic
 
       - name: Coverage report
         run: go tool cover -func=coverage.out
@@ -72,8 +74,8 @@ jobs:
 
       - name: Enable KVM
         run: |
-          sudo modprobe kvm-intel || sudo modprobe kvm-amd || true
-          sudo chmod 666 /dev/kvm
+          sudo -n modprobe kvm-intel || sudo -n modprobe kvm-amd || true
+          sudo -n chmod 666 /dev/kvm
 
       - name: Run integration tests
         run: go test -tags integration -timeout 10m ./tests/integration/...

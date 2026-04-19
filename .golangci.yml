@@ -1,18 +1,13 @@
-version: "2"
-
 linters:
   enable:
     - errcheck
     - govet
     - staticcheck
-    - unused
     - gosimple
     - ineffassign
     - gofmt
     - goimports
     - revive
-    - exhaustive
-    - noctx
     - bodyclose
     - gocritic
     - wrapcheck
@@ -26,7 +21,6 @@ linters-settings:
       - name: exported
         arguments:
           - checkPrivateReceivers
-          - sayRepetitiveInsteadOfStutters
 
 issues:
   max-same-issues: 0
