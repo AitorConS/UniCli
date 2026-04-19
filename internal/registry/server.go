@@ -160,4 +160,3 @@ func writeTempFile(r io.Reader) (string, error) {
 	}
 	return f.Name(), nil
 }
-
