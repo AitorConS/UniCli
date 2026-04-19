@@ -62,7 +62,11 @@ type safeBuffer struct {
 func (b *safeBuffer) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.buf.Write(p)
+	n, err := b.buf.Write(p)
+	if err != nil {
+		return n, fmt.Errorf("safe buffer write: %w", err)
+	}
+	return n, nil
 }
 
 func (b *safeBuffer) Bytes() []byte {
