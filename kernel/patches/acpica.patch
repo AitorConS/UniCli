@@ -1,0 +1,234 @@
+diff -ur a/source/components/namespace/nsaccess.c b/source/components/namespace/nsaccess.c
+--- a/source/components/namespace/nsaccess.c    2021-12-06 12:25:49.767092507 +0100
++++ b/source/components/namespace/nsaccess.c    2021-12-06 12:18:32.027074617 +0100
+@@ -449,7 +449,9 @@
+     ACPI_NAMESPACE_NODE     *CurrentNode = NULL;
+     ACPI_NAMESPACE_NODE     *ThisNode = NULL;
+     UINT32                  NumSegments;
++#ifdef ACPI_DEBUG_OUTPUT
+     UINT32                  NumCarats;
++#endif
+     ACPI_NAME               SimpleName;
+     ACPI_OBJECT_TYPE        TypeToCheckFor;
+     ACPI_OBJECT_TYPE        ThisSearchType;
+@@ -573,7 +575,9 @@
+              * the parent node for each prefix instance.
+              */
+             ThisNode = PrefixNode;
++#ifdef ACPI_DEBUG_OUTPUT
+             NumCarats = 0;
++#endif
+             while (*Path == (UINT8) AML_PARENT_PREFIX)
+             {
+                 /* Name is fully qualified, no search rules apply */
+@@ -588,7 +592,9 @@
+ 
+                 /* Backup to the parent node */
+ 
++#ifdef ACPI_DEBUG_OUTPUT
+                 NumCarats++;
++#endif
+                 ThisNode = ThisNode->Parent;
+                 if (!ThisNode)
+                 {
+diff -ur a/source/components/tables/tbxfload.c b/source/components/tables/tbxfload.c
+--- a/source/components/tables/tbxfload.c    2021-12-06 12:25:49.767092507 +0100
++++ b/source/components/tables/tbxfload.c    2021-12-06 12:18:32.027074617 +0100
+@@ -259,7 +259,6 @@
+     UINT32                  i;
+     ACPI_TABLE_HEADER       *NewDsdt;
+     ACPI_TABLE_DESC         *Table;
+-    UINT32                  TablesLoaded = 0;
+     UINT32                  TablesFailed = 0;
+ 
+ 
+@@ -322,10 +321,6 @@
+         ACPI_EXCEPTION ((AE_INFO, Status, "[DSDT] table load failed"));
+         TablesFailed++;
+     }
+-    else
+-    {
+-        TablesLoaded++;
+-    }
+ 
+     /* Load any SSDT or PSDT tables. Note: Loop leaves tables locked */
+ 
+@@ -358,23 +353,17 @@
+                 "Table [%4.4s:%8.8s] (id FF) - Table namespace load failed\n\n",
+                 Table->Signature.Ascii, Table->Pointer->OemTableId));
+         }
+-        else
+-        {
+-            TablesLoaded++;
+-        }
+     }
+ 
+     if (!TablesFailed)
+     {
+         ACPI_INFO ((
+-            "%u ACPI AML tables successfully acquired and loaded",
+-            TablesLoaded));
++            "ACPI AML tables successfully acquired and loaded"));
+     }
+     else
+     {
+         ACPI_ERROR ((AE_INFO,
+-            "%u table load failures, %u successful",
+-            TablesFailed, TablesLoaded));
++            "%u table load failures", TablesFailed));
+ 
+         /* Indicate at least one failure */
+ 
+diff -ur a/source/components/utilities/utdelete.c b/source/components/utilities/utdelete.c
+--- a/source/components/utilities/utdelete.c	2021-12-06 12:25:49.767092507 +0100
++++ b/source/components/utilities/utdelete.c	2021-12-06 12:18:32.027074617 +0100
+@@ -533,7 +533,6 @@
+     UINT16                  OriginalCount;
+     UINT16                  NewCount = 0;
+     ACPI_CPU_FLAGS          LockFlags;
+-    char                    *Message;
+ 
+ 
+     ACPI_FUNCTION_NAME (UtUpdateRefCount);
+@@ -574,7 +573,6 @@
+             "Obj %p Type %.2X [%s] Refs %.2X [Incremented]\n",
+             Object, Object->Common.Type,
+             AcpiUtGetObjectTypeName (Object), NewCount));
+-        Message = "Incremement";
+         break;
+ 
+     case REF_DECREMENT:
+@@ -606,7 +604,6 @@
+         {
+             AcpiUtDeleteInternalObj (Object);
+         }
+-        Message = "Decrement";
+         break;
+ 
+     default:
+@@ -624,8 +621,8 @@
+     if (NewCount > ACPI_MAX_REFERENCE_COUNT)
+     {
+         ACPI_WARNING ((AE_INFO,
+-            "Large Reference Count (0x%X) in object %p, Type=0x%.2X Operation=%s",
+-            NewCount, Object, Object->Common.Type, Message));
++            "Large Reference Count (0x%X) in object %p, Type=0x%.2X Operation=%d",
++            NewCount, Object, Object->Common.Type, Action));
+     }
+ }
+ 
+diff -ur a/source/components/utilities/utresrc.c b/source/components/utilities/utresrc.c
+--- a/source/components/utilities/utresrc.c	2021-12-06 12:25:49.779092507 +0100
++++ b/source/components/utilities/utresrc.c	2021-12-06 12:21:30.991081931 +0100
+@@ -295,7 +295,7 @@
+ {
+     ACPI_STATUS             Status;
+     UINT8                   *EndAml;
+-    UINT8                   ResourceIndex;
++    UINT8                   ResourceIndex = 0;
+     UINT32                  Length;
+     UINT32                  Offset = 0;
+     UINT8                   EndTag[2] = {0x79, 0x00};
+diff -ur a/source/include/platform/acenv.h b/source/include/platform/acenv.h
+--- a/source/include/platform/acenv.h
++++ b/source/include/platform/acenv.h
+@@ -305,66 +305,8 @@
+ 
+ #endif
+ 
+-#if defined(_LINUX) || defined(__linux__)
+ #include "aclinux.h"
+ 
+-#elif defined(_APPLE) || defined(__APPLE__)
+-#include "acmacosx.h"
+-
+-#elif defined(__DragonFly__)
+-#include "acdragonfly.h"
+-
+-#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
+-#include "acfreebsd.h"
+-
+-#elif defined(__NetBSD__)
+-#include "acnetbsd.h"
+-
+-#elif defined(__sun)
+-#include "acsolaris.h"
+-
+-#elif defined(MODESTO)
+-#include "acmodesto.h"
+-
+-#elif defined(NETWARE)
+-#include "acnetware.h"
+-
+-#elif defined(_CYGWIN)
+-#include "accygwin.h"
+-
+-#elif defined(WIN32)
+-#include "acwin.h"
+-
+-#elif defined(WIN64)
+-#include "acwin64.h"
+-
+-#elif defined(_WRS_LIB_BUILD)
+-#include "acvxworks.h"
+-
+-#elif defined(__OS2__)
+-#include "acos2.h"
+-
+-#elif defined(__HAIKU__)
+-#include "achaiku.h"
+-
+-#elif defined(__QNX__)
+-#include "acqnx.h"
+-
+-/*
+- * EFI applications can be built with -nostdlib, in this case, it must be
+- * included after including all other host environmental definitions, in
+- * order to override the definitions.
+- */
+-#elif defined(_AED_EFI) || defined(_GNU_EFI) || defined(_EDK2_EFI)
+-#include "acefi.h"
+-
+-#else
+-
+-/* Unknown environment */
+-
+-#error Unknown target environment
+-#endif
+-
+ /*! [End] no source code translation !*/
+ 
+ 
+diff -ur a/source/include/platform/acgcc.h b/source/include/platform/acgcc.h
+--- a/source/include/platform/acgcc.h	2021-12-06 12:25:49.791092508 +0100
++++ b/source/include/platform/acgcc.h	2021-12-06 11:54:11.487014927 +0100
+@@ -152,6 +152,8 @@
+ #ifndef __ACGCC_H__
+ #define __ACGCC_H__
+ 
++#define ACPI_USE_BUILTIN_STDARG
++
+ /*
+  * Use compiler specific <stdarg.h> is a good practice for even when
+  * -nostdinc is specified (i.e., ACPI_USE_STANDARD_HEADERS undefined.
+diff -ur a/source/include/platform/aclinux.h b/source/include/platform/aclinux.h
+--- b/source/include/platform/aclinux.h	2021-12-06 12:25:49.791092508 +0100
++++ b/source/include/platform/aclinux.h	2021-12-06 12:04:35.495040429 +0100
+@@ -164,7 +164,6 @@
+ 
+ /* Common (in-kernel/user-space) ACPICA configuration */
+ 
+-#define ACPI_USE_SYSTEM_CLIBRARY
+ #define ACPI_USE_DO_WHILE_0
+ #define ACPI_IGNORE_PACKAGE_RESOLUTION_ERRORS
+ 
+@@ -302,7 +301,7 @@
+ 
+ #else /* !__KERNEL__ */
+ 
+-#define ACPI_USE_STANDARD_HEADERS
++#define ACPI_NO_ERROR_MESSAGES
+ 
+ #ifdef ACPI_USE_STANDARD_HEADERS
+ #include <unistd.h>
+

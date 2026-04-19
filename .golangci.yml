@@ -22,12 +22,10 @@ linters-settings:
         arguments:
           - checkPrivateReceivers
 
-run:
-  skip-dirs:
-    - kernel
-
 issues:
   max-same-issues: 0
+  exclude-dirs:
+    - kernel
   exclude-rules:
     - path: "_test.go"
       linters:
