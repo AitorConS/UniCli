@@ -46,8 +46,11 @@ func buildHelloWorld(t *testing.T) string {
 
 func buildImage(t *testing.T, binaryPath string) string {
 	t.Helper()
+	mkfs := "kernel/output/tools/bin/mkfs"
+	if _, err := os.Stat(mkfs); err != nil {
+		t.Skipf("kernel not built: %s not found (run make kernel && make mkfs first)", mkfs)
+	}
 	out := t.TempDir() + "/test.img"
-	mkfs := "kernel/tools/bin/mkfs"
 	cmd := exec.Command(mkfs, out, binaryPath)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

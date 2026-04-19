@@ -66,8 +66,8 @@ jobs:
           test -e /dev/kvm || (echo "/dev/kvm not found" && exit 1)
           test -r /dev/kvm && test -w /dev/kvm || (echo "Add runner user to kvm group: sudo usermod -aG kvm \$USER" && exit 1)
 
-      - name: Build kernel
-        run: make kernel
+      - name: Build kernel and tools
+        run: make kernel && make -C kernel mkfs
 
       - name: Run E2E tests
         run: make e2e
