@@ -102,9 +102,9 @@ func TestTopologicalSort_NoDeps(t *testing.T) {
 
 func TestTopologicalSort_Chain(t *testing.T) {
 	services := map[string]compose.Service{
-		"db":      {Image: "db:latest"},
-		"api":     {Image: "api:latest", DependsOn: []string{"db"}},
-		"web":     {Image: "web:latest", DependsOn: []string{"api"}},
+		"db":  {Image: "db:latest"},
+		"api": {Image: "api:latest", DependsOn: []string{"db"}},
+		"web": {Image: "web:latest", DependsOn: []string{"api"}},
 	}
 	order, err := compose.TopologicalSort(services)
 	require.NoError(t, err)
