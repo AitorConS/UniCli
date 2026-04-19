@@ -4,7 +4,7 @@
 
 ---
 
-## Current status: Phase 0 — in progress
+## Current status: Phase 2 — in progress
 
 ---
 
@@ -33,18 +33,18 @@
 
 ### Steps
 
-- [ ] 1.1 — Go module init (`go mod init`), set up `cmd/uni`, `cmd/unid` entrypoints
-- [ ] 1.2 — Define `VMManager` interface in `internal/vm/vm.go`
-- [ ] 1.3 — Implement QEMU process wrapper (spawn, kill, monitor)
-- [ ] 1.4 — VM state machine: `created → starting → running → stopping → stopped`
+- [x] 1.1 — Go module init (`go mod init`), set up `cmd/uni`, `cmd/unid` entrypoints
+- [x] 1.2 — Define `VMManager` interface in `internal/vm/vm.go`
+- [x] 1.3 — Implement QEMU process wrapper (spawn, kill, monitor)
+- [x] 1.4 — VM state machine: `created → starting → running → stopping → stopped`
   - All transitions logged with `slog`
   - `sync.RWMutex` for concurrent access
-- [ ] 1.5 — TAP device + Linux bridge setup (`internal/network/tap.go`)
-- [ ] 1.6 — Unix socket API: `unid` listens, `uni` connects (JSON-RPC)
-- [ ] 1.7 — `uni run <binary>` command (cobra) → delegates to `unid` via socket
-- [ ] 1.8 — Unit tests: VM state machine, socket protocol parsing
-- [ ] 1.9 — Integration test: spin up VM, assert it started, tear down
-- [ ] 1.10 — `make build` produces `uni` + `unid` binaries
+- [x] 1.5 — TAP device + Linux bridge setup (`internal/network/tap.go`)
+- [x] 1.6 — Unix socket API: `unid` listens, `uni` connects (JSON-RPC)
+- [x] 1.7 — `uni run <binary>` command (cobra) → delegates to `unid` via socket
+- [x] 1.8 — Unit tests: VM state machine, socket protocol parsing
+- [x] 1.9 — Integration test: spin up VM, assert it started, tear down
+- [x] 1.10 — `make build` produces `uni` + `unid` binaries
 
 **Done when:** `uni run ./hello` works. Unit + integration tests green. CI passes.
 

@@ -1,0 +1,56 @@
+package main
+
+import (
+	"fmt"
+
+	"github.com/AitorConS/unikernel-engine/internal/image"
+	"github.com/AitorConS/unikernel-engine/internal/registry"
+	"github.com/spf13/cobra"
+)
+
+func newPushCmd(storePath *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "push <ref> <registry>",
+		Short: "Push a local image to a registry (e.g. push hello:latest http://localhost:5000)",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ref, registryURL := args[0], args[1]
+			store, err := image.NewStore(*storePath)
+			if err != nil {
+				return fmt.Errorf("push: open store: %w", err)
+			}
+			m, diskPath, err := store.Get(ref)
+			if err != nil {
+				return fmt.Errorf("push: %w", err)
+			}
+			client := registry.NewClient(registryURL)
+			if err := client.Push(cmd.Context(), m, diskPath); err != nil {
+				return fmt.Errorf("push: %w", err)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "pushed %s to %s\n", ref, registryURL)
+			return nil
+		},
+	}
+}
+
+func newPullCmd(storePath *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "pull <ref> <registry>",
+		Short: "Pull an image from a registry (e.g. pull hello:latest http://localhost:5000)",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ref, registryURL := args[0], args[1]
+			store, err := image.NewStore(*storePath)
+			if err != nil {
+				return fmt.Errorf("pull: open store: %w", err)
+			}
+			client := registry.NewClient(registryURL)
+			m, err := client.Pull(cmd.Context(), ref, store)
+			if err != nil {
+				return fmt.Errorf("pull: %w", err)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s  %s:%s\n", m.DiskDigest, m.Name, m.Tag)
+			return nil
+		},
+	}
+}

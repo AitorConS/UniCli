@@ -4,11 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/AitorConS/unikernel-engine/internal/api"
+	"github.com/AitorConS/unikernel-engine/internal/image"
+	"github.com/AitorConS/unikernel-engine/internal/registry"
 	"github.com/AitorConS/unikernel-engine/internal/vm"
 	"github.com/spf13/cobra"
 )
@@ -24,37 +27,77 @@ func main() {
 
 func newRootCmd() *cobra.Command {
 	var (
-		socketPath string
-		qemuBin    string
+		socketPath   string
+		qemuBin      string
+		registryAddr string
+		storePath    string
 	)
 	root := &cobra.Command{
 		Use:     "unid",
 		Short:   "Unikernel engine daemon",
 		Version: version,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return serve(cmd.Context(), socketPath, qemuBin)
+			return serve(cmd.Context(), socketPath, qemuBin, registryAddr, storePath)
 		},
 	}
-	root.Flags().StringVar(&socketPath, "socket", "/var/run/unid.sock", "Unix socket path to listen on")
-	root.Flags().StringVar(&qemuBin, "qemu", "qemu-system-x86_64", "QEMU binary to use")
+	root.Flags().StringVar(&socketPath, "socket", "/var/run/unid.sock",
+		"Unix socket path for VM management API")
+	root.Flags().StringVar(&qemuBin, "qemu", "qemu-system-x86_64",
+		"QEMU binary to use")
+	root.Flags().StringVar(&registryAddr, "registry-addr", "",
+		"HTTP address for image registry (e.g. :5000); empty disables it")
+	root.Flags().StringVar(&storePath, "store", defaultStorePath(),
+		"image store root directory")
 	return root
 }
 
-func serve(ctx context.Context, socketPath, qemuBin string) error {
+func serve(ctx context.Context, socketPath, qemuBin, registryAddr, storePath string) error {
 	mgr := vm.NewQEMUManager(qemuBin)
 
-	srv, err := api.NewServer(mgr, socketPath)
+	vmSrv, err := api.NewServer(mgr, socketPath)
 	if err != nil {
-		return fmt.Errorf("unid: %w", err)
+		return fmt.Errorf("unid: vm server: %w", err)
 	}
 
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
 	slog.Info("unid listening", "socket", socketPath, "qemu", qemuBin)
-	if err := srv.Serve(ctx); err != nil {
+
+	if registryAddr != "" {
+		store, err := image.NewStore(storePath)
+		if err != nil {
+			return fmt.Errorf("unid: image store: %w", err)
+		}
+		regSrv := &http.Server{
+			Addr:    registryAddr,
+			Handler: registry.NewServer(store).Handler(),
+		}
+		go func() {
+			slog.Info("registry listening", "addr", registryAddr)
+			if err := regSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				slog.Error("registry server", "err", err)
+			}
+		}()
+		go func() {
+			<-ctx.Done()
+			if err := regSrv.Shutdown(context.Background()); err != nil {
+				slog.Warn("registry shutdown", "err", err)
+			}
+		}()
+	}
+
+	if err := vmSrv.Serve(ctx); err != nil {
 		return fmt.Errorf("unid serve: %w", err)
 	}
 	slog.Info("unid shutdown complete")
 	return nil
+}
+
+func defaultStorePath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ".uni/images"
+	}
+	return home + "/.uni/images"
 }
