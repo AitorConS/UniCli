@@ -10,10 +10,6 @@ SRCS-kernel.elf= \
 	$(CURDIR)/pci.c \
 	$(OBJDIR)/gitversion.c \
 	$(ACPICA) \
-	$(SRCDIR)/aws/ena/ena.c \
-	$(SRCDIR)/aws/ena/ena_com/ena_com.c \
-	$(SRCDIR)/aws/ena/ena_com/ena_eth_com.c \
-	$(SRCDIR)/aws/ena/ena_datapath.c \
 	$(SRCDIR)/drivers/acpi.c \
 	$(SRCDIR)/drivers/ata.c \
 	$(SRCDIR)/drivers/ata-pci.c \
@@ -96,24 +92,6 @@ SRCS-kernel.elf= \
 	$(SRCDIR)/virtio/virtio_socket.c \
 	$(SRCDIR)/virtio/virtqueue.c \
 	$(SRCDIR)/virtio/scsi.c \
-	$(SRCDIR)/vmware/vmxnet3_net.c \
-	$(SRCDIR)/vmware/vmxnet3_queue.c \
-	$(SRCDIR)/vmware/pvscsi.c \
-	$(SRCDIR)/xen/xen.c \
-	$(SRCDIR)/xen/xenblk.c \
-	$(SRCDIR)/xen/xennet.c \
-	$(SRCDIR)/hyperv/vmbus/hyperv.c \
-	$(SRCDIR)/hyperv/vmbus/vmbus.c \
-	$(SRCDIR)/hyperv/vmbus/vmbus_br.c \
-	$(SRCDIR)/hyperv/vmbus/vmbus_chan.c \
-	$(SRCDIR)/hyperv/vmbus/vmbus_xact.c \
-	$(SRCDIR)/hyperv/vmbus/vmbus_et.c \
-	$(SRCDIR)/hyperv/netvsc/netvsc.c \
-	$(SRCDIR)/hyperv/netvsc/hv_net_vsc.c \
-	$(SRCDIR)/hyperv/netvsc/hv_rndis_filter.c \
-	$(SRCDIR)/hyperv/storvsc/storvsc.c \
-	$(SRCDIR)/hyperv/utilities/vmbus_ic.c \
-	$(SRCDIR)/hyperv/utilities/vmbus_shutdown.c \
 	$(SRCDIR)/x86_64/acpi.c \
 	$(SRCDIR)/x86_64/apic.c \
 	$(SRCDIR)/x86_64/breakpoint.c \
@@ -121,7 +99,6 @@ SRCS-kernel.elf= \
 	$(SRCDIR)/x86_64/crt0.s \
 	$(SRCDIR)/x86_64/elf64.c \
 	$(SRCDIR)/x86_64/hpet.c \
-	$(SRCDIR)/x86_64/hyperv.c \
 	$(SRCDIR)/x86_64/init.s \
 	$(SRCDIR)/x86_64/interrupt.c \
 	$(SRCDIR)/x86_64/kernel_machine.c \
@@ -182,8 +159,6 @@ INCLUDES=\
 	-I$(SRCDIR)/fs \
 	-I$(SRCDIR)/unix \
 	-I$(SRCDIR)/unix_process \
-	-I$(SRCDIR)/xen/public \
-	-I$(SRCDIR)/hyperv/include \
 	-I$(ACPICA_DIR)/source/include \
 	-I$(LWIPDIR)/src/include \
 
