@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
 
 	"github.com/spf13/cobra"
 )
@@ -28,7 +30,7 @@ func newRootCmd() *cobra.Command {
 		Short:   "Unikernel engine CLI",
 		Version: version,
 	}
-	root.PersistentFlags().StringVar(&socketPath, "socket", "/var/run/unid.sock",
+	root.PersistentFlags().StringVar(&socketPath, "socket", defaultSocketPath(),
 		"unid daemon socket path")
 	root.PersistentFlags().StringVar(&storePath, "store",
 		defaultStorePath(), "local image store path")
@@ -51,6 +53,13 @@ func newRootCmd() *cobra.Command {
 		newComposeCmd(&socketPath, &storePath, &outputFmt),
 	)
 	return root
+}
+
+func defaultSocketPath() string {
+	if runtime.GOOS == "windows" {
+		return filepath.Join(os.TempDir(), "unid.sock")
+	}
+	return "/var/run/unid.sock"
 }
 
 func defaultStorePath() string {

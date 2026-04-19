@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"runtime"
 	"syscall"
 
 	"github.com/AitorConS/unikernel-engine/internal/api"
@@ -40,7 +42,7 @@ func newRootCmd() *cobra.Command {
 			return serve(cmd.Context(), socketPath, qemuBin, registryAddr, storePath)
 		},
 	}
-	root.Flags().StringVar(&socketPath, "socket", "/var/run/unid.sock",
+	root.Flags().StringVar(&socketPath, "socket", defaultSocketPath(),
 		"Unix socket path for VM management API")
 	root.Flags().StringVar(&qemuBin, "qemu", "qemu-system-x86_64",
 		"QEMU binary to use")
@@ -92,6 +94,13 @@ func serve(ctx context.Context, socketPath, qemuBin, registryAddr, storePath str
 	}
 	slog.Info("unid shutdown complete")
 	return nil
+}
+
+func defaultSocketPath() string {
+	if runtime.GOOS == "windows" {
+		return filepath.Join(os.TempDir(), "unid.sock")
+	}
+	return "/var/run/unid.sock"
 }
 
 func defaultStorePath() string {
