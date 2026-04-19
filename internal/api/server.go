@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"syscall"
+	"time"
 
 	"github.com/AitorConS/unikernel-engine/internal/vm"
 )
@@ -89,12 +91,20 @@ func (s *Server) dispatch(ctx context.Context, req *Request) (any, *RPCError) {
 		return s.handleRun(ctx, req.Params)
 	case "VM.Stop":
 		return s.handleStop(ctx, req.Params)
+	case "VM.Kill":
+		return s.handleKill(ctx, req.Params)
+	case "VM.Signal":
+		return s.handleSignal(ctx, req.Params)
 	case "VM.Remove":
 		return s.handleRemove(ctx, req.Params)
 	case "VM.List":
 		return s.handleList(ctx)
 	case "VM.Get":
 		return s.handleGet(req.Params)
+	case "VM.Logs":
+		return s.handleLogs(req.Params)
+	case "VM.Inspect":
+		return s.handleInspect(req.Params)
 	default:
 		return nil, &RPCError{Code: -32601, Message: "method not found: " + req.Method}
 	}
@@ -122,11 +132,43 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *R
 }
 
 func (s *Server) handleStop(ctx context.Context, params json.RawMessage) (any, *RPCError) {
+	var p StopParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+	}
+	var err error
+	if p.Force {
+		err = s.mgr.Kill(ctx, p.ID)
+	} else {
+		err = s.mgr.Stop(ctx, p.ID)
+	}
+	if err != nil {
+		return nil, &RPCError{Code: -32000, Message: err.Error()}
+	}
+	return map[string]string{"status": "ok"}, nil
+}
+
+func (s *Server) handleKill(ctx context.Context, params json.RawMessage) (any, *RPCError) {
 	var p IDParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
-	if err := s.mgr.Stop(ctx, p.ID); err != nil {
+	if err := s.mgr.Kill(ctx, p.ID); err != nil {
+		return nil, &RPCError{Code: -32000, Message: err.Error()}
+	}
+	return map[string]string{"status": "ok"}, nil
+}
+
+func (s *Server) handleSignal(ctx context.Context, params json.RawMessage) (any, *RPCError) {
+	var p SignalParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+	}
+	sig, err := parseSig(p.Signal)
+	if err != nil {
+		return nil, &RPCError{Code: -32602, Message: err.Error()}
+	}
+	if err := s.mgr.Signal(ctx, p.ID, sig); err != nil {
 		return nil, &RPCError{Code: -32000, Message: err.Error()}
 	}
 	return map[string]string{"status": "ok"}, nil
@@ -164,10 +206,76 @@ func (s *Server) handleGet(params json.RawMessage) (any, *RPCError) {
 	return toInfo(v), nil
 }
 
+func (s *Server) handleLogs(params json.RawMessage) (any, *RPCError) {
+	var p IDParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+	}
+	v, err := s.mgr.Get(p.ID)
+	if err != nil {
+		return nil, &RPCError{Code: -32000, Message: err.Error()}
+	}
+	return LogsResponse{ID: v.ID, Logs: string(v.Logs())}, nil
+}
+
+func (s *Server) handleInspect(params json.RawMessage) (any, *RPCError) {
+	var p IDParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+	}
+	v, err := s.mgr.Get(p.ID)
+	if err != nil {
+		return nil, &RPCError{Code: -32000, Message: err.Error()}
+	}
+	return toDetail(v), nil
+}
+
 func toInfo(v *vm.VM) VMInfo {
 	return VMInfo{
 		ID:    v.ID,
 		State: string(v.GetState()),
 		Image: v.Cfg.ImagePath,
 	}
+}
+
+func toDetail(v *vm.VM) VMDetail {
+	d := VMDetail{
+		ID:        v.ID,
+		State:     string(v.GetState()),
+		Image:     v.Cfg.ImagePath,
+		Memory:    v.Cfg.Memory,
+		CPUs:      v.Cfg.CPUs,
+		CreatedAt: v.CreatedAt.Format(time.RFC3339),
+	}
+	startedAt, stoppedAt := v.GetTimes()
+	if startedAt != nil {
+		s := startedAt.Format(time.RFC3339)
+		d.StartedAt = &s
+	}
+	if stoppedAt != nil {
+		s := stoppedAt.Format(time.RFC3339)
+		d.StoppedAt = &s
+	}
+	return d
+}
+
+// parseSig converts a signal name ("SIGTERM", "15") to an os.Signal.
+func parseSig(s string) (syscall.Signal, error) {
+	sigMap := map[string]syscall.Signal{
+		"SIGTERM": syscall.SIGTERM,
+		"SIGINT":  syscall.SIGINT,
+		"SIGKILL": syscall.SIGKILL,
+		"SIGHUP":  syscall.SIGHUP,
+		"SIGQUIT": syscall.SIGQUIT,
+		"SIGUSR1": syscall.Signal(10),
+		"SIGUSR2": syscall.Signal(12),
+	}
+	if sig, ok := sigMap[s]; ok {
+		return sig, nil
+	}
+	var n int
+	if _, err := fmt.Sscanf(s, "%d", &n); err != nil {
+		return 0, fmt.Errorf("unknown signal %q", s)
+	}
+	return syscall.Signal(n), nil
 }

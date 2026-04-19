@@ -20,6 +20,7 @@ func newRootCmd() *cobra.Command {
 	var (
 		socketPath string
 		storePath  string
+		outputFmt  string
 	)
 
 	root := &cobra.Command{
@@ -31,6 +32,8 @@ func newRootCmd() *cobra.Command {
 		"unid daemon socket path")
 	root.PersistentFlags().StringVar(&storePath, "store",
 		defaultStorePath(), "local image store path")
+	root.PersistentFlags().StringVar(&outputFmt, "output", "table",
+		"output format: table or json")
 
 	root.AddCommand(
 		newRunCmd(&socketPath, &storePath),
@@ -39,6 +42,12 @@ func newRootCmd() *cobra.Command {
 		newRmiCmd(&storePath),
 		newPushCmd(&storePath),
 		newPullCmd(&storePath),
+		newPsCmd(&socketPath, &outputFmt),
+		newLogsCmd(&socketPath),
+		newStopCmd(&socketPath),
+		newRmCmd(&socketPath),
+		newInspectCmd(&socketPath),
+		newExecCmd(&socketPath),
 	)
 	return root
 }

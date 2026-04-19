@@ -1,8 +1,10 @@
 package vm
 
 import (
+	"bytes"
 	"fmt"
 	"log/slog"
+	"os"
 	"slices"
 	"sync"
 	"time"
@@ -48,6 +50,27 @@ type Config struct {
 // process abstracts an OS process for testability.
 type process interface {
 	kill() error
+	signal(sig os.Signal) error
+}
+
+// safeBuffer is a concurrency-safe write-only byte buffer used for VM log capture.
+type safeBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *safeBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *safeBuffer) Bytes() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	cp := make([]byte, b.buf.Len())
+	copy(cp, b.buf.Bytes())
+	return cp
 }
 
 // VM is a managed unikernel instance. All exported fields are read-only after
@@ -66,9 +89,10 @@ type VM struct {
 	// StoppedAt is when the QEMU process exited (nil until then).
 	StoppedAt *time.Time
 
-	mu   sync.RWMutex
-	proc process
-	done chan struct{}
+	mu     sync.RWMutex
+	proc   process
+	done   chan struct{}
+	logBuf safeBuffer
 }
 
 // Done returns a channel that is closed when the VM reaches StateStopped.
@@ -81,6 +105,18 @@ func (v *VM) GetState() State {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 	return v.State
+}
+
+// Logs returns a snapshot of captured QEMU serial console output.
+func (v *VM) Logs() []byte {
+	return v.logBuf.Bytes()
+}
+
+// GetTimes returns the start and stop timestamps under a read lock.
+func (v *VM) GetTimes() (startedAt, stoppedAt *time.Time) {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	return v.StartedAt, v.StoppedAt
 }
 
 // transition atomically moves v to state to, validating the edge and logging.

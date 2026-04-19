@@ -7,8 +7,11 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"syscall"
 	"time"
 )
+
+const gracePeriod = 30 * time.Second
 
 // CommandFunc builds an exec.Cmd. Defaults to exec.Command; replaceable in tests.
 type CommandFunc func(name string, args ...string) *exec.Cmd
@@ -60,6 +63,8 @@ func (m *QEMUManager) Start(_ context.Context, id string) error {
 		return fmt.Errorf("qemu start %s: %w", id, err)
 	}
 	cmd := m.buildCmd(v.Cfg)
+	cmd.Stdout = &v.logBuf
+	cmd.Stderr = &v.logBuf
 	if err := cmd.Start(); err != nil {
 		if tErr := v.transition(StateStopped); tErr != nil {
 			return fmt.Errorf("qemu start %s: launch: %w; also failed to stop: %v", id, err, tErr)
@@ -79,8 +84,9 @@ func (m *QEMUManager) Start(_ context.Context, id string) error {
 	return nil
 }
 
-// Stop kills the QEMU process for the VM identified by id.
-func (m *QEMUManager) Stop(_ context.Context, id string) error {
+// Stop gracefully shuts down the VM: sends SIGTERM, waits up to gracePeriod,
+// then kills if still running.
+func (m *QEMUManager) Stop(ctx context.Context, id string) error {
 	v, err := m.store.Get(id)
 	if err != nil {
 		return fmt.Errorf("qemu stop %s: %w", id, err)
@@ -91,10 +97,63 @@ func (m *QEMUManager) Stop(_ context.Context, id string) error {
 	v.mu.RLock()
 	proc := v.proc
 	v.mu.RUnlock()
+	if proc == nil {
+		return nil
+	}
+	if err := proc.signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		// SIGTERM not supported on this platform (e.g. Windows); fall back to kill.
+		slog.Debug("qemu stop: sigterm unsupported, falling back to kill", "vm_id", id, "err", err)
+		if killErr := proc.kill(); killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
+			return fmt.Errorf("qemu stop %s: kill after failed sigterm: %w", id, killErr)
+		}
+		return nil
+	}
+	select {
+	case <-v.Done():
+		return nil
+	case <-time.After(gracePeriod):
+	case <-ctx.Done():
+	}
+	if err := proc.kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		return fmt.Errorf("qemu stop %s: kill after grace: %w", id, err)
+	}
+	return nil
+}
+
+// Kill immediately sends SIGKILL to the VM process.
+func (m *QEMUManager) Kill(_ context.Context, id string) error {
+	v, err := m.store.Get(id)
+	if err != nil {
+		return fmt.Errorf("qemu kill %s: %w", id, err)
+	}
+	if err := v.transition(StateStopping); err != nil {
+		return fmt.Errorf("qemu kill %s: %w", id, err)
+	}
+	v.mu.RLock()
+	proc := v.proc
+	v.mu.RUnlock()
 	if proc != nil {
 		if err := proc.kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
-			return fmt.Errorf("qemu stop %s: kill: %w", id, err)
+			return fmt.Errorf("qemu kill %s: %w", id, err)
 		}
+	}
+	return nil
+}
+
+// Signal sends sig to the VM's QEMU process.
+func (m *QEMUManager) Signal(_ context.Context, id string, sig os.Signal) error {
+	v, err := m.store.Get(id)
+	if err != nil {
+		return fmt.Errorf("qemu signal %s: %w", id, err)
+	}
+	v.mu.RLock()
+	proc := v.proc
+	v.mu.RUnlock()
+	if proc == nil {
+		return fmt.Errorf("qemu signal %s: no process", id)
+	}
+	if err := proc.signal(sig); err != nil {
+		return fmt.Errorf("qemu signal %s: %w", id, err)
 	}
 	return nil
 }
@@ -157,7 +216,6 @@ func (m *QEMUManager) monitor(v *VM, cmd *exec.Cmd) {
 	v.StoppedAt = &now
 	v.mu.Unlock()
 	if err := v.transition(StateStopped); err != nil {
-		// Stop() may have already transitioned to StateStopping/Stopped.
 		slog.Debug("monitor: transition to stopped", "vm_id", v.ID, "err", err)
 	}
 }
@@ -168,6 +226,13 @@ type osProcess struct{ p *os.Process }
 func (o *osProcess) kill() error {
 	if err := o.p.Kill(); err != nil {
 		return fmt.Errorf("kill process %d: %w", o.p.Pid, err)
+	}
+	return nil
+}
+
+func (o *osProcess) signal(sig os.Signal) error {
+	if err := o.p.Signal(sig); err != nil {
+		return fmt.Errorf("signal process %d (%v): %w", o.p.Pid, sig, err)
 	}
 	return nil
 }

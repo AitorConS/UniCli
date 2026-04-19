@@ -78,8 +78,12 @@ func resolveImage(imgArg, storePath, memory string, cpus int) (string, error) {
 }
 
 func isFilePath(s string) bool {
-	return strings.HasPrefix(s, "/") ||
+	if strings.HasPrefix(s, "/") ||
 		strings.HasPrefix(s, "./") ||
 		strings.HasPrefix(s, "../") ||
-		strings.HasPrefix(s, ".")
+		strings.HasPrefix(s, ".") {
+		return true
+	}
+	// Windows absolute paths: C:\ or C:/
+	return len(s) >= 3 && s[1] == ':' && (s[2] == '/' || s[2] == '\\')
 }

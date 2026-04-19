@@ -4,7 +4,7 @@
 
 ---
 
-## Current status: Phase 2 — in progress
+## Current status: Phase 3 — complete
 
 ---
 
@@ -56,14 +56,14 @@
 
 ### Steps
 
-- [ ] 2.1 — Define image manifest format (JSON, versioned) in `internal/image/manifest.go`
-- [ ] 2.2 — Image build pipeline: ELF binary → disk image + manifest
-- [ ] 2.3 — Content-addressable local store (SHA256 keyed)
-- [ ] 2.4 — `uni build`, `uni images`, `uni rmi` commands
-- [ ] 2.5 — Registry server (`internal/registry/`): HTTP, OCI-inspired API
-- [ ] 2.6 — `uni push` / `uni pull` client
-- [ ] 2.7 — Table-driven tests for manifest parser (valid/invalid/missing-fields)
-- [ ] 2.8 — Integration test: build → push → pull → run round-trip
+- [x] 2.1 — Define image manifest format (JSON, versioned) in `internal/image/manifest.go`
+- [x] 2.2 — Image build pipeline: ELF binary → disk image + manifest
+- [x] 2.3 — Content-addressable local store (SHA256 keyed)
+- [x] 2.4 — `uni build`, `uni images`, `uni rmi` commands
+- [x] 2.5 — Registry server (`internal/registry/`): HTTP, OCI-inspired API
+- [x] 2.6 — `uni push` / `uni pull` client
+- [x] 2.7 — Table-driven tests for manifest parser (valid/invalid/missing-fields)
+- [x] 2.8 — Integration test: build → push → pull → run round-trip
 
 **Done when:** full image round-trip works. Image store tested. Registry server tested. 80%+ coverage on `internal/image/`.
 
@@ -75,15 +75,15 @@
 
 ### Steps
 
-- [ ] 3.1 — `uni ps` — list running instances with metadata
-- [ ] 3.2 — `uni logs` — stream stdout from VM serial console
-- [ ] 3.3 — `uni stop` — graceful shutdown (ACPI signal → timeout → kill)
-- [ ] 3.4 — `uni rm` — remove stopped instance + cleanup
-- [ ] 3.5 — `uni inspect` — detailed instance info (JSON)
-- [ ] 3.6 — `uni exec` — send signals to running instance
-- [ ] 3.7 — `--output json` flag on all commands
-- [ ] 3.8 — Errors to stderr, output to stdout (enforced in tests)
-- [ ] 3.9 — 80%+ unit coverage on `cmd/uni/`
+- [x] 3.1 — `uni ps` — list running instances with metadata
+- [x] 3.2 — `uni logs` — stream stdout from VM serial console
+- [x] 3.3 — `uni stop` — graceful shutdown (SIGTERM → 30s timeout → kill)
+- [x] 3.4 — `uni rm` — remove stopped instance + cleanup
+- [x] 3.5 — `uni inspect` — detailed instance info (JSON)
+- [x] 3.6 — `uni exec` — send signals to running instance
+- [x] 3.7 — `--output json` flag on all commands
+- [x] 3.8 — Errors to stderr, output to stdout (enforced in tests)
+- [x] 3.9 — 81% unit coverage on `cmd/uni/`
 
 **Done when:** all commands work. JSON output works. Coverage met. CI green.
 

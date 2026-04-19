@@ -48,10 +48,26 @@ func (c *Client) Run(_ context.Context, p RunParams) (VMInfo, error) {
 	return info, nil
 }
 
-// Stop stops the VM with the given id.
-func (c *Client) Stop(_ context.Context, id string) error {
-	if err := c.call("VM.Stop", IDParams{ID: id}, nil); err != nil {
+// Stop sends a graceful stop request. Set force=true for immediate SIGKILL.
+func (c *Client) Stop(_ context.Context, id string, force bool) error {
+	if err := c.call("VM.Stop", StopParams{ID: id, Force: force}, nil); err != nil {
 		return fmt.Errorf("client stop: %w", err)
+	}
+	return nil
+}
+
+// Kill sends an immediate SIGKILL to the VM.
+func (c *Client) Kill(_ context.Context, id string) error {
+	if err := c.call("VM.Kill", IDParams{ID: id}, nil); err != nil {
+		return fmt.Errorf("client kill: %w", err)
+	}
+	return nil
+}
+
+// Signal sends the named signal to the VM process.
+func (c *Client) Signal(_ context.Context, id, sig string) error {
+	if err := c.call("VM.Signal", SignalParams{ID: id, Signal: sig}, nil); err != nil {
+		return fmt.Errorf("client signal: %w", err)
 	}
 	return nil
 }
@@ -80,6 +96,24 @@ func (c *Client) Get(_ context.Context, id string) (VMInfo, error) {
 		return VMInfo{}, fmt.Errorf("client get: %w", err)
 	}
 	return info, nil
+}
+
+// Logs returns captured serial console output for the VM.
+func (c *Client) Logs(_ context.Context, id string) (LogsResponse, error) {
+	var resp LogsResponse
+	if err := c.call("VM.Logs", IDParams{ID: id}, &resp); err != nil {
+		return LogsResponse{}, fmt.Errorf("client logs: %w", err)
+	}
+	return resp, nil
+}
+
+// Inspect returns full details for the VM.
+func (c *Client) Inspect(_ context.Context, id string) (VMDetail, error) {
+	var detail VMDetail
+	if err := c.call("VM.Inspect", IDParams{ID: id}, &detail); err != nil {
+		return VMDetail{}, fmt.Errorf("client inspect: %w", err)
+	}
+	return detail, nil
 }
 
 func (c *Client) call(method string, params any, out any) error {

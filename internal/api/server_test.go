@@ -85,7 +85,7 @@ func TestServer_Stop(t *testing.T) {
 	info, err := client.Run(context.Background(), api.RunParams{ImagePath: "test.img", Memory: "256M"})
 	require.NoError(t, err)
 
-	require.NoError(t, client.Stop(context.Background(), info.ID))
+	require.NoError(t, client.Stop(context.Background(), info.ID, false))
 
 	require.Eventually(t, func() bool {
 		got, err := client.Get(context.Background(), info.ID)
