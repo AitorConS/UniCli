@@ -17,10 +17,15 @@ func main() {
 }
 
 func newRootCmd() *cobra.Command {
+	var socketPath string
+
 	root := &cobra.Command{
 		Use:     "uni",
 		Short:   "Unikernel engine CLI",
 		Version: version,
 	}
+	root.PersistentFlags().StringVar(&socketPath, "socket", "/var/run/unid.sock", "unid daemon socket path")
+
+	root.AddCommand(newRunCmd(&socketPath))
 	return root
 }
