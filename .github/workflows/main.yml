@@ -20,7 +20,6 @@ jobs:
         uses: golangci/golangci-lint-action@v6
         with:
           version: latest
-          args: --exclude-dirs=kernel
 
   unit-tests:
     name: Unit Tests
