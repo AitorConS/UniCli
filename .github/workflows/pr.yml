@@ -60,7 +60,7 @@ jobs:
 
   integration-tests:
     name: Integration Tests
-    if: false  # TODO: enable when self-hosted KVM runner is configured
+    if: true  # TODO: enable when self-hosted KVM runner is configured
     runs-on: [self-hosted, linux, kvm]
     steps:
       - uses: actions/checkout@v4
