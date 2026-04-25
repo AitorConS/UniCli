@@ -33,6 +33,10 @@ services:
       - <network-name>
     environment:
       - KEY=VALUE
+    ports:
+      - "host:guest[/tcp|udp]"
+    volumes:
+      - "name:guestpath[:ro]"
 
 networks:
   <network-name>:
@@ -63,6 +67,8 @@ networks:
 | `depends_on` | No | `[]` | Services that must start before this one |
 | `networks` | No | `[]` | Logical networks to attach to |
 | `environment` | No | `[]` | Environment variables as `KEY=VALUE` strings |
+| `ports` | No | `[]` | Port mappings: `"host:guest"` or `"host:guest/udp"` |
+| `volumes` | No | `[]` | Volume mounts: `"name:guestpath"` or `"name:guestpath:ro"` |
 
 ---
 
@@ -83,11 +89,13 @@ version: "1"
 
 services:
   db:
-    image: postgres:latest
+    image: redis:latest
     memory: 512M
     cpus: 1
     networks:
       - backend-net
+    volumes:
+      - dbdata:/data
 
   api:
     image: myapi:v1.0
@@ -100,8 +108,10 @@ services:
       - frontend-net
     environment:
       - DB_HOST=db
-      - DB_PORT=5432
+      - DB_PORT=6379
       - LOG_LEVEL=info
+    ports:
+      - "8080:8080"
 
   web:
     image: myweb:v1.0
@@ -113,12 +123,24 @@ services:
       - frontend-net
     environment:
       - API_URL=http://api:8080
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - staticfiles:/var/www/html:ro
 
 networks:
   backend-net:
     driver: bridge
   frontend-net:
     driver: bridge
+```
+
+{: .note }
+Volumes referenced in `volumes:` must be created beforehand with `uni volume create <name>`.
+```bash
+uni volume create dbdata --size 1G
+uni volume create staticfiles --size 512M
 ```
 
 **Startup order** (resolved by dependency graph):

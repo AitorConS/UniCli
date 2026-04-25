@@ -51,6 +51,12 @@ uni run <image> [flags]
 |---|---|---|
 | `--memory` | `256M` | VM memory (e.g. `256M`, `1G`, `4G`) |
 | `--cpus` | `1` | Number of virtual CPUs |
+| `-p`, `--port` | — | Publish port(s): `host:guest[/tcp\|udp]` (repeatable) |
+| `-e`, `--env` | — | Set environment variable `KEY=VALUE` (repeatable) |
+| `--env-file` | — | Read environment variables from file (one `KEY=VALUE` per line) |
+| `--name` | — | Assign a human-readable name to the VM instance |
+| `--rm` | `false` | Automatically remove the VM when it stops |
+| `-v`, `--volume` | — | Mount a named volume: `name:guestpath[:ro]` (repeatable) |
 
 **Examples:**
 
@@ -61,8 +67,29 @@ uni run ./myapp.img --memory 512M --cpus 2
 # Run a built image by name
 uni run myapp:latest
 
+# Expose port 8080 on the host → port 80 inside the VM
+uni run nginx:latest -p 8080:80
+
+# Multiple ports and UDP
+uni run myapp:latest -p 8080:80 -p 5353:53/udp
+
+# Pass environment variables
+uni run myapp:latest -e NODE_ENV=production -e PORT=3000
+
+# Load env vars from a file
+uni run myapp:latest --env-file .env
+
+# Mount a named volume (create first with 'uni volume create')
+uni run myapp:latest -v data:/var/data
+
+# Read-only volume mount
+uni run myapp:latest -v config:/etc/app:ro
+
+# Named instance, auto-remove on exit
+uni run hello:latest --name web --rm
+
 # Output the VM ID for scripting
-ID=$(uni run hello:latest)
+ID=$(uni run hello:latest --name api)
 echo "Started VM: $ID"
 ```
 
@@ -147,8 +174,16 @@ uni inspect a3f8c2d1
   "id": "a3f8c2d1-7b4e-4a1f-8c2d-1a2b3c4d5e6f",
   "state": "running",
   "image": "hello:latest",
+  "name": "web",
   "memory": "256M",
   "cpus": 1,
+  "ports": [
+    {"host_port": 8080, "guest_port": 80, "protocol": "tcp"}
+  ],
+  "env": ["NODE_ENV=production", "PORT=3000"],
+  "volumes": [
+    {"disk_path": "/home/user/.uni/volumes/data/disk.img", "guest_path": "/var/data", "read_only": false}
+  ],
   "created_at": "2026-04-19T10:00:00Z",
   "started_at": "2026-04-19T10:00:01Z"
 }
@@ -339,6 +374,92 @@ uni pull <ref> <registry-url>
 ```bash
 uni pull hello:latest http://registry.example.com:5000
 # sha256:abc123...  hello:latest
+```
+
+---
+
+## Volume Commands
+
+Volumes are named persistent disk images that survive VM restarts. Create a volume once, then mount it into any VM with `-v`.
+
+### `uni volume create`
+
+Create a new named volume.
+
+```
+uni volume create <name> [--size <size>]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--size` | `1G` | Volume size: `512M`, `1G`, `2G`, etc. |
+
+**Example:**
+
+```bash
+uni volume create mydata --size 2G
+# mydata
+
+uni volume create config --size 512M
+# config
+```
+
+---
+
+### `uni volume ls`
+
+List all volumes.
+
+```
+uni volume ls [--output json]
+```
+
+```bash
+uni volume ls
+# NAME     SIZE   CREATED
+# mydata   2.0G   2026-04-25 18:00:00
+# config   512.0M 2026-04-25 18:01:00
+```
+
+---
+
+### `uni volume inspect`
+
+Show full details for a volume as JSON.
+
+```
+uni volume inspect <name>
+```
+
+```bash
+uni volume inspect mydata
+```
+
+```json
+{
+  "id": "mydata",
+  "disk_path": "/home/user/.uni/volumes/mydata/disk.img",
+  "size_bytes": 2147483648,
+  "created_at": "2026-04-25T18:00:00Z"
+}
+```
+
+---
+
+### `uni volume rm`
+
+Remove a volume and its disk image permanently.
+
+```
+uni volume rm <name>
+```
+
+{: .warning }
+This is irreversible. All data stored in the volume will be lost.
+
+```bash
+uni volume rm mydata
+# mydata
 ```
 
 ---

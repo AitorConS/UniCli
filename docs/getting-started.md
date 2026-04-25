@@ -184,6 +184,40 @@ uni rm a3f8c2d1
 {: .note }
 `uni run` takes a built image name (`hello:latest`) or a path to a `.img` disk image file — **not** a raw ELF binary. Always run `uni build` first.
 
+### 4. Run with ports and environment variables
+
+```bash
+# Expose port 8080 on your host → port 80 inside the VM
+# Pass environment variables with -e
+uni run myapp:latest -p 8080:80 -e PORT=80 -e APP_ENV=production --name web
+
+# Check the port mapping in the VM details
+uni inspect web
+# {"id":"...","name":"web","ports":[{"host_port":8080,"guest_port":80,"protocol":"tcp"}],...}
+
+# Auto-remove on exit
+uni run hello:latest --rm
+```
+
+### 5. Use persistent volumes
+
+```bash
+# Create a named volume (1 GiB sparse disk image)
+uni volume create mydata --size 1G
+
+# Mount it into a VM
+uni run myapp:latest -v mydata:/var/data --name app
+
+# The volume persists after the VM stops
+uni stop app
+uni volume ls
+# NAME    SIZE   CREATED
+# mydata  1.0G   ...
+
+# Remove a volume (irreversible)
+uni volume rm mydata
+```
+
 ---
 
 ## Running as a Service
