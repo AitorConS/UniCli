@@ -12,18 +12,27 @@ import (
 	"github.com/AitorConS/unikernel-engine/internal/image"
 )
 
-// wslFunc returns an image.MkfsFunc that invokes mkfs via WSL2.
-func wslFunc(mkfsPath string) (image.MkfsFunc, error) {
+// wslFunc returns an image.MkfsFunc that invokes mkfs via WSL2,
+// passing a generated Nanos manifest on stdin.
+func wslFunc(mkfsPath, bootImg, kernelImg string) (image.MkfsFunc, error) {
 	if err := checkWSL2(); err != nil {
 		return nil, err
 	}
 	wslMkfs := windowsToWSLPath(mkfsPath)
+	wslBoot := windowsToWSLPath(bootImg)
+	wslKernel := windowsToWSLPath(kernelImg)
 	return func(ctx context.Context, imgPath, binaryPath string) *exec.Cmd {
-		return exec.CommandContext(ctx, "wsl", "--",
+		absBin, _ := filepath.Abs(binaryPath)
+		wslBin := windowsToWSLPath(absBin)
+		wslImg := windowsToWSLPath(imgPath)
+		cmd := exec.CommandContext(ctx, "wsl", "--",
 			wslMkfs,
-			windowsToWSLPath(imgPath),
-			windowsToWSLPath(binaryPath),
+			"-b", wslBoot,
+			"-k", wslKernel,
+			wslImg,
 		)
+		cmd.Stdin = strings.NewReader(buildNanosManifest(wslBin))
+		return cmd
 	}, nil
 }
 

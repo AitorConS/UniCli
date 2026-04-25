@@ -10,6 +10,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// absPath resolves p to an absolute path, returning p unchanged on error.
+func absPath(p string) string {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return p
+	}
+	return abs
+}
+
 func newBuildCmd(storePath *string) *cobra.Command {
 	var (
 		name   string
@@ -37,13 +46,14 @@ func newBuildCmd(storePath *string) *cobra.Command {
 				return fmt.Errorf("build: %w", err)
 			}
 
+			binaryPath := absPath(args[0])
 			if name == "" {
 				name = args[0]
 			}
 			m, err := image.NewBuilder(store).Build(cmd.Context(), image.BuildConfig{
 				Name:       name,
 				Tag:        tag,
-				BinaryPath: args[0],
+				BinaryPath: binaryPath,
 				MkfsRun:    mkfsRun,
 				Memory:     memory,
 				CPUs:       cpus,

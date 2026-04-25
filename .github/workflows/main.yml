@@ -49,19 +49,29 @@ jobs:
       - name: Build kernel and mkfs
         run: make kernel && make -C kernel tools
 
-      - name: Stage mkfs for release
+      - name: Stage kernel artifacts for release
         run: |
           mkdir -p dist
-          test -f kernel/output/tools/bin/mkfs || (echo "ERROR: mkfs not built" && exit 1)
-          cp kernel/output/tools/bin/mkfs dist/mkfs-linux-amd64
+          test -f kernel/output/tools/bin/mkfs \
+            || (echo "ERROR: mkfs not built" && exit 1)
+          test -f kernel/output/platform/pc/bin/kernel.img \
+            || (echo "ERROR: kernel.img not built" && exit 1)
+          test -f kernel/output/platform/pc/boot/boot.img \
+            || (echo "ERROR: boot.img not built" && exit 1)
+          cp kernel/output/tools/bin/mkfs            dist/mkfs-linux-amd64
+          cp kernel/output/platform/pc/bin/kernel.img dist/kernel.img
+          cp kernel/output/platform/pc/boot/boot.img  dist/boot.img
           chmod +x dist/mkfs-linux-amd64
-          file dist/mkfs-linux-amd64
+          file dist/mkfs-linux-amd64 dist/kernel.img dist/boot.img
 
-      - name: Upload mkfs artifact
+      - name: Upload kernel artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: mkfs-linux-amd64
-          path: dist/mkfs-linux-amd64
+          name: kernel-artifacts
+          path: |
+            dist/mkfs-linux-amd64
+            dist/kernel.img
+            dist/boot.img
 
   e2e-tests:
     name: E2E Tests
@@ -152,10 +162,10 @@ jobs:
           path: dist/
           merge-multiple: true
 
-      - name: Download mkfs artifact
+      - name: Download kernel artifacts
         uses: actions/download-artifact@v4
         with:
-          name: mkfs-linux-amd64
+          name: kernel-artifacts
           path: dist/
 
       - name: Create or update latest release
@@ -167,27 +177,6 @@ jobs:
             --title "latest ($(git rev-parse --short HEAD))" \
             --notes "Built from commit ${{ github.sha }} on $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --prerelease
-
-  kernel-artifact:
-    name: Kernel Image Artifact
-    runs-on: ubuntu-latest
-    needs: kernel-build
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install cross-compiler toolchain
-        run: |
-          sudo apt-get update -q
-          sudo apt-get install -y gcc-multilib nasm qemu-utils
-
-      - name: Build kernel
-        run: make kernel
-
-      - name: Upload kernel artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: kernel-image-${{ github.sha }}
-          path: kernel/build/
 
   coverage:
     name: Coverage Report

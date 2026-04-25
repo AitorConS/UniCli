@@ -9,6 +9,6 @@ import (
 )
 
 // wslFunc is unreachable on non-Windows platforms.
-func wslFunc(_ string) (image.MkfsFunc, error) {
+func wslFunc(_, _, _ string) (image.MkfsFunc, error) {
 	return nil, fmt.Errorf("wslFunc called on non-Windows platform (bug)")
 }
