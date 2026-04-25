@@ -60,7 +60,7 @@ jobs:
 
   integration-tests:
     name: Integration Tests
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, kvm]
     steps:
       - uses: actions/checkout@v4
 
@@ -68,13 +68,6 @@ jobs:
         with:
           go-version: '1.22'
           cache: true
-
-      - name: Enable KVM access for GitHub-hosted runner
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
-            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
 
       - name: Check KVM
         run: |
