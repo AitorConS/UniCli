@@ -35,44 +35,6 @@ jobs:
       - name: Run unit tests
         run: go test ./cmd/... ./internal/... ./pkg/... -race -coverprofile=coverage.out -covermode=atomic
 
-  kernel-build:
-    name: Kernel Build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install cross-compiler toolchain
-        run: |
-          sudo apt-get update -q
-          sudo apt-get install -y gcc-multilib nasm qemu-utils
-
-      - name: Build kernel and mkfs
-        run: make kernel && make -C kernel tools
-
-      - name: Stage kernel artifacts for release
-        run: |
-          mkdir -p dist
-          test -f kernel/output/tools/bin/mkfs \
-            || (echo "ERROR: mkfs not built" && exit 1)
-          test -f kernel/output/platform/pc/bin/kernel.img \
-            || (echo "ERROR: kernel.img not built" && exit 1)
-          test -f kernel/output/platform/pc/boot/boot.img \
-            || (echo "ERROR: boot.img not built" && exit 1)
-          cp kernel/output/tools/bin/mkfs            dist/mkfs-linux-amd64
-          cp kernel/output/platform/pc/bin/kernel.img dist/kernel.img
-          cp kernel/output/platform/pc/boot/boot.img  dist/boot.img
-          chmod +x dist/mkfs-linux-amd64
-          file dist/mkfs-linux-amd64 dist/kernel.img dist/boot.img
-
-      - name: Upload kernel artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: kernel-artifacts
-          path: |
-            dist/mkfs-linux-amd64
-            dist/kernel.img
-            dist/boot.img
-
   e2e-tests:
     name: E2E Tests
     if: true  # TODO: enable when self-hosted KVM runner is configured
@@ -99,7 +61,7 @@ jobs:
   build-release:
     name: Build Release Binaries
     runs-on: ubuntu-latest
-    needs: [lint, unit-tests, kernel-build]  # swap needs to [e2e-tests] when KVM runner ready
+    needs: [lint, unit-tests]
     strategy:
       matrix:
         include:
@@ -149,7 +111,7 @@ jobs:
   publish-release:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
-    needs: [build-release, kernel-build]
+    needs: [build-release]
     permissions:
       contents: write
     steps:
@@ -162,21 +124,15 @@ jobs:
           path: dist/
           merge-multiple: true
 
-      - name: Download kernel artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: kernel-artifacts
-          path: dist/
-
       - name: Create or update latest release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release delete latest --yes 2>/dev/null || true
-          gh release create latest dist/* \
+          gh release create latest --prerelease \
             --title "latest ($(git rev-parse --short HEAD))" \
             --notes "Built from commit ${{ github.sha }} on $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            --prerelease
+            2>/dev/null || true
+          gh release upload latest dist/* --clobber
 
   coverage:
     name: Coverage Report

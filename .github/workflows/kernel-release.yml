@@ -1,0 +1,52 @@
+name: Kernel Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'kernel/**'
+      - '.github/workflows/kernel-release.yml'
+  workflow_dispatch:
+
+jobs:
+  build-and-publish:
+    name: Build kernel artifacts and publish to release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y gcc-multilib nasm qemu-utils
+
+      - name: Build kernel and mkfs
+        run: make kernel && make -C kernel tools
+
+      - name: Stage artifacts
+        run: |
+          mkdir -p dist
+          test -f kernel/output/tools/bin/mkfs \
+            || (echo "ERROR: mkfs not built" && exit 1)
+          test -f kernel/output/platform/pc/bin/kernel.img \
+            || (echo "ERROR: kernel.img not built" && exit 1)
+          test -f kernel/output/platform/pc/boot/boot.img \
+            || (echo "ERROR: boot.img not built" && exit 1)
+          cp kernel/output/tools/bin/mkfs             dist/mkfs-linux-amd64
+          cp kernel/output/platform/pc/bin/kernel.img dist/kernel.img
+          cp kernel/output/platform/pc/boot/boot.img  dist/boot.img
+          chmod +x dist/mkfs-linux-amd64
+          file dist/mkfs-linux-amd64 dist/kernel.img dist/boot.img
+
+      - name: Publish kernel artifacts to latest release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create latest --prerelease \
+            --title "latest" --notes "Kernel + Go binaries" \
+            2>/dev/null || true
+          gh release upload latest \
+            dist/mkfs-linux-amd64 dist/kernel.img dist/boot.img \
+            --clobber
