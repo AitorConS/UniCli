@@ -57,7 +57,7 @@ networks:
 
 | Field | Required | Default | Description |
 |---|---|---|---|
-| `image` | Yes | — | Image `name:tag` from local store, or a file path to a static ELF binary |
+| `image` | Yes | — | Image `name:tag` from local store, or a file path to a bootable disk image (`.img`) built with `uni build` |
 | `memory` | No | `256M` | VM memory (QEMU format: `256M`, `1G`, `4G`) |
 | `cpus` | No | `1` | Number of virtual CPUs |
 | `depends_on` | No | `[]` | Services that must start before this one |
@@ -181,13 +181,19 @@ Do not delete `.uni-compose-state.json` manually while the stack is running. If 
 
 ## Minimal Example
 
-The simplest possible compose file — one service, no networks:
+The simplest possible compose file — one service, no networks.
+
+Build the image first, then reference it by name:
+
+```bash
+uni build ./hello-linux --name hello
+```
 
 ```yaml
 version: "1"
 services:
   hello:
-    image: ./hello
+    image: hello:latest
     memory: 256M
 ```
 

@@ -241,7 +241,7 @@ Build a unikernel image from a static ELF binary.
 uni build <binary> [flags]
 ```
 
-The binary must be a **static ELF** (no dynamic library dependencies). Go binaries with `CGO_ENABLED=0` are ideal.
+The binary must be a **static Linux ELF** (`GOOS=linux`, no dynamic library dependencies). Go binaries built with `CGO_ENABLED=0 GOOS=linux` are ideal.
 
 | Flag | Default | Description |
 |---|---|---|
@@ -249,7 +249,7 @@ The binary must be a **static ELF** (no dynamic library dependencies). Go binari
 | `--tag` | `latest` | Image tag |
 | `--memory` | `256M` | Default VM memory baked into the image |
 | `--cpus` | `1` | Default CPU count baked into the image |
-| `--mkfs` | `kernel/output/tools/bin/mkfs` | Path to Nanos mkfs tool (or set `UNI_MKFS` env var) |
+| `--mkfs` | *(auto-downloaded to `~/.uni/tools/mkfs`)* | Path to Nanos mkfs binary — overrides auto-download (env: `UNI_MKFS`) |
 
 **Examples:**
 

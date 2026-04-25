@@ -72,7 +72,7 @@ sudo usermod -aG kvm $USER
 
 ### Download pre-built binaries
 
-Download the latest release from [GitHub Releases](https://github.com/AitorConS/unikernel-engine/releases/tag/latest):
+Download the latest release from [GitHub Releases](https://github.com/AitorConS/UniCli/releases/tag/latest):
 
 | Platform | Binary |
 |---|---|
@@ -82,16 +82,16 @@ Download the latest release from [GitHub Releases](https://github.com/AitorConS/
 
 ```bash
 # Linux — download and install
-curl -Lo /usr/local/bin/uni   https://github.com/AitorConS/unikernel-engine/releases/latest/download/uni-linux-amd64
-curl -Lo /usr/local/bin/unid  https://github.com/AitorConS/unikernel-engine/releases/latest/download/unid-linux-amd64
+curl -Lo /usr/local/bin/uni   https://github.com/AitorConS/UniCli/releases/latest/download/uni-linux-amd64
+curl -Lo /usr/local/bin/unid  https://github.com/AitorConS/UniCli/releases/latest/download/unid-linux-amd64
 chmod +x /usr/local/bin/uni /usr/local/bin/unid
 ```
 
 ### Build from source
 
 ```bash
-git clone https://github.com/AitorConS/unikernel-engine.git
-cd unikernel-engine
+git clone https://github.com/AitorConS/UniCli.git
+cd UniCli
 make build
 # Produces: dist/uni  dist/unid
 ```
@@ -119,7 +119,7 @@ Keep this terminal open, or run as a background service (see [Running as a Servi
 
 ### 2. Build your first image
 
-You need a **static ELF binary** — a program compiled without dynamic libraries.
+You need a **static Linux ELF binary** — compiled for `GOOS=linux` with no dynamic library dependencies.
 
 **Example: Go hello world**
 
@@ -134,22 +134,36 @@ func main() {
 }
 ```
 
+**Linux / macOS:**
 ```bash
-# Cross-compile to static Linux ELF
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o hello hello.go
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o hello hello.go
+```
+
+**Windows (PowerShell):**
+```powershell
+$env:CGO_ENABLED="0"; $env:GOOS="linux"; $env:GOARCH="amd64"
+go build -o hello-linux hello.go
 ```
 
 **Build the unikernel image:**
 
 ```bash
-uni build hello --name hello --tag latest
+# Linux / macOS
+uni build ./hello --name hello
 # sha256:abc123...  hello:latest
 ```
+
+```powershell
+# Windows
+.\uni-windows-amd64.exe build hello-linux --name hello
+# sha256:abc123...  hello:latest
+```
+
+On first run, `uni build` automatically downloads `mkfs`, `kernel.img`, and `boot.img` from the [latest release](https://github.com/AitorConS/UniCli/releases/tag/latest) into `~/.uni/tools/` (or `%USERPROFILE%\.uni\tools\` on Windows). On Windows, the build step runs through WSL2.
 
 ### 3. Run it
 
 ```bash
-# In a new terminal (or same terminal if daemon is backgrounded)
 uni run hello:latest
 # a3f8c2d1-...
 
@@ -158,16 +172,17 @@ uni ps
 # ID                                    STATE    IMAGE
 # a3f8c2d1-7b4e-4a1f-8c2d-1a2b3c4d5e6f  running  hello:latest
 
-# Read the output
+# Read the serial console output
 uni logs a3f8c2d1
 # Hello from unikernel!
 
-# Stop it
+# Stop and clean up
 uni stop a3f8c2d1
-
-# Remove from registry
 uni rm a3f8c2d1
 ```
+
+{: .note }
+`uni run` takes a built image name (`hello:latest`) or a path to a `.img` disk image file — **not** a raw ELF binary. Always run `uni build` first.
 
 ---
 
