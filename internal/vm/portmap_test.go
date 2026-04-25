@@ -33,13 +33,13 @@ func TestParsePortMap(t *testing.T) {
 			want:  PortMap{HostPort: 3000, GuestPort: 3000, Protocol: ProtocolTCP},
 		},
 		// error cases
-		{input: "80", wantErr: true},          // missing colon
-		{input: "0:80", wantErr: true},         // port zero
-		{input: "80:0", wantErr: true},         // port zero
-		{input: "abc:80", wantErr: true},       // non-numeric
-		{input: "80:abc", wantErr: true},       // non-numeric
-		{input: "8080:80/sctp", wantErr: true}, // unknown protocol
-		{input: "65536:80", wantErr: true},     // port overflow
+		{input: "80", wantErr: true},
+		{input: "0:80", wantErr: true},
+		{input: "80:0", wantErr: true},
+		{input: "abc:80", wantErr: true},
+		{input: "80:abc", wantErr: true},
+		{input: "8080:80/sctp", wantErr: true},
+		{input: "65536:80", wantErr: true},
 	}
 
 	for _, tc := range cases {
