@@ -38,8 +38,12 @@ uni run <image> [flags]
 ```
 
 `<image>` can be:
-- A **file path**: `./hello`, `/opt/apps/api` — runs the binary directly
+- A **file path**: `./myapp.img` — path to a pre-built bootable disk image
 - A **name:tag reference**: `hello:latest` — looked up in the local image store
+
+> **Note:** `uni run` requires a bootable disk image, not a raw ELF binary.
+> To package a binary into an image first run `uni build --name <name> <binary>`,
+> then `uni run <name>:latest`.
 
 **Flags:**
 
@@ -51,10 +55,10 @@ uni run <image> [flags]
 **Examples:**
 
 ```bash
-# Run a local binary directly
-uni run ./hello --memory 512M --cpus 2
+# Run from a pre-built disk image file
+uni run ./myapp.img --memory 512M --cpus 2
 
-# Run a built image
+# Run a built image by name
 uni run myapp:latest
 
 # Output the VM ID for scripting
