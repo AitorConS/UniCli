@@ -129,7 +129,11 @@ because packages are useless without a working runtime model.
 - [x] 5.2.1 — Add `-e / --env KEY=VALUE` flag to `uni run` (repeatable)
 - [x] 5.2.2 — Add `--env-file <path>` flag: read `KEY=VALUE` lines from file, identical to Docker
 - [x] 5.2.3 — Wire env vars through the API call → QEMU fw_cfg → kernel reads `opt/uni/env`
-- [ ] 5.2.4 — Verify env vars are visible inside the VM via `uni exec` / serial log
+- [ ] 5.2.4 — **BLOCKER**: Nanos kernel does not yet read `opt/uni/env` from fw_cfg before exec'ing the app.
+  Two paths to fix: (a) kernel patch to read fw_cfg at boot and call `setenv()` before main, or
+  (b) at `uni run` time: copy disk image to tmp, patch the Nanos manifest embedded in the image to inject
+  env vars, run the patched copy, clean up on stop. Path (b) requires understanding Nanos manifest binary format.
+  Deferred to Phase 6 (Package System) where we control the full runtime build.
 - [x] 5.2.5 — Env vars in compose YAML (`environment:`) fully functional
 
 ### 5.3 — Volume Mounts & Persistent Storage
