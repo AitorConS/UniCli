@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/AitorConS/unikernel-engine/internal/api"
@@ -57,6 +58,9 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 // treated as a name:tag reference and looked up in the local image store.
 func resolveImage(imgArg, storePath, memory string, cpus int) (string, error) {
 	if isFilePath(imgArg) {
+		if err := rejectELF(imgArg); err != nil {
+			return "", err
+		}
 		return imgArg, nil
 	}
 	store, err := image.NewStore(storePath)
@@ -75,6 +79,23 @@ func resolveImage(imgArg, storePath, memory string, cpus int) (string, error) {
 		_ = cpus
 	}
 	return diskPath, nil
+}
+
+// rejectELF returns an error if path is an ELF binary instead of a disk image.
+func rejectELF(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil // let QEMU produce the real error
+	}
+	defer func() { _ = f.Close() }()
+	magic := make([]byte, 4)
+	if _, err := f.Read(magic); err != nil {
+		return nil
+	}
+	if magic[0] == 0x7f && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F' {
+		return fmt.Errorf("%s is an ELF binary, not a bootable disk image.\nRun 'uni build --name <name> %s' first, then 'uni run <name>:latest'", path, path)
+	}
+	return nil
 }
 
 func isFilePath(s string) bool {
