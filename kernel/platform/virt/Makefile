@@ -84,6 +84,7 @@ SRCS-kernel.elf= \
 	$(SRCDIR)/unix/aio.c \
 	$(SRCDIR)/unix/blockq.c \
 	$(SRCDIR)/unix/coredump.c \
+	$(SRCDIR)/unix/env_inject.c \
 	$(SRCDIR)/unix/exec.c \
 	$(SRCDIR)/unix/eventfd.c \
 	$(SRCDIR)/unix/filesystem.c \

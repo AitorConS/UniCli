@@ -10,6 +10,10 @@ thread create_thread(process p, u64 tid);
 void exec_elf(process kp, string program_path, status_handler complete);
 void unix_shutdown(void);
 
+/* env_inject_from_fw_cfg merges QEMU fw_cfg "opt/uni/env" entries into
+ * root[environment] before exec_elf reads it. No-op if device/file absent. */
+void env_inject_from_fw_cfg(tuple root);
+
 void program_set_perms(tuple root, tuple prog);
 
 void dump_mem_stats(buffer b);

@@ -68,6 +68,11 @@ closure_function(5, 0, void, startup,
     init_kernel_heaps_management(root);
     if (get(root, sym(readonly_rootfs)))
         filesystem_set_readonly(fs);
+
+    /* Merge runtime env vars from QEMU fw_cfg opt/uni/env (set by uni run -e).
+     * Must run before exec_elf so the new entries are visible to envp. */
+    env_inject_from_fw_cfg(root);
+
     value p = get(root, sym(program));
     assert(p && is_string(p));
     init_network_iface(root, bound(m));

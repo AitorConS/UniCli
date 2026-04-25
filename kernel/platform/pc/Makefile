@@ -15,6 +15,7 @@ SRCS-kernel.elf= \
 	$(SRCDIR)/drivers/ata-pci.c \
 	$(SRCDIR)/drivers/console.c \
 	$(SRCDIR)/drivers/dmi.c \
+	$(SRCDIR)/drivers/fw_cfg.c \
 	$(SRCDIR)/drivers/gve.c \
 	$(SRCDIR)/drivers/nvme.c \
 	$(SRCDIR)/drivers/netconsole.c \
@@ -58,6 +59,7 @@ SRCS-kernel.elf= \
 	$(SRCDIR)/unix/aio.c \
 	$(SRCDIR)/unix/blockq.c \
 	$(SRCDIR)/unix/coredump.c \
+	$(SRCDIR)/unix/env_inject.c \
 	$(SRCDIR)/unix/exec.c \
 	$(SRCDIR)/unix/eventfd.c \
 	$(SRCDIR)/unix/filesystem.c \
