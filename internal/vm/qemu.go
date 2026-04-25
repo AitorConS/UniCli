@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -198,15 +199,64 @@ func (m *QEMUManager) buildCmd(cfg Config) *exec.Cmd {
 	if cfg.CPUs > 0 {
 		args = append(args, "-smp", fmt.Sprintf("%d", cfg.CPUs))
 	}
-	if cfg.NetworkName != "" {
-		args = append(args,
-			"-netdev", "tap,id=net0,ifname="+cfg.NetworkName,
-			"-device", "virtio-net-pci,netdev=net0",
-		)
-	} else {
-		args = append(args, "-net", "none")
-	}
+
+	args = append(args, buildNetArgs(cfg)...)
+	args = append(args, buildEnvArgs(cfg.Env)...)
+	args = append(args, buildVolumeArgs(cfg.Volumes)...)
+
 	return m.mkCmd(m.qemuBin, args...)
+}
+
+// buildNetArgs returns the QEMU network arguments for cfg.
+// Priority: TAP (explicit NetworkName) → SLIRP with hostfwd (PortMaps set) → no network.
+func buildNetArgs(cfg Config) []string {
+	if cfg.NetworkName != "" {
+		return []string{
+			"-netdev", "tap,id=net0,ifname=" + cfg.NetworkName,
+			"-device", "virtio-net-pci,netdev=net0",
+		}
+	}
+	if len(cfg.PortMaps) > 0 {
+		return slirpNetArgs(cfg.PortMaps)
+	}
+	return []string{"-net", "none"}
+}
+
+// slirpNetArgs builds the SLIRP user-mode networking arguments with hostfwd rules.
+func slirpNetArgs(ports []PortMap) []string {
+	netdev := "user,id=net0"
+	for _, pm := range ports {
+		netdev += fmt.Sprintf(",hostfwd=%s::%d-:%d", pm.Protocol, pm.HostPort, pm.GuestPort)
+	}
+	return []string{
+		"-netdev", netdev,
+		"-device", "virtio-net-pci,netdev=net0",
+	}
+}
+
+// buildVolumeArgs appends extra virtio-blk drives for each volume mount.
+// Each volume gets its own drive index (starting at 1; index 0 is the boot disk).
+func buildVolumeArgs(vols []VolumeMount) []string {
+	var args []string
+	for i, vol := range vols {
+		drive := fmt.Sprintf("file=%s,format=raw,if=virtio,index=%d", vol.DiskPath, i+1)
+		if vol.ReadOnly {
+			drive += ",readonly=on"
+		}
+		args = append(args, "-drive", drive)
+	}
+	return args
+}
+
+// buildEnvArgs encodes environment variables as QEMU fw_cfg entries.
+// The guest kernel reads them from the "opt/uni/env" fw_cfg key.
+// Each call produces zero or one -fw_cfg argument; format is "KEY=VALUE\n" joined.
+func buildEnvArgs(env []string) []string {
+	if len(env) == 0 {
+		return nil
+	}
+	encoded := strings.Join(env, "\n")
+	return []string{"-fw_cfg", "name=opt/uni/env,string=" + encoded}
 }
 
 func (m *QEMUManager) monitor(v *VM, cmd *exec.Cmd) {

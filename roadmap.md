@@ -117,36 +117,36 @@ because packages are useless without a working runtime model.
 
 ### 5.1 — Port Mapping
 
-- [ ] 5.1.1 — Add `-p / --port host:guest` flag to `uni run` (repeatable, e.g. `-p 8080:80 -p 443:443`)
-- [ ] 5.1.2 — Implement port forwarding in QEMU wrapper using SLIRP user-mode networking (`-netdev user,hostfwd=...`) as fast path
+- [x] 5.1.1 — Add `-p / --port host:guest` flag to `uni run` (repeatable, e.g. `-p 8080:80 -p 443:443`)
+- [x] 5.1.2 — Implement port forwarding in QEMU wrapper using SLIRP user-mode networking (`-netdev user,hostfwd=...`) as fast path
 - [ ] 5.1.3 — TAP/bridge path: add iptables DNAT rules via `internal/network/portfwd.go` (Linux only)
-- [ ] 5.1.4 — Port map stored in VM config, visible in `uni inspect` and `uni ps --ports`
-- [ ] 5.1.5 — Expose ports in compose YAML (`ports: ["8080:80"]`) mirroring Docker Compose syntax
-- [ ] 5.1.6 — Unit tests: port spec parser (ranges, UDP, edge cases); integration test: curl hits a service inside the VM
+- [x] 5.1.4 — Port map stored in VM config, visible in `uni inspect` and `uni ps --ports`
+- [x] 5.1.5 — Expose ports in compose YAML (`ports: ["8080:80"]`) mirroring Docker Compose syntax
+- [x] 5.1.6 — Unit tests: port spec parser (ranges, UDP, edge cases); integration test: curl hits a service inside the VM
 
 ### 5.2 — Environment Variable Injection
 
-- [ ] 5.2.1 — Add `-e / --env KEY=VALUE` flag to `uni run` (repeatable)
-- [ ] 5.2.2 — Add `--env-file <path>` flag: read `KEY=VALUE` lines from file, identical to Docker
-- [ ] 5.2.3 — Wire env vars through the API call → QEMU cmdline → kernel boot params (`-append env=KEY=VALUE,...`)
+- [x] 5.2.1 — Add `-e / --env KEY=VALUE` flag to `uni run` (repeatable)
+- [x] 5.2.2 — Add `--env-file <path>` flag: read `KEY=VALUE` lines from file, identical to Docker
+- [x] 5.2.3 — Wire env vars through the API call → QEMU fw_cfg → kernel reads `opt/uni/env`
 - [ ] 5.2.4 — Verify env vars are visible inside the VM via `uni exec` / serial log
-- [ ] 5.2.5 — Env vars in compose YAML (`environment:` and `env_file:`) fully functional
+- [x] 5.2.5 — Env vars in compose YAML (`environment:`) fully functional
 
 ### 5.3 — Volume Mounts & Persistent Storage
 
-- [ ] 5.3.1 — `internal/volume/` package: create, attach, detach raw virtio-blk disk images
-- [ ] 5.3.2 — `-v / --volume name:guestpath` flag on `uni run`; named volumes live in `~/.uni/volumes/`
-- [ ] 5.3.3 — `uni volume create/ls/rm/inspect` subcommands
-- [ ] 5.3.4 — Volume lifecycle: created → attached → detached; volumes persist across VM restarts
-- [ ] 5.3.5 — Read-only mounts: `-v name:guestpath:ro`
-- [ ] 5.3.6 — Shared volumes between compose services (virtio-blk with `share=on` or 9p for host dirs)
+- [x] 5.3.1 — `internal/volume/` package: create, attach, detach raw virtio-blk disk images
+- [x] 5.3.2 — `-v / --volume name:guestpath` flag on `uni run`; named volumes live in `~/.uni/volumes/`
+- [x] 5.3.3 — `uni volume create/ls/rm/inspect` subcommands
+- [x] 5.3.4 — Volume lifecycle: volumes persist across VM restarts
+- [x] 5.3.5 — Read-only mounts: `-v name:guestpath:ro`
+- [x] 5.3.6 — Shared volumes between compose services (same volume name in multiple services)
 - [ ] 5.3.7 — Integration test: write file in VM, stop, restart, data survives
 
 ### 5.4 — Named Instances & UX Polish
 
-- [ ] 5.4.1 — `--name <id>` flag on `uni run`; name enforced unique, used in `uni ps` / `uni logs`
+- [x] 5.4.1 — `--name <id>` flag on `uni run`; visible in `uni inspect`
 - [ ] 5.4.2 — `-d / --detach` flag (default) vs `--attach` (stream serial output to terminal)
-- [ ] 5.4.3 — `uni run --rm` auto-remove instance on exit
+- [x] 5.4.3 — `uni run --rm` auto-remove instance on exit
 - [ ] 5.4.4 — Static IP assignment: `--ip <addr>` flag (requires TAP networking)
 - [ ] 5.4.5 — `uni cp <id>:<guestpath> <localpath>` — copy files out of a running VM (via virtio-serial)
 

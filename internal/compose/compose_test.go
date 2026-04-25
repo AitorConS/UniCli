@@ -140,3 +140,84 @@ func TestTopologicalSort_SelfDep(t *testing.T) {
 	_, err := compose.TopologicalSort(services)
 	require.ErrorContains(t, err, "cycle")
 }
+
+// --- port + volume validation tests ---
+
+func TestParse_ValidPorts(t *testing.T) {
+	data := []byte(`
+version: "1"
+services:
+  web:
+    image: nginx:latest
+    ports:
+      - "8080:80"
+      - "443:443/tcp"
+      - "5353:53/udp"
+`)
+	f, err := compose.Parse(data)
+	require.NoError(t, err)
+	require.Equal(t, []string{"8080:80", "443:443/tcp", "5353:53/udp"}, f.Services["web"].Ports)
+}
+
+func TestParse_InvalidPortProto(t *testing.T) {
+	_, err := compose.Parse([]byte(`
+version: "1"
+services:
+  a:
+    image: x
+    ports:
+      - "80:80/sctp"
+`))
+	require.ErrorContains(t, err, "unknown protocol")
+}
+
+func TestParse_InvalidPortFormat(t *testing.T) {
+	_, err := compose.Parse([]byte(`
+version: "1"
+services:
+  a:
+    image: x
+    ports:
+      - "8080"
+`))
+	require.ErrorContains(t, err, "host:guest")
+}
+
+func TestParse_ValidVolumes(t *testing.T) {
+	data := []byte(`
+version: "1"
+services:
+  db:
+    image: redis:latest
+    volumes:
+      - "data:/data"
+      - "backup:/backup:ro"
+`)
+	f, err := compose.Parse(data)
+	require.NoError(t, err)
+	require.Equal(t, []string{"data:/data", "backup:/backup:ro"}, f.Services["db"].Volumes)
+}
+
+func TestParse_InvalidVolumeSpec(t *testing.T) {
+	_, err := compose.Parse([]byte(`
+version: "1"
+services:
+  a:
+    image: x
+    volumes:
+      - "nocodon"
+`))
+	require.ErrorContains(t, err, "name:guestpath")
+}
+
+func TestParse_InvalidVolumeThirdField(t *testing.T) {
+	_, err := compose.Parse([]byte(`
+version: "1"
+services:
+  a:
+    image: x
+    volumes:
+      - "data:/data:rw"
+`))
+	require.ErrorContains(t, err, "ro")
+}

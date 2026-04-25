@@ -24,6 +24,10 @@ type Service struct {
 	Networks []string `yaml:"networks"`
 	// Environment is a list of KEY=VALUE pairs.
 	Environment []string `yaml:"environment"`
+	// Ports is a list of host:guest[/proto] port mapping strings.
+	Ports []string `yaml:"ports"`
+	// Volumes is a list of "name:guestpath[:ro]" volume mount strings.
+	Volumes []string `yaml:"volumes"`
 }
 
 // Network describes a logical network.

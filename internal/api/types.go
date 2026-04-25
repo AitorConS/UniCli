@@ -24,12 +24,31 @@ type RPCError struct {
 	Message string `json:"message"`
 }
 
+// PortMapSpec is the wire representation of a host-to-guest port mapping.
+type PortMapSpec struct {
+	HostPort  uint16 `json:"host_port"`
+	GuestPort uint16 `json:"guest_port"`
+	Protocol  string `json:"protocol"`
+}
+
+// VolumeMountSpec is the wire representation of a volume mount.
+type VolumeMountSpec struct {
+	DiskPath  string `json:"disk_path"`
+	GuestPath string `json:"guest_path"`
+	ReadOnly  bool   `json:"read_only,omitempty"`
+}
+
 // RunParams are the parameters for the VM.Run method.
 type RunParams struct {
-	ImagePath   string `json:"image_path"`
-	Memory      string `json:"memory"`
-	CPUs        int    `json:"cpus"`
-	NetworkName string `json:"network_name,omitempty"`
+	ImagePath   string            `json:"image_path"`
+	Memory      string            `json:"memory"`
+	CPUs        int               `json:"cpus"`
+	NetworkName string            `json:"network_name,omitempty"`
+	PortMaps    []PortMapSpec     `json:"port_maps,omitempty"`
+	Env         []string          `json:"env,omitempty"`
+	Name        string            `json:"name,omitempty"`
+	AutoRemove  bool              `json:"auto_remove,omitempty"`
+	Volumes     []VolumeMountSpec `json:"volumes,omitempty"`
 }
 
 // StopParams are the parameters for VM.Stop.
@@ -53,18 +72,23 @@ type VMInfo struct {
 	ID    string `json:"id"`
 	State string `json:"state"`
 	Image string `json:"image"`
+	Name  string `json:"name,omitempty"`
 }
 
 // VMDetail is the full serialisable representation of a VM.
 type VMDetail struct {
-	ID        string  `json:"id"`
-	State     string  `json:"state"`
-	Image     string  `json:"image"`
-	Memory    string  `json:"memory"`
-	CPUs      int     `json:"cpus"`
-	CreatedAt string  `json:"created_at"`
-	StartedAt *string `json:"started_at,omitempty"`
-	StoppedAt *string `json:"stopped_at,omitempty"`
+	ID        string            `json:"id"`
+	State     string            `json:"state"`
+	Image     string            `json:"image"`
+	Name      string            `json:"name,omitempty"`
+	Memory    string            `json:"memory"`
+	CPUs      int               `json:"cpus"`
+	Ports     []PortMapSpec     `json:"ports,omitempty"`
+	Env       []string          `json:"env,omitempty"`
+	Volumes   []VolumeMountSpec `json:"volumes,omitempty"`
+	CreatedAt string            `json:"created_at"`
+	StartedAt *string           `json:"started_at,omitempty"`
+	StoppedAt *string           `json:"stopped_at,omitempty"`
 }
 
 // LogsResponse carries the captured serial console output for a VM.

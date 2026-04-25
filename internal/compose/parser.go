@@ -2,6 +2,7 @@ package compose
 
 import (
 	"fmt"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -45,6 +46,56 @@ func validate(f File) error {
 				return fmt.Errorf("compose: service %q references unknown network %q", name, net)
 			}
 		}
+		for _, port := range svc.Ports {
+			if err := validatePortSpec(port); err != nil {
+				return fmt.Errorf("compose: service %q ports: %w", name, err)
+			}
+		}
+		for _, vol := range svc.Volumes {
+			if err := validateVolumeSpec(vol); err != nil {
+				return fmt.Errorf("compose: service %q volumes: %w", name, err)
+			}
+		}
+	}
+	return nil
+}
+
+// validatePortSpec checks that s is a valid host:guest[/proto] spec.
+func validatePortSpec(s string) error {
+	// Strip optional protocol suffix.
+	if idx := strings.LastIndex(s, "/"); idx >= 0 {
+		proto := strings.ToLower(s[idx+1:])
+		if proto != "tcp" && proto != "udp" {
+			return fmt.Errorf("port %q: unknown protocol %q", s, proto)
+		}
+		s = s[:idx]
+	}
+	parts := strings.SplitN(s, ":", 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("port %q: expected host:guest format", s)
+	}
+	for _, p := range parts {
+		if p == "" {
+			return fmt.Errorf("port %q: port number must not be empty", s)
+		}
+	}
+	return nil
+}
+
+// validateVolumeSpec checks that s is a valid name:guestpath[:ro] spec.
+func validateVolumeSpec(s string) error {
+	parts := strings.Split(s, ":")
+	if len(parts) < 2 || len(parts) > 3 {
+		return fmt.Errorf("volume %q: expected name:guestpath[:ro]", s)
+	}
+	if parts[0] == "" {
+		return fmt.Errorf("volume %q: name must not be empty", s)
+	}
+	if parts[1] == "" {
+		return fmt.Errorf("volume %q: guest path must not be empty", s)
+	}
+	if len(parts) == 3 && !strings.EqualFold(parts[2], "ro") {
+		return fmt.Errorf("volume %q: third field must be \"ro\" if present", s)
 	}
 	return nil
 }

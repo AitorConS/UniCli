@@ -16,6 +16,7 @@ import (
 	"github.com/AitorConS/unikernel-engine/internal/image"
 	"github.com/AitorConS/unikernel-engine/internal/registry"
 	"github.com/AitorConS/unikernel-engine/internal/vm"
+	"github.com/AitorConS/unikernel-engine/internal/volume"
 	"github.com/stretchr/testify/require"
 )
 
@@ -405,4 +406,152 @@ func TestShortDigest(t *testing.T) {
 	require.Equal(t, "sha256:abcdef12345", shortDigest("sha256:abcdef12345"))
 	long := "sha256:" + strings.Repeat("a", 64)
 	require.Equal(t, long[:19], shortDigest(long))
+}
+
+// --- buildEnv ---
+
+func TestBuildEnv_FlagsOnly(t *testing.T) {
+	got, err := buildEnv([]string{"FOO=bar", "PORT=8080"}, "")
+	require.NoError(t, err)
+	require.Equal(t, []string{"FOO=bar", "PORT=8080"}, got)
+}
+
+func TestBuildEnv_FileOnly(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "*.env")
+	require.NoError(t, err)
+	_, _ = f.WriteString("# comment\nKEY=value\n\nANOTHER=1\n")
+	require.NoError(t, f.Close())
+
+	got, err := buildEnv(nil, f.Name())
+	require.NoError(t, err)
+	require.Equal(t, []string{"KEY=value", "ANOTHER=1"}, got)
+}
+
+func TestBuildEnv_FlagsAndFile(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "*.env")
+	require.NoError(t, err)
+	_, _ = f.WriteString("FROM_FILE=yes\n")
+	require.NoError(t, f.Close())
+
+	got, err := buildEnv([]string{"INLINE=1"}, f.Name())
+	require.NoError(t, err)
+	require.Equal(t, []string{"INLINE=1", "FROM_FILE=yes"}, got)
+}
+
+func TestBuildEnv_MissingFile(t *testing.T) {
+	_, err := buildEnv(nil, "/nonexistent/file.env")
+	require.Error(t, err)
+}
+
+// --- parseVolumeSpec ---
+
+func TestParseVolumeSpec_ValidRW(t *testing.T) {
+	store, err := makeVolumeStore(t)
+	require.NoError(t, err)
+
+	spec, err := parseVolumeSpec("data:/mnt/data", store)
+	require.NoError(t, err)
+	require.Equal(t, "/mnt/data", spec.GuestPath)
+	require.False(t, spec.ReadOnly)
+}
+
+func TestParseVolumeSpec_ValidRO(t *testing.T) {
+	store, err := makeVolumeStore(t)
+	require.NoError(t, err)
+
+	spec, err := parseVolumeSpec("data:/mnt/data:ro", store)
+	require.NoError(t, err)
+	require.True(t, spec.ReadOnly)
+}
+
+func TestParseVolumeSpec_NotFound(t *testing.T) {
+	store, err := makeVolumeStore(t)
+	require.NoError(t, err)
+
+	_, err = parseVolumeSpec("missing:/mnt", store)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not found")
+}
+
+func TestParseVolumeSpec_BadFormat(t *testing.T) {
+	store, err := makeVolumeStore(t)
+	require.NoError(t, err)
+
+	_, err = parseVolumeSpec("nocodon", store)
+	require.Error(t, err)
+}
+
+// --- volume CLI ---
+
+func TestVolume_CreateAndList(t *testing.T) {
+	_, socketPath := startDaemon(t)
+	storePath := t.TempDir()
+
+	out := execRoot(t, socketPath, storePath, "volume", "create", "--size", "1M", "myvol")
+	require.Contains(t, out, "myvol")
+
+	out = execRoot(t, socketPath, storePath, "volume", "ls")
+	require.Contains(t, out, "myvol")
+}
+
+func TestVolume_Inspect(t *testing.T) {
+	_, socketPath := startDaemon(t)
+	storePath := t.TempDir()
+
+	execRoot(t, socketPath, storePath, "volume", "create", "--size", "1M", "inspect-vol")
+	out := execRoot(t, socketPath, storePath, "volume", "inspect", "inspect-vol")
+	require.Contains(t, out, "inspect-vol")
+}
+
+func TestVolume_Remove(t *testing.T) {
+	_, socketPath := startDaemon(t)
+	storePath := t.TempDir()
+
+	execRoot(t, socketPath, storePath, "volume", "create", "--size", "1M", "todel")
+	execRoot(t, socketPath, storePath, "volume", "rm", "todel")
+
+	out := execRoot(t, socketPath, storePath, "volume", "ls")
+	require.NotContains(t, out, "todel")
+}
+
+// --- run with new flags ---
+
+func TestRun_WithPortAndEnv(t *testing.T) {
+	_, socketPath := startDaemon(t)
+	storePath := t.TempDir()
+
+	diskPath := filepath.Join(t.TempDir(), "disk.img")
+	require.NoError(t, os.WriteFile(diskPath, []byte("fake"), 0o600))
+
+	out := execRoot(t, socketPath, storePath, "run",
+		"-p", "8080:80",
+		"-e", "FOO=bar",
+		"--name", "myvm",
+		diskPath,
+	)
+	require.NotEmpty(t, strings.TrimSpace(out))
+}
+
+func TestRun_WithInvalidPort(t *testing.T) {
+	_, socketPath := startDaemon(t)
+	storePath := t.TempDir()
+
+	diskPath := filepath.Join(t.TempDir(), "disk.img")
+	require.NoError(t, os.WriteFile(diskPath, []byte("fake"), 0o600))
+
+	msg := execRootExpectError(t, socketPath, storePath, "run", "-p", "bad", diskPath)
+	require.Contains(t, msg, "port")
+}
+
+// --- helpers ---
+
+func makeVolumeStore(t *testing.T) (*volume.Store, error) {
+	t.Helper()
+	dir := t.TempDir()
+	store, err := volume.NewStore(dir)
+	if err != nil {
+		return nil, err
+	}
+	_, err = store.Create("data", 1<<20)
+	return store, err
 }

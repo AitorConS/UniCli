@@ -75,11 +75,12 @@ func newComposeUpCmd(socketPath, storePath *string) *cobra.Command {
 				if mem == "" {
 					mem = "256M"
 				}
-				info, runErr := client.Run(cmd.Context(), api.RunParams{
-					ImagePath: diskPath,
-					Memory:    mem,
-					CPUs:      svc.CPUs,
-				})
+				params, buildErr := buildServiceRunParams(svc, diskPath, mem, *storePath)
+				if buildErr != nil {
+					return fmt.Errorf("compose up: service %q: %w", name, buildErr)
+				}
+				params.Name = name
+				info, runErr := client.Run(cmd.Context(), params)
 				if runErr != nil {
 					return fmt.Errorf("compose up: service %q: %w", name, runErr)
 				}
@@ -282,15 +283,52 @@ func composeUpWithCtx(ctx context.Context, client *api.Client, f compose.File, s
 		if err != nil {
 			return compose.State{}, fmt.Errorf("service %q: %w", name, err)
 		}
-		info, err := client.Run(ctx, api.RunParams{
-			ImagePath: diskPath,
-			Memory:    mem,
-			CPUs:      svc.CPUs,
-		})
+		params, err := buildServiceRunParams(svc, diskPath, mem, storePath)
+		if err != nil {
+			return compose.State{}, fmt.Errorf("service %q: %w", name, err)
+		}
+		params.Name = name
+		info, err := client.Run(ctx, params)
 		if err != nil {
 			return compose.State{}, fmt.Errorf("service %q: %w", name, err)
 		}
 		state.Services[name] = info.ID
 	}
 	return state, nil
+}
+
+// buildServiceRunParams converts a compose.Service into an api.RunParams.
+func buildServiceRunParams(svc compose.Service, diskPath, mem, storePath string) (api.RunParams, error) {
+	params := api.RunParams{
+		ImagePath:   diskPath,
+		Memory:      mem,
+		CPUs:        svc.CPUs,
+		Env:         svc.Environment,
+	}
+	for _, portSpec := range svc.Ports {
+		pm, err := parseComposePortSpec(portSpec)
+		if err != nil {
+			return api.RunParams{}, fmt.Errorf("ports: %w", err)
+		}
+		params.PortMaps = append(params.PortMaps, pm)
+	}
+	volSpecs, err := resolveVolumes(svc.Volumes, storePath)
+	if err != nil {
+		return api.RunParams{}, fmt.Errorf("volumes: %w", err)
+	}
+	params.Volumes = volSpecs
+	return params, nil
+}
+
+// parseComposePortSpec converts "host:guest[/proto]" to a PortMapSpec.
+func parseComposePortSpec(s string) (api.PortMapSpec, error) {
+	pm, err := parseVolumePortString(s)
+	if err != nil {
+		return api.PortMapSpec{}, err
+	}
+	return api.PortMapSpec{
+		HostPort:  pm.HostPort,
+		GuestPort: pm.GuestPort,
+		Protocol:  string(pm.Protocol),
+	}, nil
 }

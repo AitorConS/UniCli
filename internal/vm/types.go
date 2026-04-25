@@ -35,6 +35,16 @@ var validTransitions = map[State][]State{
 	StateStopped:  {},
 }
 
+// VolumeMount describes a volume attached to a VM.
+type VolumeMount struct {
+	// DiskPath is the absolute path to the raw disk image on the host.
+	DiskPath string
+	// GuestPath is the mount point inside the VM (informational; used by kernel).
+	GuestPath string
+	// ReadOnly marks the volume as read-only.
+	ReadOnly bool
+}
+
 // Config holds the parameters used to create a VM.
 type Config struct {
 	// ImagePath is the raw disk image containing the kernel and application.
@@ -44,7 +54,19 @@ type Config struct {
 	// CPUs is the number of virtual CPUs; 0 uses QEMU default.
 	CPUs int
 	// NetworkName is the TAP interface name to attach; empty disables networking.
+	// When PortMaps are set and NetworkName is empty, SLIRP user-mode networking
+	// is used automatically so no TAP device is required.
 	NetworkName string
+	// PortMaps is the list of host-to-guest port forwarding rules.
+	// Requires SLIRP or TAP networking; mutually exclusive with "-net none".
+	PortMaps []PortMap
+	// Env is a list of "KEY=VALUE" environment variable pairs injected at
+	// boot time via QEMU fw_cfg. The kernel must read opt/uni/env to consume them.
+	Env []string
+	// Name is a human-readable identifier for the VM. If empty, the UUID is used.
+	Name string
+	// Volumes is the list of additional disk images to attach to the VM.
+	Volumes []VolumeMount
 }
 
 // process abstracts an OS process for testability.

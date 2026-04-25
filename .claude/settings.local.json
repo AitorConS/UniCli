@@ -1,0 +1,8 @@
+{
+  "enabledPlugins": {},
+  "permissions": {
+    "allow": [
+      "Bash(*)"
+    ]
+  }
+}

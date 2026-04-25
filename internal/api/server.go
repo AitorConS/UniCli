@@ -120,6 +120,10 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *R
 		Memory:      p.Memory,
 		CPUs:        p.CPUs,
 		NetworkName: p.NetworkName,
+		PortMaps:    portMapsFromSpec(p.PortMaps),
+		Env:         p.Env,
+		Name:        p.Name,
+		Volumes:     volumeMountsFromSpec(p.Volumes),
 	}
 	v, err := s.mgr.Create(ctx, cfg)
 	if err != nil {
@@ -128,7 +132,17 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *R
 	if err := s.mgr.Start(ctx, v.ID); err != nil {
 		return nil, &RPCError{Code: -32000, Message: err.Error()}
 	}
+	if p.AutoRemove {
+		go s.autoRemove(ctx, v)
+	}
 	return toInfo(v), nil
+}
+
+func (s *Server) autoRemove(ctx context.Context, v *vm.VM) {
+	<-v.Done()
+	if err := s.mgr.Remove(ctx, v.ID); err != nil {
+		slog.Debug("auto-remove vm", "vm_id", v.ID, "err", err)
+	}
 }
 
 func (s *Server) handleStop(ctx context.Context, params json.RawMessage) (any, *RPCError) {
@@ -235,6 +249,7 @@ func toInfo(v *vm.VM) VMInfo {
 		ID:    v.ID,
 		State: string(v.GetState()),
 		Image: v.Cfg.ImagePath,
+		Name:  v.Cfg.Name,
 	}
 }
 
@@ -243,8 +258,12 @@ func toDetail(v *vm.VM) VMDetail {
 		ID:        v.ID,
 		State:     string(v.GetState()),
 		Image:     v.Cfg.ImagePath,
+		Name:      v.Cfg.Name,
 		Memory:    v.Cfg.Memory,
 		CPUs:      v.Cfg.CPUs,
+		Ports:     portMapsToSpec(v.Cfg.PortMaps),
+		Env:       v.Cfg.Env,
+		Volumes:   volumeMountsToSpec(v.Cfg.Volumes),
 		CreatedAt: v.CreatedAt.Format(time.RFC3339),
 	}
 	startedAt, stoppedAt := v.GetTimes()
@@ -257,6 +276,64 @@ func toDetail(v *vm.VM) VMDetail {
 		d.StoppedAt = &s
 	}
 	return d
+}
+
+// portMapsFromSpec converts API wire types to vm domain types.
+func portMapsFromSpec(specs []PortMapSpec) []vm.PortMap {
+	out := make([]vm.PortMap, len(specs))
+	for i, s := range specs {
+		out[i] = vm.PortMap{
+			HostPort:  s.HostPort,
+			GuestPort: s.GuestPort,
+			Protocol:  vm.PortProtocol(s.Protocol),
+		}
+	}
+	return out
+}
+
+// volumeMountsFromSpec converts API wire types to vm domain types.
+func volumeMountsFromSpec(specs []VolumeMountSpec) []vm.VolumeMount {
+	out := make([]vm.VolumeMount, len(specs))
+	for i, s := range specs {
+		out[i] = vm.VolumeMount{
+			DiskPath:  s.DiskPath,
+			GuestPath: s.GuestPath,
+			ReadOnly:  s.ReadOnly,
+		}
+	}
+	return out
+}
+
+// volumeMountsToSpec converts vm domain types to API wire types.
+func volumeMountsToSpec(vols []vm.VolumeMount) []VolumeMountSpec {
+	if len(vols) == 0 {
+		return nil
+	}
+	out := make([]VolumeMountSpec, len(vols))
+	for i, v := range vols {
+		out[i] = VolumeMountSpec{
+			DiskPath:  v.DiskPath,
+			GuestPath: v.GuestPath,
+			ReadOnly:  v.ReadOnly,
+		}
+	}
+	return out
+}
+
+// portMapsToSpec converts vm domain types to API wire types.
+func portMapsToSpec(pms []vm.PortMap) []PortMapSpec {
+	if len(pms) == 0 {
+		return nil
+	}
+	out := make([]PortMapSpec, len(pms))
+	for i, pm := range pms {
+		out[i] = PortMapSpec{
+			HostPort:  pm.HostPort,
+			GuestPort: pm.GuestPort,
+			Protocol:  string(pm.Protocol),
+		}
+	}
+	return out
 }
 
 // parseSig converts a signal name ("SIGTERM", "15") to an os.Signal.

@@ -3,6 +3,7 @@ package vm
 import (
 	"context"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -197,4 +198,108 @@ func TestQEMUManager_List(t *testing.T) {
 	_, err = mgr.Create(context.Background(), Config{ImagePath: "b.img", Memory: "256M"})
 	require.NoError(t, err)
 	require.Len(t, mgr.List(), 2)
+}
+
+// --- buildCmd / buildNetArgs / buildEnvArgs tests ---
+
+func captureArgs(mgr *QEMUManager, cfg Config) []string {
+	var got []string
+	mgr.mkCmd = func(_ string, args ...string) *exec.Cmd {
+		got = args
+		return exec.Command("true")
+	}
+	_ = mgr.buildCmd(cfg)
+	return got
+}
+
+func TestBuildCmd_no_network(t *testing.T) {
+	mgr := NewQEMUManager("fake-qemu")
+	args := captureArgs(mgr, Config{ImagePath: "disk.img", Memory: "256M"})
+	require.Contains(t, args, "-net")
+	idx := indexOf(args, "-net")
+	require.Equal(t, "none", args[idx+1])
+}
+
+func TestBuildCmd_slirp_single_port(t *testing.T) {
+	mgr := NewQEMUManager("fake-qemu")
+	args := captureArgs(mgr, Config{
+		ImagePath: "disk.img",
+		Memory:    "256M",
+		PortMaps:  []PortMap{{HostPort: 8080, GuestPort: 80, Protocol: ProtocolTCP}},
+	})
+	// -net none must NOT appear
+	require.NotContains(t, args, "none")
+	// -netdev user,id=net0,hostfwd=tcp::8080-:80
+	idx := indexOf(args, "-netdev")
+	require.GreaterOrEqual(t, idx, 0)
+	require.Contains(t, args[idx+1], "hostfwd=tcp::8080-:80")
+}
+
+func TestBuildCmd_slirp_multiple_ports(t *testing.T) {
+	mgr := NewQEMUManager("fake-qemu")
+	args := captureArgs(mgr, Config{
+		ImagePath: "disk.img",
+		Memory:    "256M",
+		PortMaps: []PortMap{
+			{HostPort: 8080, GuestPort: 80, Protocol: ProtocolTCP},
+			{HostPort: 5353, GuestPort: 53, Protocol: ProtocolUDP},
+		},
+	})
+	idx := indexOf(args, "-netdev")
+	require.GreaterOrEqual(t, idx, 0)
+	netdev := args[idx+1]
+	require.Contains(t, netdev, "hostfwd=tcp::8080-:80")
+	require.Contains(t, netdev, "hostfwd=udp::5353-:53")
+}
+
+func TestBuildCmd_tap_overrides_portmaps(t *testing.T) {
+	mgr := NewQEMUManager("fake-qemu")
+	args := captureArgs(mgr, Config{
+		ImagePath:   "disk.img",
+		Memory:      "256M",
+		NetworkName: "uni-tap0",
+		PortMaps:    []PortMap{{HostPort: 8080, GuestPort: 80, Protocol: ProtocolTCP}},
+	})
+	idx := indexOf(args, "-netdev")
+	require.GreaterOrEqual(t, idx, 0)
+	require.Contains(t, args[idx+1], "tap,id=net0,ifname=uni-tap0")
+	require.NotContains(t, args[idx+1], "hostfwd")
+}
+
+func TestBuildCmd_env_vars(t *testing.T) {
+	mgr := NewQEMUManager("fake-qemu")
+	args := captureArgs(mgr, Config{
+		ImagePath: "disk.img",
+		Memory:    "256M",
+		Env:       []string{"FOO=bar", "PORT=8080"},
+	})
+	idx := indexOf(args, "-fw_cfg")
+	require.GreaterOrEqual(t, idx, 0, "-fw_cfg flag must be present")
+	fwcfg := args[idx+1]
+	require.True(t, strings.HasPrefix(fwcfg, "name=opt/uni/env,string="))
+	require.Contains(t, fwcfg, "FOO=bar")
+	require.Contains(t, fwcfg, "PORT=8080")
+}
+
+func TestBuildCmd_no_env_no_fwcfg(t *testing.T) {
+	mgr := NewQEMUManager("fake-qemu")
+	args := captureArgs(mgr, Config{ImagePath: "disk.img", Memory: "256M"})
+	require.NotContains(t, args, "-fw_cfg")
+}
+
+func TestBuildCmd_cpus(t *testing.T) {
+	mgr := NewQEMUManager("fake-qemu")
+	args := captureArgs(mgr, Config{ImagePath: "disk.img", Memory: "512M", CPUs: 4})
+	idx := indexOf(args, "-smp")
+	require.GreaterOrEqual(t, idx, 0)
+	require.Equal(t, "4", args[idx+1])
+}
+
+func indexOf(slice []string, s string) int {
+	for i, v := range slice {
+		if v == s {
+			return i
+		}
+	}
+	return -1
 }

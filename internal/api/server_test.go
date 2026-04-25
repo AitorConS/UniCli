@@ -93,6 +93,72 @@ func TestServer_Stop(t *testing.T) {
 	}, 5*time.Second, 50*time.Millisecond, "VM did not reach stopped state")
 }
 
+func TestServer_Run_WithPortsAndEnv(t *testing.T) {
+	client, _ := startTestServer(t)
+
+	info, err := client.Run(context.Background(), api.RunParams{
+		ImagePath: "test.img",
+		Memory:    "256M",
+		CPUs:      1,
+		Name:      "myvm",
+		Env:       []string{"FOO=bar", "PORT=8080"},
+		PortMaps: []api.PortMapSpec{
+			{HostPort: 8080, GuestPort: 80, Protocol: "tcp"},
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "myvm", info.Name)
+
+	detail, err := client.Inspect(context.Background(), info.ID)
+	require.NoError(t, err)
+	require.Equal(t, "myvm", detail.Name)
+	require.Equal(t, []string{"FOO=bar", "PORT=8080"}, detail.Env)
+	require.Len(t, detail.Ports, 1)
+	require.Equal(t, uint16(8080), detail.Ports[0].HostPort)
+	require.Equal(t, uint16(80), detail.Ports[0].GuestPort)
+	require.Equal(t, "tcp", detail.Ports[0].Protocol)
+}
+
+func TestServer_Run_AutoRemove(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "unid.sock")
+	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(func(_ string, _ ...string) *exec.Cmd {
+		return exec.Command("true") // exits immediately
+	}))
+	srv, err := api.NewServer(mgr, socketPath)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = srv.Serve(ctx) }()
+
+	var client *api.Client
+	require.Eventually(t, func() bool {
+		var dialErr error
+		client, dialErr = api.Dial(socketPath)
+		return dialErr == nil
+	}, 2*time.Second, 10*time.Millisecond)
+	defer func() { _ = client.Close() }()
+
+	info, err := client.Run(context.Background(), api.RunParams{
+		ImagePath:  "test.img",
+		Memory:     "256M",
+		AutoRemove: true,
+	})
+	require.NoError(t, err)
+
+	// With auto-remove and a process that exits immediately, the VM should
+	// eventually disappear from the list.
+	require.Eventually(t, func() bool {
+		infos, _ := client.List(context.Background())
+		for _, v := range infos {
+			if v.ID == info.ID {
+				return false
+			}
+		}
+		return true
+	}, 5*time.Second, 50*time.Millisecond, "VM was not auto-removed")
+}
+
 func TestServer_UnknownMethod(t *testing.T) {
 	socketPath := filepath.Join(t.TempDir(), "unid.sock")
 	mgr := vm.NewQEMUManager("fake-qemu")
