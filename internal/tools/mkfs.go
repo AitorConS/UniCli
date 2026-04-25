@@ -13,15 +13,18 @@ import (
 	"github.com/AitorConS/unikernel-engine/internal/image"
 )
 
-const mkfsDownloadURL = "https://github.com/AitorConS/unikernel-engine/releases/download/latest/mkfs-linux-amd64"
+const mkfsDownloadURL = "https://github.com/AitorConS/UniCLi/releases/download/latest/mkfs-linux-amd64"
 
 // ResolveMkfs returns an image.MkfsFunc ready to invoke.
 //
-// If override is non-empty it is used as-is (advanced users with a local mkfs).
+// If override is non-empty it is used as the mkfs binary path.
 // Otherwise mkfs-linux-amd64 is downloaded to toolsDir on first use and cached.
-// On Windows, mkfs is automatically invoked through WSL2.
+// On Windows, mkfs is always invoked through WSL2 (override or auto-downloaded).
 func ResolveMkfs(ctx context.Context, toolsDir, override string) (image.MkfsFunc, error) {
 	if override != "" {
+		if runtime.GOOS == "windows" {
+			return wslFunc(override)
+		}
 		return directFunc(override), nil
 	}
 
@@ -62,7 +65,12 @@ func downloadMkfs(ctx context.Context, dest string) error {
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("tools: download mkfs: server returned %d", resp.StatusCode)
+		return fmt.Errorf(
+			"tools: download mkfs failed (HTTP %d).\n"+
+				"Build mkfs from source in WSL2:\n"+
+				"  cd kernel && make tools\n"+
+				"Then run: uni build --mkfs <path/to/mkfs> ...",
+			resp.StatusCode)
 	}
 
 	f, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)

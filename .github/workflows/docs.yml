@@ -34,7 +34,7 @@ jobs:
         working-directory: docs
 
       - name: Build site
-        run: bundle exec jekyll build --destination _site --baseurl "/unikernel-engine"
+        run: bundle exec jekyll build --destination _site --baseurl "/UniCLi"
         working-directory: docs
         env:
           JEKYLL_ENV: production
