@@ -300,10 +300,10 @@ func composeUpWithCtx(ctx context.Context, client *api.Client, f compose.File, s
 // buildServiceRunParams converts a compose.Service into an api.RunParams.
 func buildServiceRunParams(svc compose.Service, diskPath, mem, storePath string) (api.RunParams, error) {
 	params := api.RunParams{
-		ImagePath:   diskPath,
-		Memory:      mem,
-		CPUs:        svc.CPUs,
-		Env:         svc.Environment,
+		ImagePath: diskPath,
+		Memory:    mem,
+		CPUs:      svc.CPUs,
+		Env:       svc.Environment,
 	}
 	for _, portSpec := range svc.Ports {
 		pm, err := parseComposePortSpec(portSpec)

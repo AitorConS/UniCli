@@ -152,7 +152,10 @@ func writeMeta(dir string, v *Volume) error {
 	if err != nil {
 		return fmt.Errorf("marshal volume meta: %w", err)
 	}
-	return os.WriteFile(filepath.Join(dir, metaFile), data, 0o600)
+	if err := os.WriteFile(filepath.Join(dir, metaFile), data, 0o600); err != nil {
+		return fmt.Errorf("write volume meta: %w", err)
+	}
+	return nil
 }
 
 // allocateDisk creates a sparse raw disk image of exactly sizeBytes.

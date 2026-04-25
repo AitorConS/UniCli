@@ -8,9 +8,9 @@ import (
 
 func TestParsePortMap(t *testing.T) {
 	cases := []struct {
-		input    string
-		want     PortMap
-		wantErr  bool
+		input   string
+		want    PortMap
+		wantErr bool
 	}{
 		{
 			input: "8080:80",
