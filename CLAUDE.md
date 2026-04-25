@@ -90,7 +90,12 @@ Currently stopped after **Phase 4** (Compose). Next up: **Phase 5 — Orchestrat
 | 2 — Image System | ✅ done | Manifest, content-addressable store, registry, `uni build/images/rmi/push/pull` |
 | 3 — Full CLI | ✅ done | `uni ps/logs/stop/rm/inspect/exec`, `--output json`, 81% cmd/uni coverage |
 | 4 — Compose | ✅ done | YAML parser, topological sort, `uni compose up/down/ps/logs`, rolling GitHub Release |
-| 5 — Orchestrator | ⬜ next | Self-healing, scaling, health checks, `uni scale/status` |
+| 5 — Complete Runtime | ⬜ next | Port mapping (`-p`), env vars (`-e`), volumes (`-v`), named instances, `uni volume` |
+| 6 — Package System | ⬜ | `uni pkg list/search/get/load`, Node.js/Python/Redis/Nginx packages, package index |
+| 7 — Orchestrator | ⬜ | Self-healing, scaling, health checks, `uni scale/status`, internal DNS |
+| 8 — Registry & Distribution | ⬜ | OCI-compatible registry, image signing, JWT auth |
+| 9 — Build System | ⬜ | Multi-language `uni build` (Go/Node/Python/Rust), `unikernel.toml`, multi-arch |
+| 10 — Observability | ⬜ | Prometheus metrics, web dashboard, multi-node cluster, daemon persistence |
 
 Phases must be fully tested and stable before advancing. A phase is not done if tests are skipped, lint fails, or only the happy path works.
 
