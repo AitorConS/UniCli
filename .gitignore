@@ -4,3 +4,6 @@ coverage.html
 *.o
 *.a
 kernel/build/
+kernel/output/
+examples/**/*-linux
+examples/**/*.img
