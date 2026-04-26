@@ -34,6 +34,8 @@ SRCS-mkfs= \
 	$(SRCDIR)/fs/tlog.c \
 	$(SRCDIR)/unix_process/unix_process_runtime.c
 
+LDFLAGS-mkfs=	-static
+
 SRCS-vdsogen=	$(CURDIR)/vdsogen.c
 
 CFLAGS+=-O3 \
