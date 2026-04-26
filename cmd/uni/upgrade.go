@@ -207,7 +207,9 @@ func downloadBinary(ctx context.Context, dir, name, ver string) (string, error) 
 	artifact := fmt.Sprintf("%s-%s-%s%s", name, runtime.GOOS, runtime.GOARCH, binaryExt())
 	url := fmt.Sprintf("%s/%s/%s", cliReleaseBase, ver, artifact)
 
-	tmp, err := os.CreateTemp(dir, name+"-upgrade-*"+binaryExt())
+	// No .exe suffix on the temp file: Windows AV locks newly-written .exe
+	// files for scanning, which would block the rename into place.
+	tmp, err := os.CreateTemp(dir, name+"-upgrade-*")
 	if err != nil {
 		return "", fmt.Errorf("create temp: %w", err)
 	}
