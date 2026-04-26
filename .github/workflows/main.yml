@@ -149,19 +149,15 @@ jobs:
                --notes "Release ${CLI_VERSION} — built from commit $(git rev-parse --short HEAD)"
           gh release upload "$TAG" dist/* --clobber
 
-      - name: Update rolling latest release
+      - name: Update rolling latest release (CLI assets only)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create latest --prerelease \
-            --title "latest (${CLI_VERSION})" \
-            --notes "Rolling latest — currently ${CLI_VERSION}" \
+            --title "latest" --notes "Rolling latest release" \
             2>/dev/null || true
-          gh release edit latest \
-            --title "latest (${CLI_VERSION})" \
-            --notes "Rolling latest — currently ${CLI_VERSION}" \
-            2>/dev/null || true
-          gh release upload latest dist/* --clobber
+          # Upload only CLI binaries — never touch kernel assets in this pipeline.
+          gh release upload latest dist/uni-* dist/unid-* --clobber
 
   coverage:
     name: Coverage Report

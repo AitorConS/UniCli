@@ -57,18 +57,14 @@ jobs:
             dist/mkfs-linux-amd64 dist/kernel.img dist/boot.img dist/kernel-version.txt \
             --clobber
 
-      - name: Update rolling latest release
+      - name: Update rolling latest release (kernel assets only)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create latest --prerelease \
-            --title "latest (${KERNEL_VERSION})" \
-            --notes "Rolling latest — currently ${KERNEL_VERSION}" \
+            --title "latest" --notes "Rolling latest release" \
             2>/dev/null || true
-          gh release edit latest \
-            --title "latest (${KERNEL_VERSION})" \
-            --notes "Rolling latest — currently ${KERNEL_VERSION}" \
-            2>/dev/null || true
+          # Upload only kernel assets — never touch CLI binaries in this pipeline.
           gh release upload latest \
             dist/mkfs-linux-amd64 dist/kernel.img dist/boot.img dist/kernel-version.txt \
             --clobber
