@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -14,75 +16,226 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AitorConS/unikernel-engine/internal/api"
 	"github.com/spf13/cobra"
 )
 
 const (
 	cliGithubAPIBase = "https://api.github.com/repos/AitorConS/UniCLi"
 	cliReleaseBase   = "https://github.com/AitorConS/UniCLi/releases/download"
+
+	daemonReadyTimeout  = 15 * time.Second
+	daemonStopTimeout   = 10 * time.Second
+	daemonPollInterval  = 100 * time.Millisecond
 )
 
-func newUpgradeCmd() *cobra.Command {
+func newUpgradeCmd(socketPath *string) *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
 		Use:   "upgrade",
-		Short: "Upgrade uni (and unid if present) to the latest version",
+		Short: "Upgrade uni and unid to the latest version",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Minute)
 			defer cancel()
-
-			remote, err := latestCLIVersion(ctx)
-			if err != nil {
-				return fmt.Errorf("upgrade: check latest version: %w", err)
-			}
-
-			local := version // injected at build time via -X main.version
-			fmt.Fprintf(cmd.OutOrStdout(), "Installed: %s\n", local)
-			fmt.Fprintf(cmd.OutOrStdout(), "Latest:    %s\n", remote)
-
-			if !cliIsNewer(local, remote) {
-				fmt.Fprintln(cmd.OutOrStdout(), "Already up to date.")
-				return nil
-			}
-
-			fmt.Fprintf(cmd.OutOrStdout(), "New version available: %s\n", remote)
-			if !yes && !confirmPrompt("Upgrade? [y/N] ") {
-				fmt.Fprintln(cmd.OutOrStdout(), "Aborted.")
-				return nil
-			}
-
-			dlCtx, dlCancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
-			defer dlCancel()
-
-			exe, err := os.Executable()
-			if err != nil {
-				return fmt.Errorf("upgrade: locate current binary: %w", err)
-			}
-			exe, err = filepath.EvalSymlinks(exe)
-			if err != nil {
-				return fmt.Errorf("upgrade: resolve symlink: %w", err)
-			}
-			dir := filepath.Dir(exe)
-
-			if err := replaceBinary(dlCtx, cmd, dir, "uni", remote); err != nil {
-				return fmt.Errorf("upgrade uni: %w", err)
-			}
-
-			// Always upgrade unid alongside uni.
-			if err := replaceBinary(dlCtx, cmd, dir, "unid", remote); err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "warning: upgrade unid: %v\n", err)
-			} else {
-				fmt.Fprintln(cmd.OutOrStdout(), "Note: restart unid to apply the new daemon binary.")
-			}
-
-			fmt.Fprintf(cmd.OutOrStdout(), "Upgraded to %s.\n", remote)
-			return nil
+			return runUpgrade(ctx, cmd, *socketPath, yes)
 		},
 	}
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip confirmation prompt")
 	cmd.AddCommand(newUpgradeCheckCmd(), newUpgradeListCmd())
 	return cmd
 }
+
+func runUpgrade(ctx context.Context, cmd *cobra.Command, socketPath string, yes bool) error {
+	out := cmd.OutOrStdout()
+	errOut := cmd.ErrOrStderr()
+
+	// 1. Check versions.
+	remote, err := latestCLIVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("upgrade: check latest version: %w", err)
+	}
+	fmt.Fprintf(out, "Installed: %s\n", version)
+	fmt.Fprintf(out, "Latest:    %s\n", remote)
+	if !cliIsNewer(version, remote) {
+		fmt.Fprintln(out, "Already up to date.")
+		return nil
+	}
+	fmt.Fprintf(out, "New version available: %s\n", remote)
+	if !yes && !confirmPrompt("Upgrade? [y/N] ") {
+		fmt.Fprintln(out, "Aborted.")
+		return nil
+	}
+
+	// 2. Locate the directory holding the running uni binary.
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("upgrade: locate binary: %w", err)
+	}
+	exe, err = filepath.EvalSymlinks(exe)
+	if err != nil {
+		return fmt.Errorf("upgrade: resolve symlink: %w", err)
+	}
+	dir := filepath.Dir(exe)
+
+	// 3. Download both binaries to temp files before touching anything on disk.
+	fmt.Fprintln(out, "Downloading uni...")
+	uniTmp, err := downloadBinary(ctx, dir, "uni", remote)
+	if err != nil {
+		return fmt.Errorf("upgrade: download uni: %w", err)
+	}
+	defer func() { _ = os.Remove(uniTmp) }()
+
+	fmt.Fprintln(out, "Downloading unid...")
+	unidTmp, err := downloadBinary(ctx, dir, "unid", remote)
+	if err != nil {
+		return fmt.Errorf("upgrade: download unid: %w", err)
+	}
+	defer func() { _ = os.Remove(unidTmp) }()
+
+	// 4. Stop the daemon gracefully if it is running.
+	daemonWasRunning := stopDaemon(ctx, socketPath, out, errOut)
+
+	// 5. Atomically replace both binaries.
+	uniDest := exe
+	unidDest := filepath.Join(dir, binaryName("unid"))
+
+	if err := installBinary(uniTmp, uniDest); err != nil {
+		return fmt.Errorf("upgrade: install uni: %w", err)
+	}
+	fmt.Fprintf(out, "uni  → %s\n", uniDest)
+
+	if err := installBinary(unidTmp, unidDest); err != nil {
+		return fmt.Errorf("upgrade: install unid: %w", err)
+	}
+	fmt.Fprintf(out, "unid → %s\n", unidDest)
+
+	// 6. Restart daemon if it was running before.
+	if daemonWasRunning {
+		fmt.Fprintln(out, "Starting new unid...")
+		if err := launchDaemon(unidDest, socketPath); err != nil {
+			fmt.Fprintf(errOut, "warning: start unid: %v\n", err)
+			fmt.Fprintln(errOut, "Start unid manually: unid --socket "+socketPath)
+		} else if err := waitForSocket(socketPath, daemonReadyTimeout); err != nil {
+			fmt.Fprintf(errOut, "warning: unid did not become ready: %v\n", err)
+		} else {
+			fmt.Fprintln(out, "Daemon restarted and ready.")
+		}
+	}
+
+	fmt.Fprintf(out, "Upgraded to %s.\n", remote)
+	return nil
+}
+
+// stopDaemon shuts the daemon down via RPC and waits for its socket to disappear.
+// Returns true if the daemon was running.
+func stopDaemon(ctx context.Context, socketPath string, out, errOut io.Writer) bool {
+	client, err := api.Dial(socketPath)
+	if err != nil {
+		return false // daemon not running
+	}
+	fmt.Fprintln(out, "Stopping daemon...")
+	_ = client.Shutdown(ctx) // ignore error — daemon may close conn before responding
+	_ = client.Close()
+
+	deadline := time.Now().Add(daemonStopTimeout)
+	for time.Now().Before(deadline) {
+		if _, err := net.Dial("unix", socketPath); err != nil {
+			return true // socket gone — daemon exited
+		}
+		time.Sleep(daemonPollInterval)
+	}
+	fmt.Fprintln(errOut, "warning: daemon did not exit within timeout; replacing binary anyway")
+	return true
+}
+
+// waitForSocket polls until the Unix socket at path accepts connections or the
+// timeout elapses.
+func waitForSocket(socketPath string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		conn, err := net.Dial("unix", socketPath)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		time.Sleep(daemonPollInterval)
+	}
+	return fmt.Errorf("socket %s not ready after %s", socketPath, timeout)
+}
+
+// launchDaemon starts a new unid process detached from the current terminal.
+func launchDaemon(unidBin, socketPath string) error {
+	cmd := exec.Command(unidBin, "--socket", socketPath)
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start %s: %w", unidBin, err)
+	}
+	// Detach — we don't wait for it.
+	go func() { _ = cmd.Wait() }()
+	return nil
+}
+
+// downloadBinary downloads the named binary for the current platform into a
+// temp file in dir and returns its path.
+func downloadBinary(ctx context.Context, dir, name, ver string) (string, error) {
+	artifact := fmt.Sprintf("%s-%s-%s%s", name, runtime.GOOS, runtime.GOARCH, binaryExt())
+	url := fmt.Sprintf("%s/%s/%s", cliReleaseBase, ver, artifact)
+
+	tmp, err := os.CreateTemp(dir, name+"-upgrade-*"+binaryExt())
+	if err != nil {
+		return "", fmt.Errorf("create temp: %w", err)
+	}
+	tmpPath := tmp.Name()
+
+	if err := downloadTo(ctx, url, tmp); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return "", err
+	}
+	if err := tmp.Chmod(0o755); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return "", fmt.Errorf("chmod: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return "", fmt.Errorf("close temp: %w", err)
+	}
+	return tmpPath, nil
+}
+
+// installBinary atomically replaces dest with the file at src.
+//
+// On Unix, os.Rename is atomic within the same filesystem.
+// On Windows, a running exe cannot be overwritten directly; we rename it to
+// a .bak first (which works even while the process is open), then place the
+// new binary. The .bak is cleaned up at the start of the next upgrade.
+func installBinary(src, dest string) error {
+	if runtime.GOOS == "windows" {
+		bak := dest + ".bak"
+		_ = os.Remove(bak) // clean up leftover from a previous upgrade
+		if err := os.Rename(dest, bak); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("rename %s to .bak: %w", dest, err)
+		}
+		// bak stays on disk until next upgrade — Windows cannot delete a
+		// running exe, and the process still holds the file handle.
+	}
+	if err := os.Rename(src, dest); err != nil {
+		return fmt.Errorf("install %s: %w", dest, err)
+	}
+	return nil
+}
+
+func binaryName(name string) string { return name + binaryExt() }
+func binaryExt() string {
+	if runtime.GOOS == "windows" {
+		return ".exe"
+	}
+	return ""
+}
+
+// ── subcommands ────────────────────────────────────────────────────────────
 
 func newUpgradeCheckCmd() *cobra.Command {
 	return &cobra.Command{
@@ -91,7 +244,6 @@ func newUpgradeCheckCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
-
 			remote, err := latestCLIVersion(ctx)
 			if err != nil {
 				fmt.Fprintf(cmd.OutOrStdout(), "Latest: (unavailable — %v)\n", err)
@@ -100,8 +252,7 @@ func newUpgradeCheckCmd() *cobra.Command {
 			fmt.Fprintf(cmd.OutOrStdout(), "Installed: %s\n", version)
 			fmt.Fprintf(cmd.OutOrStdout(), "Latest:    %s\n", remote)
 			if cliIsNewer(version, remote) {
-				fmt.Fprintf(cmd.OutOrStdout(),
-					"Update available. Run `uni upgrade` to install %s.\n", remote)
+				fmt.Fprintf(cmd.OutOrStdout(), "Update available. Run `uni upgrade` to install %s.\n", remote)
 			} else {
 				fmt.Fprintln(cmd.OutOrStdout(), "Already up to date.")
 			}
@@ -117,7 +268,6 @@ func newUpgradeListCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
 			defer cancel()
-
 			versions, err := listCLIVersions(ctx)
 			if err != nil {
 				return fmt.Errorf("upgrade list: %w", err)
@@ -138,52 +288,48 @@ func newUpgradeListCmd() *cobra.Command {
 	}
 }
 
-// replaceBinary downloads binary `name` at `ver` into `dir` and atomically
-// replaces the existing executable.
-func replaceBinary(ctx context.Context, cmd *cobra.Command, dir, name, ver string) error {
-	ext := ""
-	if runtime.GOOS == "windows" {
-		ext = ".exe"
-	}
-	artifact := fmt.Sprintf("%s-%s-%s%s", name, runtime.GOOS, runtime.GOARCH, ext)
-	url := fmt.Sprintf("%s/%s/%s", cliReleaseBase, ver, artifact)
-	dest := filepath.Join(dir, name+ext)
+// ── GitHub release helpers ─────────────────────────────────────────────────
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Downloading %s...\n", artifact)
-
-	tmp, err := os.CreateTemp(dir, name+"-update-*"+ext)
+func latestCLIVersion(ctx context.Context) (string, error) {
+	vers, err := listCLIVersions(ctx)
 	if err != nil {
-		return fmt.Errorf("create temp file: %w", err)
+		return "", err
 	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
+	if len(vers) == 0 {
+		return "", fmt.Errorf("no CLI releases found")
+	}
+	return vers[0], nil
+}
 
-	if err := downloadTo(ctx, url, tmp); err != nil {
-		_ = tmp.Close()
-		return err
+func listCLIVersions(ctx context.Context) ([]string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cliGithubAPIBase+"/releases", nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
 	}
-	if err := tmp.Chmod(0o755); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("chmod: %w", err)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch releases: %w", err)
 	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temp: %w", err)
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GitHub API returned HTTP %d", resp.StatusCode)
 	}
-
-	// On Windows rename the running binary away before swapping in the new one.
-	if runtime.GOOS == "windows" {
-		bak := dest + ".bak"
-		_ = os.Remove(bak)
-		if err := os.Rename(dest, bak); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("rename current binary: %w", err)
+	var releases []struct {
+		TagName string `json:"tag_name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
+		return nil, fmt.Errorf("parse response: %w", err)
+	}
+	var versions []string
+	for _, r := range releases {
+		tag := r.TagName
+		if strings.HasPrefix(tag, "v") && !strings.HasPrefix(tag, "vkernel") {
+			versions = append(versions, tag)
 		}
-		_ = os.Remove(bak) // best-effort cleanup
 	}
-
-	if err := os.Rename(tmpName, dest); err != nil {
-		return fmt.Errorf("install %s: %w", name, err)
-	}
-	return nil
+	sort.Slice(versions, func(i, j int) bool { return cliSemverGT(versions[i], versions[j]) })
+	return versions, nil
 }
 
 func downloadTo(ctx context.Context, url string, w io.Writer) error {
@@ -205,65 +351,10 @@ func downloadTo(ctx context.Context, url string, w io.Writer) error {
 	return nil
 }
 
-// latestCLIVersion returns the highest semver CLI release from GitHub.
-func latestCLIVersion(ctx context.Context) (string, error) {
-	vers, err := listCLIVersions(ctx)
-	if err != nil {
-		return "", err
-	}
-	if len(vers) == 0 {
-		return "", fmt.Errorf("no CLI releases found")
-	}
-	return vers[0], nil
-}
-
-// listCLIVersions returns all vX.Y.Z CLI release tags, newest-first.
-func listCLIVersions(ctx context.Context) ([]string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		cliGithubAPIBase+"/releases", nil)
-	if err != nil {
-		return nil, fmt.Errorf("build request: %w", err)
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("fetch releases: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub API returned HTTP %d", resp.StatusCode)
-	}
-
-	var releases []struct {
-		TagName string `json:"tag_name"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
-		return nil, fmt.Errorf("parse response: %w", err)
-	}
-
-	var versions []string
-	for _, r := range releases {
-		// CLI release tags look like "v0.1.0"; exclude "latest", "kernel-v*".
-		tag := r.TagName
-		if strings.HasPrefix(tag, "v") && !strings.HasPrefix(tag, "vkernel") {
-			versions = append(versions, tag)
-		}
-	}
-	sort.Slice(versions, func(i, j int) bool {
-		return cliSemverGT(versions[i], versions[j])
-	})
-	return versions, nil
-}
-
-// cliIsNewer reports whether remote is a strictly higher semver than local.
-func cliIsNewer(local, remote string) bool {
-	return cliSemverGT(remote, local)
-}
+func cliIsNewer(local, remote string) bool { return cliSemverGT(remote, local) }
 
 func cliSemverGT(a, b string) bool {
-	av := cliParseSemver(a)
-	bv := cliParseSemver(b)
+	av, bv := cliParseSemver(a), cliParseSemver(b)
 	for i := range av {
 		if av[i] != bv[i] {
 			return av[i] > bv[i]

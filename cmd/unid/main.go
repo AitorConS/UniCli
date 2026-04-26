@@ -56,13 +56,13 @@ func newRootCmd() *cobra.Command {
 func serve(ctx context.Context, socketPath, qemuBin, registryAddr, storePath string) error {
 	mgr := vm.NewQEMUManager(qemuBin)
 
-	vmSrv, err := api.NewServer(mgr, socketPath)
+	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+
+	vmSrv, err := api.NewServer(mgr, socketPath, stop)
 	if err != nil {
 		return fmt.Errorf("unid: vm server: %w", err)
 	}
-
-	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
-	defer stop()
 
 	slog.Info("unid listening", "socket", socketPath, "qemu", qemuBin)
 

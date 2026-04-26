@@ -107,6 +107,14 @@ func (c *Client) Logs(_ context.Context, id string) (LogsResponse, error) {
 	return resp, nil
 }
 
+// Shutdown asks the daemon to exit cleanly.
+func (c *Client) Shutdown(_ context.Context) error {
+	if err := c.call("Daemon.Shutdown", nil, nil); err != nil {
+		return fmt.Errorf("client shutdown: %w", err)
+	}
+	return nil
+}
+
 // Inspect returns full details for the VM.
 func (c *Client) Inspect(_ context.Context, id string) (VMDetail, error) {
 	var detail VMDetail

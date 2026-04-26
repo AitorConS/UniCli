@@ -31,7 +31,7 @@ func TestVMLifecycle(t *testing.T) {
 	img := makeTrivialImage(t)
 	mgr := vm.NewQEMUManager(defaultQEMU)
 
-	srv, err := api.NewServer(mgr, defaultSocket)
+	srv, err := api.NewServer(mgr, defaultSocket, nil)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)

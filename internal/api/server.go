@@ -16,13 +16,16 @@ import (
 // Server listens on a Unix socket and dispatches JSON-RPC requests to a
 // vm.Manager.
 type Server struct {
-	mgr      vm.Manager
-	listener net.Listener
+	mgr        vm.Manager
+	listener   net.Listener
+	shutdownFn func() // called by Daemon.Shutdown RPC; may be nil
 }
 
 // NewServer creates a Server that will listen on socketPath.
+// shutdownFn is called (in a goroutine) when a Daemon.Shutdown RPC is received;
+// pass nil to disable remote shutdown.
 // Any existing socket file at socketPath is removed before binding.
-func NewServer(mgr vm.Manager, socketPath string) (*Server, error) {
+func NewServer(mgr vm.Manager, socketPath string, shutdownFn func()) (*Server, error) {
 	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("api server remove stale socket: %w", err)
 	}
@@ -30,7 +33,7 @@ func NewServer(mgr vm.Manager, socketPath string) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("api server listen %s: %w", socketPath, err)
 	}
-	return &Server{mgr: mgr, listener: l}, nil
+	return &Server{mgr: mgr, listener: l, shutdownFn: shutdownFn}, nil
 }
 
 // Serve accepts connections and handles them until ctx is cancelled.
@@ -105,6 +108,8 @@ func (s *Server) dispatch(ctx context.Context, req *Request) (any, *RPCError) {
 		return s.handleLogs(req.Params)
 	case "VM.Inspect":
 		return s.handleInspect(req.Params)
+	case "Daemon.Shutdown":
+		return s.handleDaemonShutdown()
 	default:
 		return nil, &RPCError{Code: -32601, Message: "method not found: " + req.Method}
 	}
@@ -230,6 +235,13 @@ func (s *Server) handleLogs(params json.RawMessage) (any, *RPCError) {
 		return nil, &RPCError{Code: -32000, Message: err.Error()}
 	}
 	return LogsResponse{ID: v.ID, Logs: string(v.Logs())}, nil
+}
+
+func (s *Server) handleDaemonShutdown() (any, *RPCError) {
+	if s.shutdownFn != nil {
+		go s.shutdownFn()
+	}
+	return map[string]string{"status": "ok"}, nil
 }
 
 func (s *Server) handleInspect(params json.RawMessage) (any, *RPCError) {

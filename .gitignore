@@ -7,3 +7,4 @@ kernel/build/
 kernel/output/
 examples/**/*-linux
 examples/**/*.img
+*.exe
