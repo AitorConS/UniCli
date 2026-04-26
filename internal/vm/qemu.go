@@ -56,7 +56,7 @@ func (m *QEMUManager) Create(_ context.Context, cfg Config) (*VM, error) {
 
 // Start launches the QEMU process for the VM identified by id.
 func (m *QEMUManager) Start(_ context.Context, id string) error {
-	v, err := m.store.Get(id)
+	v, err := m.store.Resolve(id)
 	if err != nil {
 		return fmt.Errorf("qemu start %s: %w", id, err)
 	}
@@ -88,7 +88,7 @@ func (m *QEMUManager) Start(_ context.Context, id string) error {
 // Stop gracefully shuts down the VM: sends SIGTERM, waits up to gracePeriod,
 // then kills if still running.
 func (m *QEMUManager) Stop(ctx context.Context, id string) error {
-	v, err := m.store.Get(id)
+	v, err := m.store.Resolve(id)
 	if err != nil {
 		return fmt.Errorf("qemu stop %s: %w", id, err)
 	}
@@ -123,7 +123,7 @@ func (m *QEMUManager) Stop(ctx context.Context, id string) error {
 
 // Kill immediately sends SIGKILL to the VM process.
 func (m *QEMUManager) Kill(_ context.Context, id string) error {
-	v, err := m.store.Get(id)
+	v, err := m.store.Resolve(id)
 	if err != nil {
 		return fmt.Errorf("qemu kill %s: %w", id, err)
 	}
@@ -143,7 +143,7 @@ func (m *QEMUManager) Kill(_ context.Context, id string) error {
 
 // Signal sends sig to the VM's QEMU process.
 func (m *QEMUManager) Signal(_ context.Context, id string, sig os.Signal) error {
-	v, err := m.store.Get(id)
+	v, err := m.store.Resolve(id)
 	if err != nil {
 		return fmt.Errorf("qemu signal %s: %w", id, err)
 	}
@@ -161,22 +161,22 @@ func (m *QEMUManager) Signal(_ context.Context, id string, sig os.Signal) error 
 
 // Remove deletes a stopped VM from the registry.
 func (m *QEMUManager) Remove(_ context.Context, id string) error {
-	v, err := m.store.Get(id)
+	v, err := m.store.Resolve(id)
 	if err != nil {
 		return fmt.Errorf("qemu remove %s: %w", id, err)
 	}
 	if st := v.GetState(); st != StateStopped {
 		return fmt.Errorf("qemu remove %s: vm is %s, must be stopped first", id, st)
 	}
-	if err := m.store.Remove(id); err != nil {
+	if err := m.store.Remove(v.ID); err != nil {
 		return fmt.Errorf("qemu remove %s: %w", id, err)
 	}
 	return nil
 }
 
-// Get returns the VM with the given id.
+// Get returns the VM with the given id, name, or ID prefix.
 func (m *QEMUManager) Get(id string) (*VM, error) {
-	v, err := m.store.Get(id)
+	v, err := m.store.Resolve(id)
 	if err != nil {
 		return nil, fmt.Errorf("qemu get %s: %w", id, err)
 	}
