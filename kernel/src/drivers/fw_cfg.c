@@ -15,7 +15,7 @@
  *   "opt/uni/env" — environment variables, "KEY=VAL\nKEY2=VAL2\n" form
  */
 #include <kernel.h>
-#include <fw_cfg.h>
+#include "fw_cfg.h"
 #include <io.h>
 
 #define FW_CFG_PORT_SEL     0x510
