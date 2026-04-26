@@ -12,7 +12,7 @@
  * skipped. Existing entries with the same key are overwritten.
  */
 #include <kernel.h>
-#include <unix.h>
+#include <unix_internal.h>
 
 #if defined(__x86_64__)
 #include <drivers/fw_cfg.h>
