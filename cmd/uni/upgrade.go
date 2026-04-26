@@ -71,6 +71,8 @@ func newUpgradeCmd() *cobra.Command {
 			// Always upgrade unid alongside uni.
 			if err := replaceBinary(dlCtx, cmd, dir, "unid", remote); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "warning: upgrade unid: %v\n", err)
+			} else {
+				fmt.Fprintln(cmd.OutOrStdout(), "Note: restart unid to apply the new daemon binary.")
 			}
 
 			fmt.Fprintf(cmd.OutOrStdout(), "Upgraded to %s.\n", remote)
