@@ -78,7 +78,8 @@ uni CLI (cobra) → Unix socket → unid daemon → KVM/QEMU wrapper
 ## CI (GitHub Actions — not Jenkins)
 
 - `pr.yml` — lint + unit tests + kernel build + integration tests on every PR to `main`/`develop`
-- `main.yml` — E2E + release binaries on merge to `main`
+- `main.yml` — E2E + release CLI binaries on merge to `main`; reads `VERSION` for semver tag
+- `kernel-release.yml` — builds and releases kernel artifacts on changes to `kernel/**`; reads `kernel/VERSION`
 - `nightly.yml` — full kernel suite + benchmarks + `govulncheck` + `trivy`
 
 ## Phase Status
@@ -132,12 +133,37 @@ Build pipeline in `internal/vm/qemu.go::buildCmd`:
 ```
 `uni compose down/ps/logs` reads this file — run `up` first.
 
+## Versioning
+
+Both the CLI and the kernel are independently versioned with semver.
+
+| Component | Version file | Release tag format | Pipeline |
+|---|---|---|---|
+| CLI (uni/unid) | `VERSION` | `v0.1.0` | `main.yml` |
+| Kernel artifacts | `kernel/VERSION` | `kernel-v0.1.0` | `kernel-release.yml` |
+
+**Rules:**
+- Bump `VERSION` before every commit that changes CLI code.
+- Bump `kernel/VERSION` before every commit that changes `kernel/`.
+- Patch bump (`0.1.0 → 0.1.1`) for fixes; minor bump (`0.1.0 → 0.2.0`) for features.
+- Each pipeline publishes an immutable versioned release **and** updates the shared rolling `latest` release, uploading only its own assets (CLI pipeline never touches kernel assets and vice versa).
+
+**Kernel tools cache** (`~/.uni/tools/`):
+- `uni build` auto-downloads kernel artifacts on first use via `internal/tools.ResolveMkfs`.
+- `uni build` checks for a newer kernel version before building and prompts `[y/N]`.
+- `uni kernel check` / `uni kernel update` / `uni kernel list` / `uni kernel use <v>` manage the cached kernel version.
+- After bumping `kernel/VERSION` and pushing, wait for `kernel-release.yml` to complete before the new kernel is available to download.
+
+**CLI self-update:**
+- `uni upgrade` replaces the running `uni` binary (and `unid` if found alongside it).
+- `uni upgrade check` / `uni upgrade list` for inspection without installing.
+- Windows: renames the running binary to `.bak` before placing the new one (cannot overwrite a running `.exe` directly).
+
 ## Repository Notes
 
 - The remote was renamed to `AitorConS/UniCli`. Pushes still work but emit a redirect notice — ignore it; not a hook failure.
 - Default branch: `main`. No `develop` branch despite some workflow references.
 - Self-hosted runner is needed for `integration-tests` (`runs-on: [self-hosted, linux, kvm]`). When that job fails with `/dev/kvm not found`, the cause is the runner user lacking the `kvm` group (`sudo usermod -aG kvm $USER` then restart the runner service) — not a CI config issue.
-- Kernel binaries (`kernel.img`, `boot.img`, `mkfs`) are auto-downloaded by `uni build` from the latest GitHub release. After kernel-side changes, users must wait for the release pipeline (`kernel-release.yml`) or rebuild manually.
 
 ## Critical Function/File Index
 
@@ -151,3 +177,7 @@ Build pipeline in `internal/vm/qemu.go::buildCmd`:
 | Volume disk allocation | `internal/volume/volume.go::allocateDisk` (sparse via seek+write) |
 | Kernel envp construction | `kernel/src/unix/exec.c::build_exec_stack` (reads `process_root[environment]`) |
 | Boot-time env injection | `kernel/src/kernel/stage3.c::startup` calls `env_inject_from_fw_cfg(root)` |
+| Kernel tools download/cache | `internal/tools/mkfs.go::ResolveMkfs` + `internal/tools/version.go` |
+| Kernel version check (build) | `cmd/uni/build.go::checkKernelUpdateForBuild` |
+| CLI self-update | `cmd/uni/upgrade.go::replaceBinary` |
+| CLI version (injected at build) | `cmd/uni/main.go::version` — set via `-X main.version` in `main.yml` |
