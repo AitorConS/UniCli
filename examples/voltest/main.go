@@ -30,6 +30,13 @@ import (
 const logFile = "/data/log.txt"
 
 func main() {
+	// Ensure the data directory exists — the volume mount point may not be
+	// pre-created inside the guest filesystem.
+	if err := os.MkdirAll("/data", 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "cannot create /data: %v\n", err)
+		os.Exit(1)
+	}
+
 	http.HandleFunc("/", handleList)
 	http.HandleFunc("/write", handleWrite)
 	http.HandleFunc("/reset", handleReset)
