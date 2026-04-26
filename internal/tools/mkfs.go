@@ -14,49 +14,24 @@ import (
 	"github.com/AitorConS/unikernel-engine/internal/image"
 )
 
-const (
-	mkfsDownloadURL   = "https://github.com/AitorConS/UniCLi/releases/download/latest/mkfs-linux-amd64"
-	kernelDownloadURL = "https://github.com/AitorConS/UniCLi/releases/download/latest/kernel.img"
-	bootDownloadURL   = "https://github.com/AitorConS/UniCLi/releases/download/latest/boot.img"
-)
-
 // ResolveMkfs returns an image.MkfsFunc ready to invoke.
 //
-// Downloads mkfs, kernel.img, and boot.img to toolsDir on first use and caches them.
-// If override is non-empty it is used as the mkfs path; kernel/boot still come from toolsDir.
-// On Windows all three binaries are invoked through WSL2.
+// Downloads the latest kernel artifacts to toolsDir on first use and caches them.
+// If override is non-empty it is used as the mkfs binary path; kernel/boot still
+// come from toolsDir. On Windows all three binaries are invoked through WSL2.
 func ResolveMkfs(ctx context.Context, toolsDir, override string) (image.MkfsFunc, error) {
+	if !Exist(toolsDir) {
+		if err := DownloadVersion(ctx, toolsDir, "latest"); err != nil {
+			return nil, err
+		}
+	}
+
 	mkfsPath := override
 	if mkfsPath == "" {
 		mkfsPath = filepath.Join(toolsDir, "mkfs")
-		if _, err := os.Stat(mkfsPath); os.IsNotExist(err) {
-			if err := downloadArtifact(ctx, mkfsDownloadURL, mkfsPath); err != nil {
-				return nil, err
-			}
-		}
 	}
-
 	bootImg := filepath.Join(toolsDir, "boot.img")
-	if _, err := os.Stat(bootImg); os.IsNotExist(err) {
-		if err := downloadArtifact(ctx, bootDownloadURL, bootImg); err != nil {
-			return nil, fmt.Errorf("tools: resolve boot image: %w", err)
-		}
-	}
-
 	kernelImg := filepath.Join(toolsDir, "kernel.img")
-	if _, err := os.Stat(kernelImg); os.IsNotExist(err) {
-		if err := downloadArtifact(ctx, kernelDownloadURL, kernelImg); err != nil {
-			return nil, fmt.Errorf("tools: resolve kernel image: %w", err)
-		}
-	}
-
-	// Fetch and persist the remote version whenever any artifact was just
-	// downloaded (version file absent means this is a first-time install).
-	if LocalVersion(toolsDir) == "(unknown)" {
-		if ver, err := RemoteVersion(ctx); err == nil {
-			_ = SaveLocalVersion(toolsDir, ver)
-		}
-	}
 
 	if runtime.GOOS == "windows" {
 		return wslFunc(mkfsPath, bootImg, kernelImg)

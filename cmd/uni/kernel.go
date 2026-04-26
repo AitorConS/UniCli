@@ -17,7 +17,12 @@ func newKernelCmd() *cobra.Command {
 		Use:   "kernel",
 		Short: "Manage the kernel tools (kernel.img, boot.img, mkfs)",
 	}
-	cmd.AddCommand(newKernelCheckCmd(), newKernelUpdateCmd())
+	cmd.AddCommand(
+		newKernelCheckCmd(),
+		newKernelUpdateCmd(),
+		newKernelListCmd(),
+		newKernelUseCmd(),
+	)
 	return cmd
 }
 
@@ -29,27 +34,103 @@ func newKernelCheckCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			toolsDir := defaultToolsPath()
 			local := tools.LocalVersion(toolsDir)
-			fmt.Fprintf(cmd.OutOrStdout(), "Local kernel version:  %s\n", local)
+			fmt.Fprintf(cmd.OutOrStdout(), "Installed kernel: %s\n", local)
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
 
 			remote, err := tools.RemoteVersion(ctx)
 			if err != nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "Remote kernel version: (unavailable — %v)\n", err)
+				fmt.Fprintf(cmd.OutOrStdout(), "Latest kernel:    (unavailable — %v)\n", err)
 				return nil
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Remote kernel version: %s\n", remote)
+			fmt.Fprintf(cmd.OutOrStdout(), "Latest kernel:    %s\n", remote)
 
-			if local == remote {
-				fmt.Fprintln(cmd.OutOrStdout(), "Kernel is up to date.")
-			} else {
+			if tools.IsNewer(local, remote) {
 				fmt.Fprintf(cmd.OutOrStdout(),
 					"Update available. Run `uni kernel update` to install %s.\n", remote)
+			} else {
+				fmt.Fprintln(cmd.OutOrStdout(), "Kernel is up to date.")
 			}
 			return nil
 		},
 	}
+}
+
+// newKernelListCmd implements `uni kernel list`.
+func newKernelListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List all available kernel versions",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
+			defer cancel()
+
+			versions, err := tools.ListRemoteVersions(ctx)
+			if err != nil {
+				return fmt.Errorf("kernel list: %w", err)
+			}
+			if len(versions) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "No kernel releases found.")
+				return nil
+			}
+
+			local := tools.LocalVersion(defaultToolsPath())
+			for _, v := range versions {
+				marker := "  "
+				if v == local {
+					marker = "* "
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "%s%s\n", marker, v)
+			}
+			return nil
+		},
+	}
+}
+
+// newKernelUseCmd implements `uni kernel use <version>`.
+func newKernelUseCmd() *cobra.Command {
+	var yes bool
+	cmd := &cobra.Command{
+		Use:   "use <version>",
+		Short: "Switch to a specific kernel version (e.g. v0.1.0)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			version := args[0]
+			if !strings.HasPrefix(version, "v") {
+				version = "v" + version
+			}
+			toolsDir := defaultToolsPath()
+			local := tools.LocalVersion(toolsDir)
+
+			if local == version {
+				fmt.Fprintf(cmd.OutOrStdout(), "Already on kernel %s.\n", version)
+				return nil
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(),
+				"Switching kernel: %s → %s\n", local, version)
+
+			if !yes && !confirmPrompt("Proceed? [y/N] ") {
+				fmt.Fprintln(cmd.OutOrStdout(), "Aborted.")
+				return nil
+			}
+
+			if err := tools.ClearCachedTools(toolsDir); err != nil {
+				return fmt.Errorf("kernel use: clear cache: %w", err)
+			}
+
+			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
+			defer cancel()
+			if err := tools.DownloadVersion(ctx, toolsDir, version); err != nil {
+				return fmt.Errorf("kernel use: %w", err)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Kernel switched to %s.\n", version)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip confirmation prompt")
+	return cmd
 }
 
 // newKernelUpdateCmd implements `uni kernel update`.
@@ -57,7 +138,7 @@ func newKernelUpdateCmd() *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
 		Use:   "update",
-		Short: "Download and install the latest kernel tools",
+		Short: "Download and install the latest kernel version",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			toolsDir := defaultToolsPath()
 			local := tools.LocalVersion(toolsDir)
@@ -70,7 +151,7 @@ func newKernelUpdateCmd() *cobra.Command {
 				return fmt.Errorf("kernel update: check remote version: %w", err)
 			}
 
-			if local == remote {
+			if !tools.IsNewer(local, remote) {
 				fmt.Fprintf(cmd.OutOrStdout(), "Already on the latest kernel (%s).\n", local)
 				return nil
 			}
@@ -78,7 +159,7 @@ func newKernelUpdateCmd() *cobra.Command {
 			fmt.Fprintf(cmd.OutOrStdout(),
 				"New kernel version available: %s (installed: %s)\n", remote, local)
 
-			if !yes && !confirmPrompt("Update kernel tools? [y/N] ") {
+			if !yes && !confirmPrompt("Update? [y/N] ") {
 				fmt.Fprintln(cmd.OutOrStdout(), "Aborted.")
 				return nil
 			}
@@ -89,11 +170,8 @@ func newKernelUpdateCmd() *cobra.Command {
 
 			dlCtx, dlCancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
 			defer dlCancel()
-			if _, err := tools.ResolveMkfs(dlCtx, toolsDir, ""); err != nil {
-				return fmt.Errorf("kernel update: download: %w", err)
-			}
-			if err := tools.SaveLocalVersion(toolsDir, remote); err != nil {
-				return fmt.Errorf("kernel update: save version: %w", err)
+			if err := tools.DownloadVersion(dlCtx, toolsDir, "latest"); err != nil {
+				return fmt.Errorf("kernel update: %w", err)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Kernel updated to %s.\n", remote)
 			return nil

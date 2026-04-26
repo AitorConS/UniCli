@@ -99,7 +99,7 @@ func checkKernelUpdateForBuild(cmd *cobra.Command, toolsDir string, autoYes bool
 		return nil
 	}
 	local := tools.LocalVersion(toolsDir)
-	if local == remote {
+	if !tools.IsNewer(local, remote) {
 		return nil
 	}
 

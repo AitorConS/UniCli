@@ -2,20 +2,28 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 )
 
 const (
-	versionFileName  = "kernel-version.txt"
-	versionRemoteURL = "https://github.com/AitorConS/UniCLi/releases/download/latest/kernel-version.txt"
+	versionFileName = "kernel-version.txt"
+	githubAPIBase   = "https://api.github.com/repos/AitorConS/UniCLi"
+	releaseBase     = "https://github.com/AitorConS/UniCLi/releases/download"
+	// kernelTagPrefix is prepended to the semver when creating GitHub release tags.
+	kernelTagPrefix = "kernel-"
 )
 
-// LocalVersion returns the version string stored in toolsDir/kernel-version.txt.
+// artifactNames are the three files that make up the kernel toolset.
+var artifactNames = []string{"mkfs-linux-amd64", "kernel.img", "boot.img"}
+
+// LocalVersion returns the semver string (e.g. "v0.1.0") cached in toolsDir.
 // Returns "(unknown)" if the file is absent or unreadable.
 func LocalVersion(toolsDir string) string {
 	data, err := os.ReadFile(filepath.Join(toolsDir, versionFileName))
@@ -25,27 +33,62 @@ func LocalVersion(toolsDir string) string {
 	return strings.TrimSpace(string(data))
 }
 
-// RemoteVersion fetches the latest published kernel version from GitHub releases.
-// Returns an error if the network is unreachable or the release has no version file.
+// RemoteVersion returns the semver of the latest kernel release on GitHub.
 func RemoteVersion(ctx context.Context) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, versionRemoteURL, nil)
+	vers, err := ListRemoteVersions(ctx)
 	if err != nil {
-		return "", fmt.Errorf("tools: build version request: %w", err)
+		return "", err
 	}
+	if len(vers) == 0 {
+		return "", fmt.Errorf("tools: no kernel releases found")
+	}
+	return vers[0], nil
+}
+
+// ListRemoteVersions returns all available kernel versions from GitHub releases,
+// sorted newest-first by semver.
+func ListRemoteVersions(ctx context.Context) ([]string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		githubAPIBase+"/releases", nil)
+	if err != nil {
+		return nil, fmt.Errorf("tools: build releases request: %w", err)
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("tools: fetch remote version: %w", err)
+		return nil, fmt.Errorf("tools: fetch releases: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("tools: remote version fetch returned HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("tools: GitHub releases API returned HTTP %d", resp.StatusCode)
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 128))
-	if err != nil {
-		return "", fmt.Errorf("tools: read remote version: %w", err)
+
+	var releases []struct {
+		TagName string `json:"tag_name"`
 	}
-	return strings.TrimSpace(string(body)), nil
+	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
+		return nil, fmt.Errorf("tools: parse releases response: %w", err)
+	}
+
+	var versions []string
+	for _, r := range releases {
+		if strings.HasPrefix(r.TagName, kernelTagPrefix) {
+			ver := "v" + strings.TrimPrefix(r.TagName, kernelTagPrefix+"v")
+			versions = append(versions, ver)
+		}
+	}
+	sort.Slice(versions, func(i, j int) bool {
+		return semverGT(versions[i], versions[j])
+	})
+	return versions, nil
+}
+
+// IsNewer reports whether remote is a strictly higher semver than local.
+// Unknown/malformed versions are never treated as newer.
+func IsNewer(local, remote string) bool {
+	return semverGT(remote, local)
 }
 
 // SaveLocalVersion writes version to toolsDir/kernel-version.txt.
@@ -57,10 +100,11 @@ func SaveLocalVersion(toolsDir, version string) error {
 	return nil
 }
 
-// ClearCachedTools deletes the three kernel artifacts and the version file from
-// toolsDir so that the next ResolveMkfs call re-downloads them.
+// ClearCachedTools deletes the kernel artifacts and version file from toolsDir.
 func ClearCachedTools(toolsDir string) error {
-	for _, name := range []string{"mkfs", "kernel.img", "boot.img", versionFileName} {
+	names := append([]string{versionFileName}, artifactNames...)
+	names = append(names, "mkfs") // local name differs from remote artifact name
+	for _, name := range names {
 		if err := os.Remove(filepath.Join(toolsDir, name)); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("tools: clear %s: %w", name, err)
 		}
@@ -76,4 +120,68 @@ func Exist(toolsDir string) bool {
 		}
 	}
 	return true
+}
+
+// ArtifactURL returns the download URL for a named artifact at a given semver.
+// version must be in "vMAJOR.MINOR.PATCH" form; artifact is e.g. "kernel.img".
+// Passing version="latest" downloads from the rolling latest release.
+func ArtifactURL(version, artifact string) string {
+	if version == "latest" {
+		return fmt.Sprintf("%s/latest/%s", releaseBase, artifact)
+	}
+	ver := strings.TrimPrefix(version, "v")
+	return fmt.Sprintf("%s/%sv%s/%s", releaseBase, kernelTagPrefix, ver, artifact)
+}
+
+// DownloadVersion downloads all kernel artifacts for the given semver into
+// toolsDir and saves the version file. Use version="latest" for the rolling release.
+func DownloadVersion(ctx context.Context, toolsDir, version string) error {
+	if err := os.MkdirAll(toolsDir, 0o755); err != nil {
+		return fmt.Errorf("tools: create tools dir: %w", err)
+	}
+	artifacts := []struct{ remote, local string }{
+		{"mkfs-linux-amd64", "mkfs"},
+		{"kernel.img", "kernel.img"},
+		{"boot.img", "boot.img"},
+	}
+	for _, a := range artifacts {
+		dest := filepath.Join(toolsDir, a.local)
+		if err := downloadArtifact(ctx, ArtifactURL(version, a.remote), dest); err != nil {
+			return fmt.Errorf("tools: download %s: %w", a.remote, err)
+		}
+	}
+	// Resolve the real semver when downloading "latest".
+	resolved := version
+	if version == "latest" {
+		if ver, err := RemoteVersion(ctx); err == nil {
+			resolved = ver
+		}
+	}
+	return SaveLocalVersion(toolsDir, resolved)
+}
+
+// semverGT returns true when a is strictly greater than b.
+// Both strings may have a leading "v". Malformed versions are treated as "0.0.0".
+func semverGT(a, b string) bool {
+	av := parseSemver(a)
+	bv := parseSemver(b)
+	for i := range av {
+		if av[i] != bv[i] {
+			return av[i] > bv[i]
+		}
+	}
+	return false
+}
+
+func parseSemver(s string) [3]int {
+	s = strings.TrimPrefix(s, "v")
+	parts := strings.SplitN(s, ".", 3)
+	var out [3]int
+	for i, p := range parts {
+		if i >= 3 {
+			break
+		}
+		out[i], _ = strconv.Atoi(p)
+	}
+	return out
 }
