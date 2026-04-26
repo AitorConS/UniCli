@@ -20,6 +20,9 @@ const (
 	bootDownloadURL   = "https://github.com/AitorConS/UniCLi/releases/download/latest/boot.img"
 )
 
+// releaseBaseURL is the prefix shared by all release artifact download URLs.
+const releaseBaseURL = "https://github.com/AitorConS/UniCLi/releases/download/latest/"
+
 // ResolveMkfs returns an image.MkfsFunc ready to invoke.
 //
 // Downloads mkfs, kernel.img, and boot.img to toolsDir on first use and caches them.
@@ -47,6 +50,14 @@ func ResolveMkfs(ctx context.Context, toolsDir, override string) (image.MkfsFunc
 	if _, err := os.Stat(kernelImg); os.IsNotExist(err) {
 		if err := downloadArtifact(ctx, kernelDownloadURL, kernelImg); err != nil {
 			return nil, fmt.Errorf("tools: resolve kernel image: %w", err)
+		}
+	}
+
+	// Fetch and persist the remote version whenever any artifact was just
+	// downloaded (version file absent means this is a first-time install).
+	if LocalVersion(toolsDir) == "(unknown)" {
+		if ver, err := RemoteVersion(ctx); err == nil {
+			_ = SaveLocalVersion(toolsDir, ver)
 		}
 	}
 
