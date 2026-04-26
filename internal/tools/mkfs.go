@@ -20,7 +20,6 @@ const (
 	bootDownloadURL   = "https://github.com/AitorConS/UniCLi/releases/download/latest/boot.img"
 )
 
-
 // ResolveMkfs returns an image.MkfsFunc ready to invoke.
 //
 // Downloads mkfs, kernel.img, and boot.img to toolsDir on first use and caches them.
