@@ -11,7 +11,6 @@
  * Trailing newlines and empty lines are ignored; lines without '=' are
  * skipped. Existing entries with the same key are overwritten.
  */
-#include <kernel.h>
 #include <unix_internal.h>
 
 #if defined(__x86_64__)
