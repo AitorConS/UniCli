@@ -54,8 +54,11 @@ static boolean inject_pair(tuple env, buffer b, bytes start, bytes len)
     if (!found || eq == 0)
         return false;
 
-    /* Key → symbol via intern (deduped against the symbol table). */
-    symbol key = intern(alloca_wrap_buffer(buffer_ref(b, start), eq));
+    /* Key → symbol via intern (deduped against the symbol table).
+     * Hoist buffer_ref out of alloca_wrap_buffer: the macro declares its own
+     * local `buffer b`, which would shadow our parameter mid-expansion. */
+    void *kptr = buffer_ref(b, start);
+    symbol key = intern(alloca_wrap_buffer(kptr, eq));
 
     /* Value → heap-allocated string buffer (env reader expects a buffer). */
     heap h = heap_locked(get_kernel_heaps());
