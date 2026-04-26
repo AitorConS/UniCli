@@ -68,16 +68,9 @@ func newUpgradeCmd() *cobra.Command {
 				return fmt.Errorf("upgrade uni: %w", err)
 			}
 
-			// Update unid if it lives next to uni.
-			unidName := "unid"
-			if runtime.GOOS == "windows" {
-				unidName += ".exe"
-			}
-			unidPath := filepath.Join(dir, unidName)
-			if _, err := os.Stat(unidPath); err == nil {
-				if err := replaceBinary(dlCtx, cmd, dir, "unid", remote); err != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "warning: upgrade unid: %v\n", err)
-				}
+			// Always upgrade unid alongside uni.
+			if err := replaceBinary(dlCtx, cmd, dir, "unid", remote); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: upgrade unid: %v\n", err)
 			}
 
 			fmt.Fprintf(cmd.OutOrStdout(), "Upgraded to %s.\n", remote)
