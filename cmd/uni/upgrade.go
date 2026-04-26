@@ -24,9 +24,9 @@ const (
 	cliGithubAPIBase = "https://api.github.com/repos/AitorConS/UniCLi"
 	cliReleaseBase   = "https://github.com/AitorConS/UniCLi/releases/download"
 
-	daemonReadyTimeout  = 15 * time.Second
-	daemonStopTimeout   = 10 * time.Second
-	daemonPollInterval  = 100 * time.Millisecond
+	daemonReadyTimeout = 15 * time.Second
+	daemonStopTimeout  = 10 * time.Second
+	daemonPollInterval = 100 * time.Millisecond
 )
 
 func newUpgradeCmd(socketPath *string) *cobra.Command {
