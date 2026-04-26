@@ -68,8 +68,8 @@ func ClearCachedTools(toolsDir string) error {
 	return nil
 }
 
-// ToolsExist returns true when all three kernel artifacts are present in toolsDir.
-func ToolsExist(toolsDir string) bool {
+// Exist returns true when all three kernel artifacts are present in toolsDir.
+func Exist(toolsDir string) bool {
 	for _, name := range []string{"mkfs", "kernel.img", "boot.img"} {
 		if _, err := os.Stat(filepath.Join(toolsDir, name)); os.IsNotExist(err) {
 			return false

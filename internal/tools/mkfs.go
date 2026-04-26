@@ -20,8 +20,6 @@ const (
 	bootDownloadURL   = "https://github.com/AitorConS/UniCLi/releases/download/latest/boot.img"
 )
 
-// releaseBaseURL is the prefix shared by all release artifact download URLs.
-const releaseBaseURL = "https://github.com/AitorConS/UniCLi/releases/download/latest/"
 
 // ResolveMkfs returns an image.MkfsFunc ready to invoke.
 //

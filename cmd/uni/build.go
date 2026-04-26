@@ -44,7 +44,7 @@ func newBuildCmd(storePath *string) *cobra.Command {
 
 			// Check for a newer kernel version when tools are already cached.
 			// Skip if the user provided a custom --mkfs path.
-			if mkfs == "" && os.Getenv("UNI_MKFS") == "" && tools.ToolsExist(toolsDir) {
+			if mkfs == "" && os.Getenv("UNI_MKFS") == "" && tools.Exist(toolsDir) {
 				if err := checkKernelUpdateForBuild(cmd, toolsDir, updateYes); err != nil {
 					return err
 				}
