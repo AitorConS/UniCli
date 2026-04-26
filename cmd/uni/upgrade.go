@@ -41,7 +41,7 @@ func newUpgradeCmd(socketPath *string) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip confirmation prompt")
-	cmd.AddCommand(newUpgradeCheckCmd(), newUpgradeListCmd())
+	cmd.AddCommand(newUpgradeCheckCmd(socketPath), newUpgradeListCmd())
 	return cmd
 }
 
@@ -54,9 +54,19 @@ func runUpgrade(ctx context.Context, cmd *cobra.Command, socketPath string, yes 
 	if err != nil {
 		return fmt.Errorf("upgrade: check latest version: %w", err)
 	}
-	fmt.Fprintf(out, "Installed: %s\n", version)
-	fmt.Fprintf(out, "Latest:    %s\n", remote)
-	if !cliIsNewer(version, remote) {
+	daemonVer := queryDaemonVersion(socketPath)
+
+	fmt.Fprintf(out, "Installed CLI:  %s\n", version)
+	if daemonVer != "" {
+		fmt.Fprintf(out, "Running daemon: %s\n", daemonVer)
+	} else {
+		fmt.Fprintln(out, "Running daemon: not running")
+	}
+	fmt.Fprintf(out, "Latest:         %s\n", remote)
+
+	cliOutdated := cliIsNewer(version, remote)
+	daemonOutdated := daemonVer != "" && cliIsNewer(daemonVer, remote)
+	if !cliOutdated && !daemonOutdated {
 		fmt.Fprintln(out, "Already up to date.")
 		return nil
 	}
@@ -124,6 +134,21 @@ func runUpgrade(ctx context.Context, cmd *cobra.Command, socketPath string, yes 
 
 	fmt.Fprintf(out, "Upgraded to %s.\n", remote)
 	return nil
+}
+
+// queryDaemonVersion dials the daemon and returns its version string, or "" if
+// the daemon is not reachable.
+func queryDaemonVersion(socketPath string) string {
+	client, err := api.Dial(socketPath)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = client.Close() }()
+	ver, err := client.DaemonVersion(context.Background())
+	if err != nil {
+		return ""
+	}
+	return ver
 }
 
 // stopDaemon shuts the daemon down via RPC and waits for its socket to disappear.
@@ -237,24 +262,33 @@ func binaryExt() string {
 
 // ── subcommands ────────────────────────────────────────────────────────────
 
-func newUpgradeCheckCmd() *cobra.Command {
+func newUpgradeCheckCmd(socketPath *string) *cobra.Command {
 	return &cobra.Command{
 		Use:   "check",
 		Short: "Check whether a newer CLI version is available",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
+			out := cmd.OutOrStdout()
 			remote, err := latestCLIVersion(ctx)
 			if err != nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "Latest: (unavailable — %v)\n", err)
+				fmt.Fprintf(out, "Latest: (unavailable — %v)\n", err)
 				return nil
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Installed: %s\n", version)
-			fmt.Fprintf(cmd.OutOrStdout(), "Latest:    %s\n", remote)
-			if cliIsNewer(version, remote) {
-				fmt.Fprintf(cmd.OutOrStdout(), "Update available. Run `uni upgrade` to install %s.\n", remote)
+			daemonVer := queryDaemonVersion(*socketPath)
+			fmt.Fprintf(out, "Installed CLI:  %s\n", version)
+			if daemonVer != "" {
+				fmt.Fprintf(out, "Running daemon: %s\n", daemonVer)
 			} else {
-				fmt.Fprintln(cmd.OutOrStdout(), "Already up to date.")
+				fmt.Fprintln(out, "Running daemon: not running")
+			}
+			fmt.Fprintf(out, "Latest:         %s\n", remote)
+			cliOutdated := cliIsNewer(version, remote)
+			daemonOutdated := daemonVer != "" && cliIsNewer(daemonVer, remote)
+			if cliOutdated || daemonOutdated {
+				fmt.Fprintf(out, "Update available. Run `uni upgrade` to install %s.\n", remote)
+			} else {
+				fmt.Fprintln(out, "Already up to date.")
 			}
 			return nil
 		},

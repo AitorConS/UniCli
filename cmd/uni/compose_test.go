@@ -43,7 +43,7 @@ func startComposeDaemon(t *testing.T) (*api.Client, string) {
 	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(func(_ string, _ ...string) *exec.Cmd {
 		return exec.Command("sleep", "30")
 	}))
-	srv, err := api.NewServer(mgr, socketPath, nil)
+	srv, err := api.NewServer(mgr, socketPath, nil, "")
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())

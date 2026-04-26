@@ -115,6 +115,15 @@ func (c *Client) Shutdown(_ context.Context) error {
 	return nil
 }
 
+// DaemonVersion returns the version string reported by the running daemon.
+func (c *Client) DaemonVersion(_ context.Context) (string, error) {
+	var resp map[string]string
+	if err := c.call("Daemon.Version", nil, &resp); err != nil {
+		return "", fmt.Errorf("client daemon version: %w", err)
+	}
+	return resp["version"], nil
+}
+
 // Inspect returns full details for the VM.
 func (c *Client) Inspect(_ context.Context, id string) (VMDetail, error) {
 	var detail VMDetail

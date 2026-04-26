@@ -18,7 +18,7 @@ func startTestServer(t *testing.T) (*api.Client, context.CancelFunc) {
 	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(func(_ string, _ ...string) *exec.Cmd {
 		return exec.Command("sleep", "30")
 	}))
-	srv, err := api.NewServer(mgr, socketPath, nil)
+	srv, err := api.NewServer(mgr, socketPath, nil, "")
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -124,7 +124,7 @@ func TestServer_Run_AutoRemove(t *testing.T) {
 	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(func(_ string, _ ...string) *exec.Cmd {
 		return exec.Command("true") // exits immediately
 	}))
-	srv, err := api.NewServer(mgr, socketPath, nil)
+	srv, err := api.NewServer(mgr, socketPath, nil, "")
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -162,7 +162,7 @@ func TestServer_Run_AutoRemove(t *testing.T) {
 func TestServer_UnknownMethod(t *testing.T) {
 	socketPath := filepath.Join(t.TempDir(), "unid.sock")
 	mgr := vm.NewQEMUManager("fake-qemu")
-	srv, err := api.NewServer(mgr, socketPath, nil)
+	srv, err := api.NewServer(mgr, socketPath, nil, "")
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())

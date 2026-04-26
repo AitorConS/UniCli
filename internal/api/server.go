@@ -19,13 +19,15 @@ type Server struct {
 	mgr        vm.Manager
 	listener   net.Listener
 	shutdownFn func() // called by Daemon.Shutdown RPC; may be nil
+	version    string
 }
 
 // NewServer creates a Server that will listen on socketPath.
 // shutdownFn is called (in a goroutine) when a Daemon.Shutdown RPC is received;
 // pass nil to disable remote shutdown.
+// version is returned by Daemon.Version RPC; pass "" if unknown.
 // Any existing socket file at socketPath is removed before binding.
-func NewServer(mgr vm.Manager, socketPath string, shutdownFn func()) (*Server, error) {
+func NewServer(mgr vm.Manager, socketPath string, shutdownFn func(), version string) (*Server, error) {
 	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("api server remove stale socket: %w", err)
 	}
@@ -33,7 +35,7 @@ func NewServer(mgr vm.Manager, socketPath string, shutdownFn func()) (*Server, e
 	if err != nil {
 		return nil, fmt.Errorf("api server listen %s: %w", socketPath, err)
 	}
-	return &Server{mgr: mgr, listener: l, shutdownFn: shutdownFn}, nil
+	return &Server{mgr: mgr, listener: l, shutdownFn: shutdownFn, version: version}, nil
 }
 
 // Serve accepts connections and handles them until ctx is cancelled.
@@ -110,6 +112,8 @@ func (s *Server) dispatch(ctx context.Context, req *Request) (any, *RPCError) {
 		return s.handleInspect(req.Params)
 	case "Daemon.Shutdown":
 		return s.handleDaemonShutdown()
+	case "Daemon.Version":
+		return s.handleDaemonVersion()
 	default:
 		return nil, &RPCError{Code: -32601, Message: "method not found: " + req.Method}
 	}
@@ -242,6 +246,10 @@ func (s *Server) handleDaemonShutdown() (any, *RPCError) {
 		go s.shutdownFn()
 	}
 	return map[string]string{"status": "ok"}, nil
+}
+
+func (s *Server) handleDaemonVersion() (any, *RPCError) {
+	return map[string]string{"version": s.version}, nil
 }
 
 func (s *Server) handleInspect(params json.RawMessage) (any, *RPCError) {

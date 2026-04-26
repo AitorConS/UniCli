@@ -59,7 +59,7 @@ func serve(ctx context.Context, socketPath, qemuBin, registryAddr, storePath str
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
-	vmSrv, err := api.NewServer(mgr, socketPath, stop)
+	vmSrv, err := api.NewServer(mgr, socketPath, stop, version)
 	if err != nil {
 		return fmt.Errorf("unid: vm server: %w", err)
 	}
