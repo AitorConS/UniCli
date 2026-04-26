@@ -3,6 +3,9 @@ name: Main Branch
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
 
 jobs:
   lint:
