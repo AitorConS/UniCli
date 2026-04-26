@@ -285,6 +285,14 @@ The binary must be a **static Linux ELF** (`GOOS=linux`, no dynamic library depe
 | `--memory` | `256M` | Default VM memory baked into the image |
 | `--cpus` | `1` | Default CPU count baked into the image |
 | `--mkfs` | *(auto-downloaded to `~/.uni/tools/mkfs`)* | Path to Nanos mkfs binary — overrides auto-download (env: `UNI_MKFS`) |
+| `-U`, `--update-kernel` | `false` | Auto-approve kernel update if one is available (skips the `[y/N]` prompt) |
+
+If the kernel tools are already cached and a newer kernel version is available, `uni build` will prompt before proceeding:
+
+```
+⚠  New kernel version available: v0.1.1 (installed: v0.1.0)
+Update kernel before building? [y/N]
+```
 
 **Examples:**
 
@@ -460,6 +468,151 @@ This is irreversible. All data stored in the volume will be lost.
 ```bash
 uni volume rm mydata
 # mydata
+```
+
+---
+
+## Kernel Commands
+
+Manage the kernel tools (`kernel.img`, `boot.img`, `mkfs`) cached in `~/.uni/tools/`. The kernel is versioned independently from the CLI.
+
+### `uni kernel check`
+
+Show the installed kernel version and whether a newer one is available.
+
+```
+uni kernel check
+```
+
+```bash
+uni kernel check
+# Installed kernel: v0.1.0
+# Latest kernel:    v0.1.1
+# Update available. Run `uni kernel update` to install v0.1.1.
+```
+
+---
+
+### `uni kernel update`
+
+Download and install the latest kernel tools.
+
+```
+uni kernel update [--yes]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `-y`, `--yes` | `false` | Skip confirmation prompt |
+
+```bash
+uni kernel update
+# New kernel version available: v0.1.1 (installed: v0.1.0)
+# Update? [y/N] y
+# Downloading kernel.img...
+# Kernel updated to v0.1.1.
+```
+
+---
+
+### `uni kernel list`
+
+List all available kernel versions, newest first. The currently installed version is marked with `*`.
+
+```
+uni kernel list
+```
+
+```bash
+uni kernel list
+# * v0.1.1
+#   v0.1.0
+```
+
+---
+
+### `uni kernel use`
+
+Switch to a specific kernel version.
+
+```
+uni kernel use <version> [--yes]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `-y`, `--yes` | `false` | Skip confirmation prompt |
+
+```bash
+uni kernel use v0.1.0
+# Switching kernel: v0.1.1 → v0.1.0
+# Proceed? [y/N] y
+# Kernel switched to v0.1.0.
+```
+
+---
+
+## Upgrade Commands
+
+Manage the `uni` and `unid` binaries themselves. The CLI is versioned independently from the kernel.
+
+### `uni upgrade`
+
+Download and install the latest `uni` (and `unid` if found alongside it), replacing the running binaries in-place.
+
+```
+uni upgrade [--yes]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `-y`, `--yes` | `false` | Skip confirmation prompt |
+
+```bash
+uni upgrade
+# Installed: v0.1.0
+# Latest:    v0.1.1
+# New version available: v0.1.1
+# Upgrade? [y/N] y
+# Downloading uni-linux-amd64...
+# Downloading unid-linux-amd64...
+# Upgraded to v0.1.1.
+```
+
+{: .note }
+On Windows, the running binary is renamed to `.bak` before the new one is placed in its position, since Windows does not allow overwriting a running executable directly.
+
+---
+
+### `uni upgrade check`
+
+Show the installed CLI version and whether a newer one is available, without installing anything.
+
+```
+uni upgrade check
+```
+
+```bash
+uni upgrade check
+# Installed: v0.1.0
+# Latest:    v0.1.1
+# Update available. Run `uni upgrade` to install v0.1.1.
+```
+
+---
+
+### `uni upgrade list`
+
+List all available CLI versions, newest first. The currently running version is marked with `*`.
+
+```
+uni upgrade list
+```
+
+```bash
+uni upgrade list
+#   v0.1.1
+# * v0.1.0
 ```
 
 ---

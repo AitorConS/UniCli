@@ -40,6 +40,8 @@ uni ps                     # list running VMs
 uni logs <id>              # read serial console output
 uni stop <id>              # graceful shutdown
 uni compose up stack.yaml  # start a multi-service application
+uni kernel update          # update the cached kernel tools
+uni upgrade                # self-update uni and unid
 ```
 
 ## Architecture Overview
@@ -72,3 +74,4 @@ uni compose up stack.yaml  # start a multi-service application
 - **Registry** — push/pull images over HTTP like a private Docker registry
 - **Graceful lifecycle** — SIGTERM → 30s grace period → SIGKILL
 - **JSON output** — every command supports `--output json` for scripting
+- **Versioned releases** — both the CLI and the kernel are independently versioned with semver; `uni upgrade` self-updates the binaries, `uni kernel update` updates the kernel tools

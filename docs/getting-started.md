@@ -159,7 +159,16 @@ uni build ./hello --name hello
 # sha256:abc123...  hello:latest
 ```
 
-On first run, `uni build` automatically downloads `mkfs`, `kernel.img`, and `boot.img` from the [latest release](https://github.com/AitorConS/UniCli/releases/tag/latest) into `~/.uni/tools/` (or `%USERPROFILE%\.uni\tools\` on Windows). On Windows, the build step runs through WSL2.
+On first run, `uni build` automatically downloads `mkfs`, `kernel.img`, and `boot.img` from the latest release into `~/.uni/tools/` (or `%USERPROFILE%\.uni\tools\` on Windows). On Windows, the build step runs through WSL2.
+
+If a newer kernel version is available, `uni build` will prompt before building:
+
+```
+⚠  New kernel version available: v0.1.1 (installed: v0.1.0)
+Update kernel before building? [y/N]
+```
+
+You can also manage the kernel tools explicitly — see [`uni kernel`](#uni-kernel) below.
 
 ### 3. Run it
 
@@ -244,6 +253,46 @@ WantedBy=multi-user.target
 sudo systemctl daemon-reload
 sudo systemctl enable --now unid
 sudo systemctl status unid
+```
+
+---
+
+## Keeping Up to Date
+
+### Updating the CLI (`uni` and `unid`)
+
+```bash
+# Check if a newer version exists
+uni upgrade check
+# Installed: v0.1.0
+# Latest:    v0.1.1
+# Update available. Run `uni upgrade` to install v0.1.1.
+
+# Install latest (prompts for confirmation)
+uni upgrade
+
+# Skip the prompt
+uni upgrade --yes
+```
+
+`uni upgrade` replaces the running `uni` binary in-place and also updates `unid` if it is found in the same directory. On Windows the running binary is renamed to `.bak` before the new one is installed.
+
+### Updating the kernel tools
+
+The kernel tools (`kernel.img`, `boot.img`, `mkfs`) are cached in `~/.uni/tools/` independently of the CLI.
+
+```bash
+# Check current and latest kernel version
+uni kernel check
+
+# Install the latest kernel
+uni kernel update
+
+# List all available kernel versions
+uni kernel list
+
+# Switch to a specific version
+uni kernel use v0.1.0
 ```
 
 ---

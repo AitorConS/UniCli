@@ -117,6 +117,17 @@ qemu-system-x86_64 \
 
 Serial console output (stdout + stderr from QEMU) is captured into a thread-safe buffer, accessible via `uni logs`.
 
+### Kernel Tools Cache (`internal/tools/`)
+
+The kernel artifacts (`kernel.img`, `boot.img`, `mkfs`) are downloaded from GitHub releases and cached in `~/.uni/tools/`. They are versioned independently from the CLI using semver (`kernel/VERSION` in the repo).
+
+**Download flow:**
+1. `uni build` calls `tools.ResolveMkfs()`
+2. If tools are absent → `DownloadVersion("latest")` fetches all three artifacts + saves `kernel-version.txt`
+3. If tools are present → checks remote version via GitHub API; if newer, prompts `[y/N]` before replacing
+
+**Versioned releases:** each kernel release is tagged `kernel-vX.Y.Z` on GitHub and is immutable. A rolling `latest` release always points to the most recent build. `uni kernel use <v>` downloads from the specific versioned tag.
+
 ### Image System (`internal/image/`)
 
 **Content-addressable store** — images are stored by their SHA256 digest:
@@ -175,6 +186,17 @@ Parses compose YAML files and resolves startup order:
 
 - **Parser** — validates schema (version, service images, dependency refs, network refs)
 - **Graph** — Kahn's topological sort algorithm with cycle detection
+
+### Environment Variable Injection
+
+Environment variables passed via `uni run -e KEY=VALUE` reach the guest through QEMU's `fw_cfg` device — no disk rebuild required.
+
+**Flow:**
+1. `uni run -e KEY=VAL` → daemon builds `-fw_cfg name=opt/uni/env,string=KEY=VAL\n`
+2. QEMU exposes this as a named file on the fw_cfg device (I/O ports `0x510`/`0x511`)
+3. At boot, `env_inject_from_fw_cfg()` in the kernel reads `opt/uni/env` and merges entries into the process environment tuple before `exec_elf` builds the user-space stack
+
+This is x86-64 only; the function compiles to a no-op stub on aarch64.
 
 ---
 
