@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -131,6 +132,48 @@ func (c *Client) Inspect(_ context.Context, id string) (VMDetail, error) {
 		return VMDetail{}, fmt.Errorf("client inspect: %w", err)
 	}
 	return detail, nil
+}
+
+// Attach connects to a VM's serial console and streams output to stdout.
+// It blocks until the VM stops or the connection is closed.
+// This method takes over the connection for raw reading; do not use the
+// client for other calls after Attach.
+func (c *Client) Attach(_ context.Context, id string, out io.Writer) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	reqID := c.seq.Add(1)
+	params, _ := json.Marshal(IDParams{ID: id})
+	req := Request{
+		JSONRPC: "2.0",
+		ID:      reqID,
+		Method:  "VM.Attach",
+		Params:  json.RawMessage(params),
+	}
+	if err := c.enc.Encode(req); err != nil {
+		return fmt.Errorf("encode attach request: %w", err)
+	}
+
+	var resp Response
+	if err := c.dec.Decode(&resp); err != nil {
+		return fmt.Errorf("decode attach response: %w", err)
+	}
+	if resp.Error != nil {
+		return fmt.Errorf("rpc error %d: %s", resp.Error.Code, resp.Error.Message)
+	}
+
+	buf := make([]byte, 4096)
+	for {
+		n, err := c.conn.Read(buf)
+		if n > 0 {
+			if _, writeErr := out.Write(buf[:n]); writeErr != nil {
+				return fmt.Errorf("write attach output: %w", writeErr)
+			}
+		}
+		if err != nil {
+			return nil
+		}
+	}
 }
 
 func (c *Client) call(method string, params any, out any) error {

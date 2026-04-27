@@ -8,3 +8,5 @@ kernel/output/
 examples/**/*-linux
 examples/**/*.img
 *.exe
+*agents/*
+*claude/*

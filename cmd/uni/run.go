@@ -23,6 +23,7 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 		name    string
 		rm      bool
 		volumes []string
+		attach  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "run <image>",
@@ -68,6 +69,7 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 				Name:       name,
 				AutoRemove: rm,
 				Volumes:    volSpecs,
+				Attach:     attach,
 			}
 			for _, pm := range portMaps {
 				params.PortMaps = append(params.PortMaps, api.PortMapSpec{
@@ -81,6 +83,14 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("run: %w", err)
 			}
+
+			if attach {
+				if err := client.Attach(cmd.Context(), info.ID, cmd.OutOrStdout()); err != nil {
+					return fmt.Errorf("run: attach: %w", err)
+				}
+				return nil
+			}
+
 			fmt.Fprintf(cmd.OutOrStdout(), "%s\n", info.ID)
 			return nil
 		},
@@ -93,6 +103,7 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 	cmd.Flags().StringVar(&name, "name", "", "assign a name to the VM instance")
 	cmd.Flags().BoolVar(&rm, "rm", false, "automatically remove the VM when it stops")
 	cmd.Flags().StringArrayVarP(&volumes, "volume", "v", nil, "mount a volume: name:guestpath[:ro] (repeatable)")
+	cmd.Flags().BoolVar(&attach, "attach", false, "attach to VM serial console (blocks until VM stops)")
 	return cmd
 }
 

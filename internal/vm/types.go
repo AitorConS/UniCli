@@ -3,6 +3,7 @@ package vm
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"slices"
@@ -67,6 +68,8 @@ type Config struct {
 	Name string
 	// Volumes is the list of additional disk images to attach to the VM.
 	Volumes []VolumeMount
+	// Attach when true, creates a pipe for streaming serial console output.
+	Attach bool
 }
 
 // process abstracts an OS process for testability.
@@ -115,10 +118,12 @@ type VM struct {
 	// StoppedAt is when the QEMU process exited (nil until then).
 	StoppedAt *time.Time
 
-	mu     sync.RWMutex
-	proc   process
-	done   chan struct{}
-	logBuf safeBuffer
+	mu            sync.RWMutex
+	proc          process
+	done          chan struct{}
+	logBuf        safeBuffer
+	logPipeReader io.Reader
+	logPipeWriter *io.PipeWriter
 }
 
 // Done returns a channel that is closed when the VM reaches StateStopped.
@@ -136,6 +141,14 @@ func (v *VM) GetState() State {
 // Logs returns a snapshot of captured QEMU serial console output.
 func (v *VM) Logs() []byte {
 	return v.logBuf.Bytes()
+}
+
+// AttachReader returns a reader that streams QEMU serial console output.
+// Returns nil if no attach pipe was created (VM not started in attach mode).
+func (v *VM) AttachReader() io.Reader {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	return v.logPipeReader
 }
 
 // GetTimes returns the start and stop timestamps under a read lock.

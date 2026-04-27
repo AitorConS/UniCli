@@ -71,7 +71,10 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 		if err := dec.Decode(&req); err != nil {
 			return
 		}
-		result, rpcErr := s.dispatch(ctx, &req)
+		result, rpcErr := s.dispatch(ctx, &req, conn)
+		if result == attachHandled {
+			return
+		}
 		resp := Response{JSONRPC: "2.0", ID: req.ID}
 		if rpcErr != nil {
 			resp.Error = rpcErr
@@ -90,7 +93,11 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 	}
 }
 
-func (s *Server) dispatch(ctx context.Context, req *Request) (any, *RPCError) {
+// attachHandled is a sentinel value returned by dispatch when VM.Attach
+// has taken over the connection and no response should be sent.
+var attachHandled = struct{}{}
+
+func (s *Server) dispatch(ctx context.Context, req *Request, conn net.Conn) (any, *RPCError) {
 	switch req.Method {
 	case "VM.Run":
 		return s.handleRun(ctx, req.Params)
@@ -110,6 +117,9 @@ func (s *Server) dispatch(ctx context.Context, req *Request) (any, *RPCError) {
 		return s.handleLogs(req.Params)
 	case "VM.Inspect":
 		return s.handleInspect(req.Params)
+	case "VM.Attach":
+		s.handleAttach(ctx, req.Params, conn)
+		return attachHandled, nil
 	case "Daemon.Shutdown":
 		return s.handleDaemonShutdown()
 	case "Daemon.Version":
@@ -133,6 +143,7 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *R
 		Env:         p.Env,
 		Name:        p.Name,
 		Volumes:     volumeMountsFromSpec(p.Volumes),
+		Attach:      p.Attach,
 	}
 	v, err := s.mgr.Create(ctx, cfg)
 	if err != nil {
@@ -375,4 +386,46 @@ func parseSig(s string) (syscall.Signal, error) {
 		return 0, fmt.Errorf("unknown signal %q", s)
 	}
 	return syscall.Signal(n), nil
+}
+
+func (s *Server) handleAttach(ctx context.Context, params json.RawMessage, conn net.Conn) {
+	var p IDParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		s.writeError(conn, 0, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()})
+		return
+	}
+	v, err := s.mgr.Get(p.ID)
+	if err != nil {
+		s.writeError(conn, 0, &RPCError{Code: -32000, Message: err.Error()})
+		return
+	}
+
+	reader := v.AttachReader()
+	if reader == nil {
+		s.writeError(conn, 0, &RPCError{Code: -32000, Message: "vm not started in attach mode"})
+		return
+	}
+
+	buf := make([]byte, 4096)
+	for {
+		n, readErr := reader.Read(buf)
+		if n > 0 {
+			if _, writeErr := conn.Write(buf[:n]); writeErr != nil {
+				return
+			}
+		}
+		if readErr != nil {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+	}
+}
+
+func (s *Server) writeError(conn net.Conn, id int64, rpcErr *RPCError) {
+	resp := Response{JSONRPC: "2.0", ID: id, Error: rpcErr}
+	_ = json.NewEncoder(conn).Encode(resp)
 }

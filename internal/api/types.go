@@ -49,6 +49,7 @@ type RunParams struct {
 	Name        string            `json:"name,omitempty"`
 	AutoRemove  bool              `json:"auto_remove,omitempty"`
 	Volumes     []VolumeMountSpec `json:"volumes,omitempty"`
+	Attach      bool              `json:"attach,omitempty"`
 }
 
 // StopParams are the parameters for VM.Stop.

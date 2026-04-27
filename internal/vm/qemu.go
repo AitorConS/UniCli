@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -64,8 +65,19 @@ func (m *QEMUManager) Start(_ context.Context, id string) error {
 		return fmt.Errorf("qemu start %s: %w", id, err)
 	}
 	cmd := m.buildCmd(v.Cfg)
-	cmd.Stdout = &v.logBuf
-	cmd.Stderr = &v.logBuf
+
+	var stdout io.Writer = &v.logBuf
+	if v.Cfg.Attach {
+		pr, pw := io.Pipe()
+		v.mu.Lock()
+		v.logPipeReader = pr
+		v.logPipeWriter = pw
+		v.mu.Unlock()
+		stdout = io.MultiWriter(&v.logBuf, pw)
+	}
+
+	cmd.Stdout = stdout
+	cmd.Stderr = stdout
 	if err := cmd.Start(); err != nil {
 		if tErr := v.transition(StateStopped); tErr != nil {
 			return fmt.Errorf("qemu start %s: launch: %w; also failed to stop: %v", id, err, tErr)
@@ -264,6 +276,9 @@ func (m *QEMUManager) monitor(v *VM, cmd *exec.Cmd) {
 	now := time.Now()
 	v.mu.Lock()
 	v.StoppedAt = &now
+	if v.logPipeWriter != nil {
+		_ = v.logPipeWriter.Close()
+	}
 	v.mu.Unlock()
 	if err := v.transition(StateStopped); err != nil {
 		slog.Debug("monitor: transition to stopped", "vm_id", v.ID, "err", err)
