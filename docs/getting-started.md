@@ -185,6 +185,11 @@ uni ps
 uni logs a3f8c2d1
 # Hello from unikernel!
 
+# Or attach directly for real-time output
+uni run hello:latest --attach
+# Hello from unikernel!
+# (blocks until VM exits)
+
 # Stop and clean up
 uni stop a3f8c2d1
 uni rm a3f8c2d1

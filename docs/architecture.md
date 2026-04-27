@@ -25,6 +25,9 @@ Uni is structured as a **client–daemon** system, the same model used by Docker
 │                                                         │
 │  build · run · ps · logs · stop · rm · inspect · exec  │
 │  compose up · compose down · compose ps · compose logs  │
+│  volume create · volume ls · volume rm · volume inspect │
+│  kernel check · kernel update · kernel list · kernel use│
+│  upgrade · upgrade check · upgrade list                 │
 └──────────────────────────┬──────────────────────────────┘
                            │
                            │  JSON-RPC 2.0 over Unix domain socket
@@ -115,7 +118,7 @@ qemu-system-x86_64 \
   -net none
 ```
 
-Serial console output (stdout + stderr from QEMU) is captured into a thread-safe buffer, accessible via `uni logs`.
+Serial console output (stdout + stderr from QEMU) is captured into a thread-safe buffer, accessible via `uni logs`. When a VM is started with `--attach`, the output is simultaneously streamed through an `io.Pipe` so the CLI can read it in real-time via the `VM.Attach` RPC method.
 
 ### Kernel Tools Cache (`internal/tools/`)
 
@@ -177,7 +180,8 @@ JSON-RPC 2.0 over a Unix domain socket.
 | `VM.Remove` | Delete a stopped VM |
 | `VM.List` | List all VMs |
 | `VM.Get` | Get one VM by ID |
-| `VM.Logs` | Get captured serial output |
+| `VM.Logs` | Get captured serial output (snapshot) |
+| `VM.Attach` | Stream serial console output in real-time |
 | `VM.Inspect` | Full VM details |
 
 ### Compose (`internal/compose/`)
@@ -218,7 +222,11 @@ This is intentionally simple — not OCI-compliant, designed for internal use be
 
 ## Networking
 
-Each VM can be attached to a TAP interface for network access. The TAP interface is created and bridged on the Linux host.
+Each VM can use one of two networking modes:
+
+**SLIRP user-mode** (default for `-p`): QEMU's built-in user-mode networking with port forwarding via `hostfwd` rules. Works on any platform without root access. Does not support inbound ICMP (ping).
+
+**TAP + bridge**: A TAP interface is created and bridged on the Linux host, giving the VM full network access including its own IP address. Requires Linux and elevated permissions.
 
 {: .note }
 TAP networking requires Linux and elevated permissions. It is not available on Windows. See `internal/network/tap.go` (Linux-only build tag).

@@ -57,6 +57,7 @@ uni run <image> [flags]
 | `--name` | — | Assign a human-readable name to the VM instance |
 | `--rm` | `false` | Automatically remove the VM when it stops |
 | `-v`, `--volume` | — | Mount a named volume: `name:guestpath[:ro]` (repeatable) |
+| `--attach` | `false` | Attach to VM serial console (blocks until VM stops) |
 
 **Examples:**
 
@@ -88,6 +89,12 @@ uni run myapp:latest -v config:/etc/app:ro
 # Named instance, auto-remove on exit
 uni run hello:latest --name web --rm
 
+# Attach to serial console (blocks until VM exits)
+uni run hello:latest --attach
+
+# Attach with a named instance and port
+uni run myapp:latest --name api --attach -p 8080:8080
+
 # Output the VM ID for scripting
 ID=$(uni run hello:latest --name api)
 echo "Started VM: $ID"
@@ -97,6 +104,8 @@ echo "Started VM: $ID"
 ```
 a3f8c2d1-7b4e-4a1f-8c2d-1a2b3c4d5e6f
 ```
+
+With `--attach`, the command blocks and streams the VM's serial console output to stdout until the VM stops. No VM ID is printed in attach mode.
 
 ---
 
@@ -152,6 +161,8 @@ uni logs a3f8c2d1
 
 {: .note }
 Logs are buffered in memory by `unid`. They are lost when the daemon restarts.
+For real-time streaming, use `uni run --attach` instead, which blocks and
+streams the serial console output directly to your terminal as the VM runs.
 
 ---
 
@@ -702,3 +713,5 @@ created → starting → running → stopping → stopped
 
 {: .note }
 A VM in `stopped` state can be removed with `uni rm`. It cannot be restarted — create a new VM with `uni run`.
+
+When using `uni run --attach`, the command blocks until the VM reaches the `stopped` state, streaming all serial console output to stdout during the `running` state.

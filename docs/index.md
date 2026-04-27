@@ -36,6 +36,7 @@ Compared to containers:
 ```
 uni build ./myapp          # package ELF binary into an image
 uni run hello:latest       # start a unikernel VM
+uni run hello:latest --attach  # start and stream serial output
 uni ps                     # list running VMs
 uni logs <id>              # read serial console output
 uni stop <id>              # graceful shutdown
@@ -72,6 +73,7 @@ uni upgrade                # self-update uni and unid
 - **Full VM isolation** — every service runs in its own KVM virtual machine
 - **Compose support** — define multi-service stacks in YAML with dependency ordering
 - **Registry** — push/pull images over HTTP like a private Docker registry
+- **Attach mode** — stream VM serial console output in real-time with `--attach`
 - **Graceful lifecycle** — SIGTERM → 30s grace period → SIGKILL
 - **JSON output** — every command supports `--output json` for scripting
 - **Versioned releases** — both the CLI and the kernel are independently versioned with semver; `uni upgrade` self-updates the binaries, `uni kernel update` updates the kernel tools
