@@ -4,9 +4,7 @@ package integration
 
 import (
 	"context"
-	"fmt"
 	"net/http"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -92,7 +90,7 @@ func TestVolumePersistence(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	// Stop and remove the first VM.
-	require.NoError(t, client.Stop(ctx, info1.ID))
+	require.NoError(t, client.Stop(ctx, info1.ID, false))
 	require.Eventually(t, func() bool {
 		g, err := client.Get(ctx, info1.ID)
 		return err == nil && g.State == "stopped"
@@ -133,7 +131,7 @@ func TestVolumePersistence(t *testing.T) {
 	require.Contains(t, string(body[:n]), "hello")
 
 	// Cleanup.
-	_ = client.Stop(ctx, info2.ID)
+	_ = client.Stop(ctx, info2.ID, false)
 	require.Eventually(t, func() bool {
 		g, err := client.Get(ctx, info2.ID)
 		return err == nil && g.State == "stopped"

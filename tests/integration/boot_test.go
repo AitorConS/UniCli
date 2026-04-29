@@ -31,7 +31,7 @@ func TestVMLifecycle(t *testing.T) {
 	img := makeTrivialImage(t)
 	mgr := vm.NewQEMUManager(defaultQEMU)
 
-	srv, err := api.NewServer(mgr, defaultSocket, nil)
+	srv, err := api.NewServer(mgr, defaultSocket, nil, "")
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
@@ -62,7 +62,7 @@ func TestVMLifecycle(t *testing.T) {
 	require.Equal(t, info.ID, got.ID)
 
 	// Stop (best-effort — VM may have already exited)
-	_ = client.Stop(ctx, info.ID)
+	_ = client.Stop(ctx, info.ID, false)
 
 	// Wait for stopped state
 	require.Eventually(t, func() bool {
