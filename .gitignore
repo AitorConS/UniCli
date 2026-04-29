@@ -8,6 +8,7 @@ kernel/output/
 examples/**/*-linux
 examples/**/*.img
 *.exe
+*.bak
 *agents/*
 *claude/*
 skills-lock.json
