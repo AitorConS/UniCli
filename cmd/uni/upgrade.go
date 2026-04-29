@@ -119,7 +119,10 @@ func runUpgrade(ctx context.Context, cmd *cobra.Command, socketPath string, yes 
 	}
 	fmt.Fprintf(out, "unid → %s\n", unidDest)
 
-	// 6. Restart daemon if it was running before.
+	// 6. Clean up old .bak files now that the old processes have exited.
+	cleanupBackups(dir)
+
+	// 7. Restart daemon if it was running before.
 	if daemonWasRunning {
 		fmt.Fprintln(out, "Starting new unid...")
 		if err := launchDaemon(unidDest, socketPath); err != nil {
@@ -237,21 +240,35 @@ func downloadBinary(ctx context.Context, dir, name, ver string) (string, error) 
 // On Unix, os.Rename is atomic within the same filesystem.
 // On Windows, a running exe cannot be overwritten directly; we rename it to
 // a .bak first (which works even while the process is open), then place the
-// new binary. The .bak is cleaned up at the start of the next upgrade.
+// new binary. Old .bak files are removed by cleanupBackups after the upgrade
+// finishes, when the previous process has already exited.
 func installBinary(src, dest string) error {
 	if runtime.GOOS == "windows" {
 		bak := dest + ".bak"
-		_ = os.Remove(bak) // clean up leftover from a previous upgrade
+		_ = os.Remove(bak) // best-effort: remove stale .bak from earlier upgrades
 		if err := os.Rename(dest, bak); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("rename %s to .bak: %w", dest, err)
 		}
-		// bak stays on disk until next upgrade — Windows cannot delete a
-		// running exe, and the process still holds the file handle.
 	}
 	if err := os.Rename(src, dest); err != nil {
 		return fmt.Errorf("install %s: %w", dest, err)
 	}
 	return nil
+}
+
+// cleanupBackups removes all .bak files in dir. It is called after the new
+// binaries are in place and the old processes have exited, so the .bak files
+// are no longer locked.
+func cleanupBackups(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".bak") {
+			_ = os.Remove(filepath.Join(dir, e.Name()))
+		}
+	}
 }
 
 func binaryName(name string) string { return name + binaryExt() }
