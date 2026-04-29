@@ -11,6 +11,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/AitorConS/unikernel-engine/internal/network"
 )
 
 const gracePeriod = 30 * time.Second
@@ -92,6 +94,11 @@ func (m *QEMUManager) Start(_ context.Context, id string) error {
 	if err := v.transition(StateRunning); err != nil {
 		_ = cmd.Process.Kill()
 		return fmt.Errorf("qemu start %s: %w", id, err)
+	}
+	if v.Cfg.NetworkName != "" && len(v.Cfg.PortMaps) > 0 {
+		if err := network.SetupTAPPortForwarding(v.Cfg.NetworkName, v.Cfg.IPAddress, toNetworkPortForwards(v.Cfg.PortMaps)); err != nil {
+			slog.Warn("qemu start: failed to set up TAP port forwarding", "vm_id", id, "err", err)
+		}
 	}
 	go m.monitor(v, cmd)
 	return nil
@@ -280,9 +287,27 @@ func (m *QEMUManager) monitor(v *VM, cmd *exec.Cmd) {
 		_ = v.logPipeWriter.Close()
 	}
 	v.mu.Unlock()
+	if v.Cfg.NetworkName != "" && len(v.Cfg.PortMaps) > 0 {
+		if err := network.TeardownTAPPortForwarding(v.Cfg.NetworkName, v.Cfg.IPAddress, toNetworkPortForwards(v.Cfg.PortMaps)); err != nil {
+			slog.Warn("qemu monitor: failed to tear down TAP port forwarding", "vm_id", v.ID, "err", err)
+		}
+	}
 	if err := v.transition(StateStopped); err != nil {
 		slog.Debug("monitor: transition to stopped", "vm_id", v.ID, "err", err)
 	}
+}
+
+// toNetworkPortForwards converts vm.PortMap slices to network.PortForward.
+func toNetworkPortForwards(pms []PortMap) []network.PortForward {
+	out := make([]network.PortForward, len(pms))
+	for i, pm := range pms {
+		out[i] = network.PortForward{
+			HostPort:  pm.HostPort,
+			GuestPort: pm.GuestPort,
+			Protocol:  string(pm.Protocol),
+		}
+	}
+	return out
 }
 
 // osProcess wraps *os.Process to implement the package-private process interface.

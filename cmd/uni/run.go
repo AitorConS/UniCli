@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 
@@ -24,6 +25,9 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 		rm      bool
 		volumes []string
 		attach  bool
+		detach  bool
+		ipAddr  string
+		network string
 	)
 	cmd := &cobra.Command{
 		Use:   "run <image>",
@@ -51,6 +55,23 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 				return fmt.Errorf("run: %w", err)
 			}
 
+			if ipAddr != "" {
+				if net.ParseIP(ipAddr) == nil {
+					return fmt.Errorf("run: invalid IP address %q", ipAddr)
+				}
+				if network == "" {
+					return fmt.Errorf("run: --ip requires --network")
+				}
+			}
+
+			if network != "" && len(ports) > 0 && ipAddr == "" {
+				return fmt.Errorf("run: port forwarding with TAP networking requires --ip")
+			}
+
+			if cmd.Flags().Changed("attach") {
+				detach = false
+			}
+
 			client, err := api.Dial(*socketPath)
 			if err != nil {
 				return fmt.Errorf("run: connect to daemon: %w", err)
@@ -62,14 +83,16 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 			}()
 
 			params := api.RunParams{
-				ImagePath:  diskPath,
-				Memory:     memory,
-				CPUs:       cpus,
-				Env:        env,
-				Name:       name,
-				AutoRemove: rm,
-				Volumes:    volSpecs,
-				Attach:     attach,
+				ImagePath:   diskPath,
+				Memory:      memory,
+				CPUs:        cpus,
+				NetworkName: network,
+				Env:         env,
+				Name:        name,
+				AutoRemove:  rm,
+				Volumes:     volSpecs,
+				Attach:      !detach,
+				IPAddress:   ipAddr,
 			}
 			for _, pm := range portMaps {
 				params.PortMaps = append(params.PortMaps, api.PortMapSpec{
@@ -104,6 +127,9 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 	cmd.Flags().BoolVar(&rm, "rm", false, "automatically remove the VM when it stops")
 	cmd.Flags().StringArrayVarP(&volumes, "volume", "v", nil, "mount a volume: name:guestpath[:ro] (repeatable)")
 	cmd.Flags().BoolVar(&attach, "attach", false, "attach to VM serial console (blocks until VM stops)")
+	cmd.Flags().BoolVarP(&detach, "detach", "d", true, "run VM in the background")
+	cmd.Flags().StringVar(&ipAddr, "ip", "", "static IP address (requires --network)")
+	cmd.Flags().StringVar(&network, "network", "", "TAP interface name to attach (Linux only)")
 	return cmd
 }
 

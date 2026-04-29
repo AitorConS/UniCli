@@ -4,7 +4,7 @@
 
 ---
 
-## Current status: Phase 5 — mostly complete (3 items pending)
+## Current status: Phase 5 — complete
 
 ---
 
@@ -119,7 +119,7 @@ because packages are useless without a working runtime model.
 
 - [x] 5.1.1 — Add `-p / --port host:guest` flag to `uni run` (repeatable, e.g. `-p 8080:80 -p 443:443`)
 - [x] 5.1.2 — Implement port forwarding in QEMU wrapper using SLIRP user-mode networking (`-netdev user,hostfwd=...`) as fast path
-- [ ] 5.1.3 — TAP/bridge path: add iptables DNAT rules via `internal/network/portfwd.go` (Linux only)
+- [x] 5.1.3 — TAP/bridge path: add iptables DNAT rules via `internal/network/portfwd.go` (Linux only)
 - [x] 5.1.4 — Port map stored in VM config, visible in `uni inspect` and `uni ps --ports`
 - [x] 5.1.5 — Expose ports in compose YAML (`ports: ["8080:80"]`) mirroring Docker Compose syntax
 - [x] 5.1.6 — Unit tests: port spec parser (ranges, UDP, edge cases)
@@ -143,15 +143,15 @@ because packages are useless without a working runtime model.
 - [x] 5.3.4 — Volume lifecycle: volumes persist across VM restarts
 - [x] 5.3.5 — Read-only mounts: `-v name:guestpath:ro`
 - [x] 5.3.6 — Shared volumes between compose services (same volume name in multiple services)
-- [ ] 5.3.7 — Integration test: write file in VM, stop, restart, data survives
+- [x] 5.3.7 — Integration test: write file in VM, stop, restart, data survives
 
 ### 5.4 — Named Instances & UX Polish
 
 - [x] 5.4.1 — `--name <id>` flag on `uni run`; visible in `uni inspect`
-- [ ] 5.4.2 — `-d / --detach` flag (default) vs `--attach` (stream serial output to terminal)
+- [x] 5.4.2 — `-d / --detach` flag (default) vs `--attach` (stream serial output to terminal)
 - [x] 5.4.3 — `uni run --rm` auto-remove instance on exit
-- [ ] 5.4.4 — Static IP assignment: `--ip <addr>` flag (requires TAP networking)
-- [ ] 5.4.5 — `uni cp <id>:<guestpath> <localpath>` — copy files to/from a running VM
+- [x] 5.4.4 — Static IP assignment: `--ip <addr>` flag (requires TAP networking)
+- [x] 5.4.5 — `uni cp <id>:<guestpath> <localpath>` — copy files to/from a stopped VM (requires dump tool)
 
 **Done when:** `--attach`, `--ip`, `uni cp` implemented. Volume integration test green. TAP/bridge DNAT optional.
 
@@ -385,11 +385,11 @@ so developers can point at a project directory and get a runnable image.
 | Read-only volumes (`:ro`) | 5 | ✅ done |
 | Named instances (`--name`) | 5 | ✅ done |
 | Auto-remove (`--rm`) | 5 | ✅ done |
-| Attach mode (`--attach`) | 5 | ⬜ pending |
-| Static IP (`--ip`) | 5 | ⬜ pending |
-| `uni cp` | 5 | ⬜ pending |
-| TAP/bridge iptables DNAT | 5 | ⬜ pending |
-| Volume integration test | 5 | ⬜ pending |
+| Attach mode (`--attach`) | 5 | ✅ done |
+| Static IP (`--ip`) | 5 | ✅ done |
+| `uni cp` | 5 | ✅ done (from stopped VMs) |
+| TAP/bridge iptables DNAT | 5 | ✅ done (Linux) |
+| Volume integration test | 5 | ✅ done |
 | Package system (`uni pkg list/get/load`) | 6 | ⬜ |
 | Node.js runtime package | 6 | ⬜ |
 | Python runtime package | 6 | ⬜ |

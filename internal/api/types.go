@@ -50,6 +50,8 @@ type RunParams struct {
 	AutoRemove  bool              `json:"auto_remove,omitempty"`
 	Volumes     []VolumeMountSpec `json:"volumes,omitempty"`
 	Attach      bool              `json:"attach,omitempty"`
+	// IPAddress is the static IP to assign when using TAP networking.
+	IPAddress string `json:"ip_address,omitempty"`
 }
 
 // StopParams are the parameters for VM.Stop.
@@ -87,6 +89,7 @@ type VMDetail struct {
 	Ports     []PortMapSpec     `json:"ports,omitempty"`
 	Env       []string          `json:"env,omitempty"`
 	Volumes   []VolumeMountSpec `json:"volumes,omitempty"`
+	IPAddress string            `json:"ip_address,omitempty"`
 	CreatedAt string            `json:"created_at"`
 	StartedAt *string           `json:"started_at,omitempty"`
 	StoppedAt *string           `json:"stopped_at,omitempty"`

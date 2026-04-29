@@ -70,6 +70,9 @@ type Config struct {
 	Volumes []VolumeMount
 	// Attach when true, creates a pipe for streaming serial console output.
 	Attach bool
+	// IPAddress is the static IP address to assign to the VM. Requires TAP
+	// networking (NetworkName). If empty, no static IP is configured.
+	IPAddress string
 }
 
 // process abstracts an OS process for testability.
