@@ -10,3 +10,4 @@ examples/**/*.img
 *.exe
 *agents/*
 *claude/*
+skills-lock.json

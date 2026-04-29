@@ -118,7 +118,7 @@ func (s *Server) dispatch(ctx context.Context, req *Request, conn net.Conn) (any
 	case "VM.Inspect":
 		return s.handleInspect(req.Params)
 	case "VM.Attach":
-		s.handleAttach(ctx, req.Params, conn)
+		s.handleAttach(ctx, req.Params, conn, req.ID)
 		return attachHandled, nil
 	case "Daemon.Shutdown":
 		return s.handleDaemonShutdown()
@@ -388,21 +388,27 @@ func parseSig(s string) (syscall.Signal, error) {
 	return syscall.Signal(n), nil
 }
 
-func (s *Server) handleAttach(ctx context.Context, params json.RawMessage, conn net.Conn) {
+func (s *Server) handleAttach(ctx context.Context, params json.RawMessage, conn net.Conn, reqID int64) {
 	var p IDParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		s.writeError(conn, 0, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()})
+		s.writeError(conn, reqID, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()})
 		return
 	}
 	v, err := s.mgr.Get(p.ID)
 	if err != nil {
-		s.writeError(conn, 0, &RPCError{Code: -32000, Message: err.Error()})
+		s.writeError(conn, reqID, &RPCError{Code: -32000, Message: err.Error()})
 		return
 	}
 
 	reader := v.AttachReader()
 	if reader == nil {
-		s.writeError(conn, 0, &RPCError{Code: -32000, Message: "vm not started in attach mode"})
+		s.writeError(conn, reqID, &RPCError{Code: -32000, Message: "vm not started in attach mode"})
+		return
+	}
+
+	// Send success response before streaming raw console data.
+	resp := Response{JSONRPC: "2.0", ID: reqID}
+	if err := json.NewEncoder(conn).Encode(resp); err != nil {
 		return
 	}
 
