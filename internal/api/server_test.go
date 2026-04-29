@@ -4,6 +4,7 @@ import (
 	"context"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -12,12 +13,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// fakeQEMUCmd returns a vm.CommandFunc suitable for tests.
+func fakeQEMUCmd(block bool) vm.CommandFunc {
+	return func(_ string, _ ...string) *exec.Cmd {
+		if block {
+			if runtime.GOOS == "windows" {
+				return exec.Command("powershell", "-Command", "while ($true) { Start-Sleep -Seconds 3600 }")
+			}
+			return exec.Command("sleep", "3600")
+		}
+		if runtime.GOOS == "windows" {
+			return exec.Command("cmd", "/c", "exit 0")
+		}
+		return exec.Command("true")
+	}
+}
+
 func startTestServer(t *testing.T) (*api.Client, context.CancelFunc) {
 	t.Helper()
 	socketPath := filepath.Join(t.TempDir(), "unid.sock")
-	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(func(_ string, _ ...string) *exec.Cmd {
-		return exec.Command("sleep", "30")
-	}))
+	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd(true)))
 	srv, err := api.NewServer(mgr, socketPath, nil, "")
 	require.NoError(t, err)
 
@@ -121,9 +136,7 @@ func TestServer_Run_WithPortsAndEnv(t *testing.T) {
 
 func TestServer_Run_AutoRemove(t *testing.T) {
 	socketPath := filepath.Join(t.TempDir(), "unid.sock")
-	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(func(_ string, _ ...string) *exec.Cmd {
-		return exec.Command("true") // exits immediately
-	}))
+	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd(false)))
 	srv, err := api.NewServer(mgr, socketPath, nil, "")
 	require.NoError(t, err)
 

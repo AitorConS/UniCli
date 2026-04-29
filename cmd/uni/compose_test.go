@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -40,9 +39,7 @@ func writeComposeFile(t *testing.T, diskPath string) string {
 func startComposeDaemon(t *testing.T) (*api.Client, string) {
 	t.Helper()
 	socketPath := filepath.Join(t.TempDir(), "unid.sock")
-	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(func(_ string, _ ...string) *exec.Cmd {
-		return exec.Command("sleep", "30")
-	}))
+	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd()))
 	srv, err := api.NewServer(mgr, socketPath, nil, "")
 	require.NoError(t, err)
 

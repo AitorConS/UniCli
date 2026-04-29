@@ -3,12 +3,36 @@ package vm
 import (
 	"context"
 	"os/exec"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+// fakeQEMUCmd returns a CommandFunc that spawns a fake QEMU process.
+// If block is true the process runs until killed; otherwise it exits
+// immediately. Cross-platform: uses sleep/true on Unix and PowerShell/cmd
+// on Windows.
+func fakeQEMUCmd(block bool) CommandFunc {
+	return func(_ string, _ ...string) *exec.Cmd {
+		if block {
+			if runtime.GOOS == "windows" {
+				return exec.Command("powershell", "-Command", "while ($true) { Start-Sleep -Seconds 3600 }")
+			}
+			return exec.Command("sleep", "3600")
+		}
+		if runtime.GOOS == "windows" {
+			return exec.Command("cmd", "/c", "exit 0")
+		}
+		return exec.Command("true")
+	}
+}
+
+func fakeManager(block bool) *QEMUManager {
+	return NewQEMUManager("fake-qemu", WithCommandFunc(fakeQEMUCmd(block)))
+}
 
 // --- state machine tests ---
 
@@ -111,14 +135,8 @@ func TestStore_RemoveNotFound(t *testing.T) {
 
 // --- QEMUManager tests (with injected fake command) ---
 
-func fakeManager(cmdName string, args ...string) *QEMUManager {
-	return NewQEMUManager("fake-qemu", WithCommandFunc(func(_ string, _ ...string) *exec.Cmd {
-		return exec.Command(cmdName, args...)
-	}))
-}
-
 func TestQEMUManager_Create(t *testing.T) {
-	mgr := fakeManager("true")
+	mgr := fakeManager(false)
 	v, err := mgr.Create(context.Background(), Config{ImagePath: "test.img", Memory: "256M"})
 	require.NoError(t, err)
 	require.NotEmpty(t, v.ID)
@@ -126,14 +144,14 @@ func TestQEMUManager_Create(t *testing.T) {
 }
 
 func TestQEMUManager_Remove_not_stopped(t *testing.T) {
-	mgr := fakeManager("true")
+	mgr := fakeManager(false)
 	v, err := mgr.Create(context.Background(), Config{ImagePath: "test.img", Memory: "256M"})
 	require.NoError(t, err)
 	require.Error(t, mgr.Remove(context.Background(), v.ID))
 }
 
 func TestQEMUManager_Start_transitions_to_running(t *testing.T) {
-	mgr := fakeManager("sleep", "30")
+	mgr := fakeManager(true)
 	v, err := mgr.Create(context.Background(), Config{ImagePath: "test.img", Memory: "256M"})
 	require.NoError(t, err)
 
@@ -149,7 +167,7 @@ func TestQEMUManager_Start_transitions_to_running(t *testing.T) {
 }
 
 func TestQEMUManager_Stop_transitions_to_stopped(t *testing.T) {
-	mgr := fakeManager("sleep", "30")
+	mgr := fakeManager(true)
 	v, err := mgr.Create(context.Background(), Config{ImagePath: "test.img", Memory: "256M"})
 	require.NoError(t, err)
 
@@ -165,7 +183,7 @@ func TestQEMUManager_Stop_transitions_to_stopped(t *testing.T) {
 }
 
 func TestQEMUManager_process_exit_stops_vm(t *testing.T) {
-	mgr := fakeManager("true") // exits immediately
+	mgr := fakeManager(false) // exits immediately
 	v, err := mgr.Create(context.Background(), Config{ImagePath: "test.img", Memory: "256M"})
 	require.NoError(t, err)
 
@@ -180,7 +198,7 @@ func TestQEMUManager_process_exit_stops_vm(t *testing.T) {
 }
 
 func TestQEMUManager_Remove_after_stop(t *testing.T) {
-	mgr := fakeManager("true")
+	mgr := fakeManager(false)
 	v, err := mgr.Create(context.Background(), Config{ImagePath: "test.img", Memory: "256M"})
 	require.NoError(t, err)
 
@@ -192,7 +210,7 @@ func TestQEMUManager_Remove_after_stop(t *testing.T) {
 }
 
 func TestQEMUManager_List(t *testing.T) {
-	mgr := fakeManager("sleep", "30")
+	mgr := fakeManager(true)
 	_, err := mgr.Create(context.Background(), Config{ImagePath: "a.img", Memory: "256M"})
 	require.NoError(t, err)
 	_, err = mgr.Create(context.Background(), Config{ImagePath: "b.img", Memory: "256M"})
@@ -206,7 +224,7 @@ func captureArgs(mgr *QEMUManager, cfg Config) []string {
 	var got []string
 	mgr.mkCmd = func(_ string, args ...string) *exec.Cmd {
 		got = args
-		return exec.Command("true")
+		return fakeQEMUCmd(false)("", args...)
 	}
 	_ = mgr.buildCmd(cfg)
 	return got

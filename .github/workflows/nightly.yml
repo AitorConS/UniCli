@@ -5,10 +5,31 @@ on:
     - cron: '0 2 * * *'  # 02:00 UTC daily
   workflow_dispatch:      # allow manual trigger
 
+# Only one nightly at a time.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
 jobs:
+  unit-tests:
+    name: Unit Tests (self-hosted)
+    runs-on: [self-hosted, linux, kvm]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Run unit tests
+        run: go test ./cmd/... ./internal/... ./pkg/... -race -count=1 -coverprofile=coverage.out -covermode=atomic
+
   kernel-tests:
     name: Full Kernel Test Suite
     runs-on: [self-hosted, linux, kvm]
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -28,9 +49,34 @@ jobs:
       - name: Run kernel test suite
         run: make test-kernel
 
+  integration-tests:
+    name: Integration Tests
+    needs: [unit-tests]
+    runs-on: [self-hosted, linux, kvm]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Check KVM
+        run: |
+          test -e /dev/kvm || (echo "/dev/kvm not found" && exit 1)
+          test -r /dev/kvm && test -w /dev/kvm || (echo "Add runner user to kvm group: sudo usermod -aG kvm \$USER" && exit 1)
+
+      - name: Build CLI binaries
+        run: make build
+
+      - name: Run integration tests
+        run: go test -tags integration -count=1 -timeout 10m -v ./tests/integration/...
+
   benchmarks:
     name: Benchmark Suite
     runs-on: [self-hosted, linux, kvm]
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -40,7 +86,7 @@ jobs:
           cache: true
 
       - name: Run benchmarks
-        run: go test ./... -bench=. -benchmem -benchtime=5s | tee benchmark-results.txt
+        run: go test ./... -bench=. -benchmem -benchtime=5s -count=3 | tee benchmark-results.txt
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
@@ -51,6 +97,7 @@ jobs:
   security-scan:
     name: Security Scan
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -75,7 +122,7 @@ jobs:
   notify-on-failure:
     name: Notify on Failure
     runs-on: ubuntu-latest
-    needs: [kernel-tests, benchmarks, security-scan]
+    needs: [unit-tests, kernel-tests, integration-tests, benchmarks, security-scan]
     if: failure()
     steps:
       - name: Notify

@@ -2,15 +2,21 @@ name: PR Checks
 
 on:
   pull_request:
-    branches: [main, develop]
+    branches: [main]
     paths-ignore:
       - 'docs/**'
       - '**.md'
+
+# Prevent multiple concurrent runs on the same PR; cancel old ones.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -27,6 +33,7 @@ jobs:
   unit-tests:
     name: Unit Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -36,7 +43,7 @@ jobs:
           cache: true
 
       - name: Run unit tests
-        run: go test ./cmd/... ./internal/... ./pkg/... -race -coverprofile=coverage.out -covermode=atomic
+        run: go test ./cmd/... ./internal/... ./pkg/... -race -count=1 -coverprofile=coverage.out -covermode=atomic
 
       - name: Coverage report
         run: go tool cover -func=coverage.out
@@ -50,6 +57,7 @@ jobs:
   kernel-build:
     name: Kernel Build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -63,7 +71,9 @@ jobs:
 
   integration-tests:
     name: Integration Tests
+    needs: [lint, unit-tests]
     runs-on: [self-hosted, linux, kvm]
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -77,5 +87,17 @@ jobs:
           test -e /dev/kvm || (echo "/dev/kvm not found" && exit 1)
           test -r /dev/kvm && test -w /dev/kvm || (echo "Add runner user to kvm group: sudo usermod -aG kvm \$USER" && exit 1)
 
+      - name: Build CLI binaries
+        run: make build
+
       - name: Run integration tests
-        run: go test -tags integration -timeout 10m ./tests/integration/...
+        run: go test -tags integration -count=1 -timeout 10m -v ./tests/integration/...
+
+      - name: Upload integration test logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-logs
+          path: |
+            /tmp/unid-integration-test.sock
+            coverage.out

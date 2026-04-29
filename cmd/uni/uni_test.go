@@ -20,6 +20,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// fakeQEMUCmd returns a vm.CommandFunc that spawns a fake QEMU process.
+// Cross-platform: uses sleep on Unix and PowerShell on Windows.
+func fakeQEMUCmd() vm.CommandFunc {
+	return func(_ string, _ ...string) *exec.Cmd {
+		if runtime.GOOS == "windows" {
+			return exec.Command("powershell", "-Command", "while ($true) { Start-Sleep -Seconds 3600 }")
+		}
+		return exec.Command("sleep", "3600")
+	}
+}
+
 const (
 	testTimeout = 5 * time.Second
 	dialPoll    = 10 * time.Millisecond
@@ -29,9 +40,7 @@ const (
 func startDaemon(t *testing.T) (*api.Client, string) {
 	t.Helper()
 	socketPath := filepath.Join(t.TempDir(), "unid.sock")
-	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(func(_ string, _ ...string) *exec.Cmd {
-		return exec.Command("sleep", "30")
-	}))
+	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd()))
 	srv, err := api.NewServer(mgr, socketPath, nil, "")
 	require.NoError(t, err)
 
