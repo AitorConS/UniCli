@@ -6,10 +6,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/AitorConS/unikernel-engine/internal/api"
+	"github.com/AitorConS/unikernel-engine/internal/tools"
 	"github.com/spf13/cobra"
 )
 
@@ -21,7 +21,7 @@ func newCpCmd(socketPath *string) *cobra.Command {
 
 Currently only copying FROM a stopped VM is supported, and it requires the
 'dump' tool built from kernel/tools/dump.c to extract files from the TFS
-filesystem used by Nanos.
+filesystem used by Nanos. The tool is downloaded automatically on first use.
 
 Example:
   uni cp myvm:/etc/config.json ./config.json`,
@@ -75,10 +75,9 @@ Example:
 			}
 
 			// fromVM: extract file from stopped VM disk image.
-			dumpBin := findDumpTool()
-			if dumpBin == "" {
-				return fmt.Errorf("cp: the 'dump' tool is required to extract files from TFS images. " +
-					"Build it from kernel/tools/dump.c and place it in ~/.uni/tools/ or PATH")
+			dumpBin, err := tools.ResolveDump(cmd.Context(), defaultToolsPath(), "")
+			if err != nil {
+				return fmt.Errorf("cp: resolve dump tool: %w", err)
 			}
 
 			tmpDir, err := os.MkdirTemp("", "uni-cp-*")
@@ -114,27 +113,6 @@ func parseCpSpec(s string) (bool, string, string) {
 		return true, s[:idx], s[idx+1:]
 	}
 	return false, "", s
-}
-
-// findDumpTool looks for the dump binary in ~/.uni/tools/ and PATH.
-func findDumpTool() string {
-	name := "dump"
-	if runtime.GOOS == "windows" {
-		name = "dump.exe"
-	}
-	// Check ~/.uni/tools first.
-	home, err := os.UserHomeDir()
-	if err == nil {
-		p := filepath.Join(home, ".uni", "tools", name)
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-	// Check PATH.
-	if p, err := exec.LookPath(name); err == nil {
-		return p
-	}
-	return ""
 }
 
 // copyFile copies a regular file from src to dst.

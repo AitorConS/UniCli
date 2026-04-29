@@ -20,8 +20,8 @@ const (
 	kernelTagPrefix = "kernel-"
 )
 
-// artifactNames are the three files that make up the kernel toolset.
-var artifactNames = []string{"mkfs-linux-amd64", "kernel.img", "boot.img"}
+// artifactNames are the files that make up the kernel toolset.
+var artifactNames = []string{"mkfs-linux-amd64", "kernel.img", "boot.img", "dump-linux-amd64"}
 
 // LocalVersion returns the semver string (e.g. "v0.1.0") cached in toolsDir.
 // Returns "(unknown)" if the file is absent or unreadable.
@@ -103,7 +103,7 @@ func SaveLocalVersion(toolsDir, version string) error {
 // ClearCachedTools deletes the kernel artifacts and version file from toolsDir.
 func ClearCachedTools(toolsDir string) error {
 	names := append([]string{versionFileName}, artifactNames...)
-	names = append(names, "mkfs") // local name differs from remote artifact name
+	names = append(names, "mkfs", "dump") // local names differ from remote artifact names
 	for _, name := range names {
 		if err := os.Remove(filepath.Join(toolsDir, name)); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("tools: clear %s: %w", name, err)
@@ -143,6 +143,7 @@ func DownloadVersion(ctx context.Context, toolsDir, version string) error {
 		{"mkfs-linux-amd64", "mkfs"},
 		{"kernel.img", "kernel.img"},
 		{"boot.img", "boot.img"},
+		{"dump-linux-amd64", "dump"},
 	}
 	for _, a := range artifacts {
 		dest := filepath.Join(toolsDir, a.local)
