@@ -122,12 +122,13 @@ Serial console output (stdout + stderr from QEMU) is captured into a thread-safe
 
 ### Kernel Tools Cache (`internal/tools/`)
 
-The kernel artifacts (`kernel.img`, `boot.img`, `mkfs`) are downloaded from GitHub releases and cached in `~/.uni/tools/`. They are versioned independently from the CLI using semver (`kernel/VERSION` in the repo).
+The kernel artifacts (`kernel.img`, `boot.img`, `mkfs`, `dump`) are downloaded from GitHub releases and cached in `~/.uni/tools/`. They are versioned independently from the CLI using semver (`kernel/VERSION` in the repo).
 
 **Download flow:**
 1. `uni build` calls `tools.ResolveMkfs()`
-2. If tools are absent → `DownloadVersion("latest")` fetches all three artifacts + saves `kernel-version.txt`
-3. If tools are present → checks remote version via GitHub API; if newer, prompts `[y/N]` before replacing
+2. `uni cp` calls `tools.ResolveDump()`
+3. If tools are absent → `DownloadVersion("latest")` fetches all artifacts + saves `kernel-version.txt`
+4. If tools are present → checks remote version via GitHub API; if newer, prompts `[y/N]` before replacing
 
 **Versioned releases:** each kernel release is tagged `kernel-vX.Y.Z` on GitHub and is immutable. A rolling `latest` release always points to the most recent build. `uni kernel use <v>` downloads from the specific versioned tag.
 
@@ -220,13 +221,27 @@ This is intentionally simple — not OCI-compliant, designed for internal use be
 
 ---
 
+## File Copy from VMs (`uni cp`)
+
+`uni cp` extracts files from stopped VM disk images using the `dump` tool from the Nanos kernel toolchain. The tool reads the TFS (Tiny File System) filesystem directly from the raw disk image.
+
+**Download flow:**
+1. `uni cp` calls `tools.ResolveDump()`
+2. If `dump` is absent from `~/.uni/tools/` → `downloadArtifact()` fetches `dump-linux-amd64` from the latest kernel release
+3. The tool extracts the entire filesystem to a temporary directory
+4. The requested file is copied from the temp directory to the destination
+
+This requires the VM to be in `stopped` state because the disk image must not be in use by a running QEMU process.
+
+---
+
 ## Networking
 
 Each VM can use one of two networking modes:
 
 **SLIRP user-mode** (default for `-p`): QEMU's built-in user-mode networking with port forwarding via `hostfwd` rules. Works on any platform without root access. Does not support inbound ICMP (ping).
 
-**TAP + bridge**: A TAP interface is created and bridged on the Linux host, giving the VM full network access including its own IP address. Requires Linux and elevated permissions.
+**TAP + bridge**: A TAP interface is created and bridged on the Linux host, giving the VM full network access including its own IP address. Requires Linux and elevated permissions. When port mappings (`-p`) are used together with `--network`, iptables DNAT rules are automatically configured so that traffic arriving at the host is forwarded to the guest's static IP.
 
 {: .note }
 TAP networking requires Linux and elevated permissions. It is not available on Windows. See `internal/network/tap.go` (Linux-only build tag).

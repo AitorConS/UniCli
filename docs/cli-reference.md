@@ -58,6 +58,9 @@ uni run <image> [flags]
 | `--rm` | `false` | Automatically remove the VM when it stops |
 | `-v`, `--volume` | — | Mount a named volume: `name:guestpath[:ro]` (repeatable) |
 | `--attach` | `false` | Attach to VM serial console (blocks until VM stops) |
+| `-d`, `--detach` | `true` | Run VM in the background (overridden by `--attach`) |
+| `--ip` | — | Static IP address (requires `--network`) |
+| `--network` | — | TAP interface name to attach (Linux only) |
 
 **Examples:**
 
@@ -94,6 +97,9 @@ uni run hello:latest --attach
 
 # Attach with a named instance and port
 uni run myapp:latest --name api --attach -p 8080:8080
+
+# Run with TAP networking and static IP (Linux only)
+uni run myapp:latest --network tap0 --ip 192.168.100.10 -p 8080:80
 
 # Output the VM ID for scripting
 ID=$(uni run hello:latest --name api)
@@ -247,6 +253,32 @@ The VM must be in `stopped` state. Run `uni stop <id>` first.
 ```bash
 uni stop a3f8c2d1
 uni rm a3f8c2d1
+```
+
+---
+
+### `uni cp`
+
+Copy files to or from a stopped VM disk image. The `dump` tool is downloaded automatically on first use from the kernel release.
+
+```
+uni cp <src> <dst>
+```
+
+`<src>` or `<dst>` must be a VM reference in the form `id:path`. The other operand is a local file path.
+
+{: .note }
+Currently only copying **from** a stopped VM is supported. Copying **to** a VM is not yet implemented.
+
+**Example:**
+
+```bash
+# Copy a file from a stopped VM to the host
+uni cp myvm:/etc/config.json ./config.json
+# copied myvm:/etc/config.json → ./config.json
+
+# Copy from a VM identified by prefix
+uni cp a3f8:/var/log/app.log ./app.log
 ```
 
 ---
@@ -591,7 +623,7 @@ uni upgrade
 ```
 
 {: .note }
-On Windows, the running binary is renamed to `.bak` before the new one is placed in its position, since Windows does not allow overwriting a running executable directly.
+On Windows, the running binary is renamed to `.bak` before the new one is placed in its position, since Windows does not allow overwriting a running executable directly. After the upgrade completes successfully, old `.bak` files are cleaned up automatically.
 
 ---
 

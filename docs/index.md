@@ -35,11 +35,13 @@ Compared to containers:
 
 ```
 uni build ./myapp          # package ELF binary into an image
-uni run hello:latest       # start a unikernel VM
+uni run hello:latest       # start a unikernel VM (detached by default)
 uni run hello:latest --attach  # start and stream serial output
+uni run hello:latest --ip 192.168.1.10 --network tap0  # static IP with TAP
 uni ps                     # list running VMs
 uni logs <id>              # read serial console output
 uni stop <id>              # graceful shutdown
+uni cp <id>:/path/file.txt ./local.txt  # copy file from stopped VM
 uni compose up stack.yaml  # start a multi-service application
 uni kernel update          # update the cached kernel tools
 uni upgrade                # self-update uni and unid
@@ -73,7 +75,10 @@ uni upgrade                # self-update uni and unid
 - **Full VM isolation** — every service runs in its own KVM virtual machine
 - **Compose support** — define multi-service stacks in YAML with dependency ordering
 - **Registry** — push/pull images over HTTP like a private Docker registry
-- **Attach mode** — stream VM serial console output in real-time with `--attach`
+- **Attach mode** — stream VM serial console output in real-time with `--attach` (default is detached with `-d`)
+- **Static IP assignment** — assign a static IP to VMs when using TAP networking with `--ip`
+- **TAP/bridge DNAT** — port forwarding works with TAP interfaces via iptables rules (Linux only)
+- **File copy from VMs** — extract files from stopped VM disk images with `uni cp`
 - **Graceful lifecycle** — SIGTERM → 30s grace period → SIGKILL
 - **JSON output** — every command supports `--output json` for scripting
 - **Versioned releases** — both the CLI and the kernel are independently versioned with semver; `uni upgrade` self-updates the binaries, `uni kernel update` updates the kernel tools

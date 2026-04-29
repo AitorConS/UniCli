@@ -185,10 +185,12 @@ uni ps
 uni logs a3f8c2d1
 # Hello from unikernel!
 
-# Or attach directly for real-time output
+# Attach directly for real-time output (blocks until VM exits)
 uni run hello:latest --attach
 # Hello from unikernel!
-# (blocks until VM exits)
+
+# Run detached explicitly (default behavior)
+uni run hello:latest -d
 
 # Stop and clean up
 uni stop a3f8c2d1
@@ -213,7 +215,25 @@ uni inspect web
 uni run hello:latest --rm
 ```
 
-### 5. Use persistent volumes
+### 5. Advanced networking (TAP + static IP)
+
+On Linux you can attach a VM to a TAP interface for full network access:
+
+```bash
+# Create a TAP interface (requires root or CAP_NET_ADMIN)
+sudo ip tuntap add dev uni-tap0 mode tap
+sudo ip link set uni-tap0 up
+
+# Run with TAP networking and assign a static IP
+uni run myapp:latest --network uni-tap0 --ip 192.168.100.10 -p 8080:80
+```
+
+When using `--network` with `-p`, iptables DNAT rules are automatically set up so port forwarding works through the TAP interface. This requires Linux and `iptables`.
+
+{: .note }
+TAP networking and static IP assignment require Linux and elevated permissions. They are not available on Windows. See `internal/network/tap.go` (Linux-only build tag).
+
+### 6. Use persistent volumes
 
 ```bash
 # Create a named volume (1 GiB sparse disk image)
@@ -231,6 +251,19 @@ uni volume ls
 # Remove a volume (irreversible)
 uni volume rm mydata
 ```
+
+### 7. Copy files from a stopped VM
+
+Use `uni cp` to extract files from a stopped VM's disk image. The `dump` tool is downloaded automatically on first use.
+
+```bash
+# Copy a file from a stopped VM to the host
+uni cp myvm:/etc/config.json ./config.json
+# copied myvm:/etc/config.json → ./config.json
+```
+
+{: .note }
+`uni cp` currently only supports copying **from** a stopped VM, not **to** a VM. The VM must be in `stopped` state.
 
 ---
 
@@ -280,7 +313,7 @@ uni upgrade
 uni upgrade --yes
 ```
 
-`uni upgrade` replaces the running `uni` binary in-place and also updates `unid` if it is found in the same directory. On Windows the running binary is renamed to `.bak` before the new one is installed.
+`uni upgrade` replaces the running `uni` binary in-place and also updates `unid` if it is found in the same directory. On Windows the running binary is renamed to `.bak` before the new one is installed. After the upgrade completes successfully, old `.bak` files are cleaned up automatically.
 
 ### Updating the kernel tools
 
