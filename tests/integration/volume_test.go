@@ -4,13 +4,18 @@ package integration
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
 	"github.com/AitorConS/unikernel-engine/internal/api"
 	"github.com/AitorConS/unikernel-engine/internal/image"
+	"github.com/AitorConS/unikernel-engine/internal/tools"
 	"github.com/AitorConS/unikernel-engine/internal/vm"
 	"github.com/AitorConS/unikernel-engine/internal/volume"
 	"github.com/stretchr/testify/require"
@@ -25,17 +30,26 @@ func TestVolumePersistence(t *testing.T) {
 	imgStore, err := image.NewStore(filepath.Join(storeDir, "images"))
 	require.NoError(t, err)
 
-	// Seed the voltest image manually (avoid needing mkfs in this test).
-	voltestDisk := makeTmpDisk(t)
-	m := image.Manifest{
-		SchemaVersion: image.SchemaVersion,
-		Name:          "voltest",
-		Tag:           "latest",
-		Config:        image.Config{Memory: "256M", CPUs: 1},
-		DiskDigest:    "sha256:voltest",
-		DiskSize:      1024,
-	}
-	require.NoError(t, imgStore.Put("voltest", "latest", m, voltestDisk))
+	// Build the voltest binary for Linux.
+	voltestBin := filepath.Join(t.TempDir(), "voltest")
+	voltestSrc := filepath.Join("..", "..", "examples", "voltest", "main.go")
+	require.NoError(t, buildLinuxBinary(voltestSrc, voltestBin), "failed to build voltest binary")
+
+	// Build a real unikernel image using mkfs (auto-downloaded if needed).
+	mkfsRun, err := tools.ResolveMkfs(context.Background(), filepath.Join(storeDir, "tools"), "")
+	require.NoError(t, err, "failed to resolve mkfs")
+
+	builder := image.NewBuilder(imgStore)
+	_, err = builder.Build(context.Background(), image.BuildConfig{
+		Name:       "voltest",
+		Tag:        "latest",
+		BinaryPath: voltestBin,
+		MkfsRun:    mkfsRun,
+		Memory:     "256M",
+		CPUs:       1,
+	})
+	require.NoError(t, err, "failed to build voltest image")
+
 	_, diskPath, err := imgStore.Get("voltest:latest")
 	require.NoError(t, err)
 
@@ -137,4 +151,18 @@ func TestVolumePersistence(t *testing.T) {
 		return err == nil && g.State == "stopped"
 	}, 30*time.Second, 100*time.Millisecond)
 	require.NoError(t, client.Remove(ctx, info2.ID))
+}
+
+// buildLinuxBinary compiles a Go source file into a static Linux ELF binary.
+func buildLinuxBinary(src, dst string) error {
+	cmd := exec.Command("go", "build", "-ldflags=-s -w", "-o", dst, src)
+	cmd.Env = append(os.Environ(),
+		"CGO_ENABLED=0",
+		"GOOS=linux",
+		"GOARCH=amd64",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("build linux binary: %w (output: %s)", err, string(out))
+	}
+	return nil
 }
