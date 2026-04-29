@@ -212,7 +212,6 @@ func (m *QEMUManager) buildCmd(cfg Config) *exec.Cmd {
 		"-m", cfg.Memory,
 		"-drive", "file=" + cfg.ImagePath + ",format=raw,if=virtio",
 		"-nographic",
-		"-serial", "stdio",
 		"-no-reboot",
 	}
 	if cfg.CPUs > 0 {

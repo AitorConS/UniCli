@@ -66,7 +66,6 @@ func runQEMU(t *testing.T, imagePath string, timeout time.Duration) string {
 		"-m", "256M",
 		"-drive", "file="+imagePath+",format=raw,if=virtio",
 		"-nographic",
-		"-serial", "stdio",
 		"-no-reboot",
 	)
 	cmd.Stdout = &out
