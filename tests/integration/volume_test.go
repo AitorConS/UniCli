@@ -34,9 +34,18 @@ func TestVolumePersistence(t *testing.T) {
 	voltestSrc := filepath.Join("..", "..", "examples", "voltest", "main.go")
 	require.NoError(t, buildLinuxBinary(voltestSrc, voltestBin), "failed to build voltest binary")
 
-	// Build a real unikernel image using mkfs (auto-downloaded if needed).
-	mkfsRun, err := tools.ResolveMkfs(context.Background(), filepath.Join(storeDir, "tools"), "")
-	require.NoError(t, err, "failed to resolve mkfs")
+	// Build a real unikernel image using mkfs.
+	// Prefer locally-built kernel tools (from `make kernel && make -C kernel tools`)
+	// so integration tests use the exact kernel from the repo.
+	var mkfsRun image.MkfsFunc
+	localTools := filepath.Join("..", "..", "kernel", "output", "tools", "bin")
+	if tools.Exist(localTools) {
+		mkfsRun, err = tools.ResolveMkfs(context.Background(), localTools, "")
+		require.NoError(t, err, "failed to resolve local mkfs")
+	} else {
+		mkfsRun, err = tools.ResolveMkfs(context.Background(), filepath.Join(storeDir, "tools"), "")
+		require.NoError(t, err, "failed to resolve mkfs")
+	}
 
 	builder := image.NewBuilder(imgStore)
 	_, err = builder.Build(context.Background(), image.BuildConfig{
