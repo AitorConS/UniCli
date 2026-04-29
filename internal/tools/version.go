@@ -143,13 +143,16 @@ func DownloadVersion(ctx context.Context, toolsDir, version string) error {
 		{"mkfs-linux-amd64", "mkfs"},
 		{"kernel.img", "kernel.img"},
 		{"boot.img", "boot.img"},
-		{"dump-linux-amd64", "dump"},
 	}
 	for _, a := range artifacts {
 		dest := filepath.Join(toolsDir, a.local)
 		if err := downloadArtifact(ctx, ArtifactURL(version, a.remote), dest); err != nil {
 			return fmt.Errorf("tools: download %s: %w", a.remote, err)
 		}
+	}
+	// dump is optional — older releases may not include it.
+	if err := downloadArtifact(ctx, ArtifactURL(version, "dump-linux-amd64"), filepath.Join(toolsDir, "dump")); err != nil {
+		fmt.Printf("warning: dump tool not available in this release: %v\n", err)
 	}
 	// Resolve the real semver when downloading "latest".
 	resolved := version
