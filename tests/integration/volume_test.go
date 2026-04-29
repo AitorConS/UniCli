@@ -29,20 +29,17 @@ func TestVolumePersistence(t *testing.T) {
 	imgStore, err := image.NewStore(filepath.Join(storeDir, "images"))
 	require.NoError(t, err)
 
-	// Build the voltest binary for Linux.
 	voltestBin := filepath.Join(t.TempDir(), "voltest")
 	voltestSrc := filepath.Join("..", "..", "examples", "voltest", "main.go")
 	require.NoError(t, buildLinuxBinary(voltestSrc, voltestBin), "failed to build voltest binary")
 
-	// Build a real unikernel image using mkfs.
-	// Prefer locally-built kernel tools (from `make kernel && make -C kernel tools`)
-	// so integration tests use the exact kernel from the repo.
 	var mkfsRun image.MkfsFunc
 	localTools := filepath.Join("..", "..", "kernel", "output", "tools", "bin")
 	if tools.Exist(localTools) {
 		mkfsRun, err = tools.ResolveMkfs(context.Background(), localTools, "")
 		require.NoError(t, err, "failed to resolve local mkfs")
 	} else {
+		t.Logf("Local kernel tools not found at %s; downloading from release", localTools)
 		mkfsRun, err = tools.ResolveMkfs(context.Background(), filepath.Join(storeDir, "tools"), "")
 		require.NoError(t, err, "failed to resolve mkfs")
 	}
@@ -61,7 +58,6 @@ func TestVolumePersistence(t *testing.T) {
 	_, diskPath, err := imgStore.Get("voltest:latest")
 	require.NoError(t, err)
 
-	// Volume store.
 	volStore, err := volume.NewStore(filepath.Join(storeDir, "volumes"))
 	require.NoError(t, err)
 	_, err = volStore.Create("testdata", 1<<30)
@@ -80,7 +76,6 @@ func TestVolumePersistence(t *testing.T) {
 	client := dialWithRetry(t, defaultSocket)
 	defer func() { _ = client.Close() }()
 
-	// First run: write data via HTTP.
 	info1, err := client.Run(ctx, api.RunParams{
 		ImagePath: diskPath,
 		Memory:    "256M",
@@ -95,23 +90,16 @@ func TestVolumePersistence(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, info1.ID)
 
-	// Wait for the HTTP server inside the VM to be ready.
-	require.Eventually(t, func() bool {
-		resp, err := http.Get("http://127.0.0.1:18080/")
-		if err != nil {
-			return false
-		}
-		_ = resp.Body.Close()
-		return resp.StatusCode == http.StatusOK
-	}, 60*time.Second, 500*time.Millisecond, "voltest HTTP server did not become ready")
+	if !waitForHTTP(t, ctx, client, info1.ID, "http://127.0.0.1:18080/", 60*time.Second) {
+		dumpVMLogs(t, client, info1.ID, "first run")
+		t.Fatal("voltest HTTP server did not become ready on first run")
+	}
 
-	// Write a message.
 	resp, err := http.Post("http://127.0.0.1:18080/write?msg=hello", "", nil)
 	require.NoError(t, err)
 	_ = resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
-	// Stop and remove the first VM.
 	require.NoError(t, client.Stop(ctx, info1.ID, false))
 	require.Eventually(t, func() bool {
 		g, err := client.Get(ctx, info1.ID)
@@ -119,7 +107,6 @@ func TestVolumePersistence(t *testing.T) {
 	}, 30*time.Second, 100*time.Millisecond)
 	require.NoError(t, client.Remove(ctx, info1.ID))
 
-	// Second run: same volume, new VM.
 	info2, err := client.Run(ctx, api.RunParams{
 		ImagePath: diskPath,
 		Memory:    "256M",
@@ -134,17 +121,11 @@ func TestVolumePersistence(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, info2.ID)
 
-	// Wait for readiness again.
-	require.Eventually(t, func() bool {
-		resp, err := http.Get("http://127.0.0.1:18080/")
-		if err != nil {
-			return false
-		}
-		_ = resp.Body.Close()
-		return resp.StatusCode == http.StatusOK
-	}, 60*time.Second, 500*time.Millisecond, "voltest HTTP server did not become ready on second run")
+	if !waitForHTTP(t, ctx, client, info2.ID, "http://127.0.0.1:18080/", 60*time.Second) {
+		dumpVMLogs(t, client, info2.ID, "second run")
+		t.Fatal("voltest HTTP server did not become ready on second run")
+	}
 
-	// Verify the previously written message is still there.
 	resp, err = http.Get("http://127.0.0.1:18080/")
 	require.NoError(t, err)
 	body := make([]byte, 1024)
@@ -152,7 +133,6 @@ func TestVolumePersistence(t *testing.T) {
 	_ = resp.Body.Close()
 	require.Contains(t, string(body[:n]), "hello")
 
-	// Cleanup.
 	_ = client.Stop(ctx, info2.ID, false)
 	require.Eventually(t, func() bool {
 		g, err := client.Get(ctx, info2.ID)
@@ -161,7 +141,41 @@ func TestVolumePersistence(t *testing.T) {
 	require.NoError(t, client.Remove(ctx, info2.ID))
 }
 
-// buildLinuxBinary compiles a Go source file into a static Linux ELF binary.
+func waitForHTTP(t *testing.T, ctx context.Context, client *api.Client, vmID, url string, timeout time.Duration) bool {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return false
+		default:
+		}
+		resp, err := http.Get(url)
+		if err == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return true
+			}
+		}
+		g, err := client.Get(ctx, vmID)
+		if err == nil && g.State == "stopped" {
+			return false
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return false
+}
+
+func dumpVMLogs(t *testing.T, client *api.Client, vmID, label string) {
+	t.Helper()
+	logs, err := client.Logs(context.Background(), vmID)
+	if err != nil {
+		t.Logf("[%s] failed to get VM logs: %v", label, err)
+		return
+	}
+	t.Logf("[%s] VM serial console output:\n%s", label, logs.Logs)
+}
+
 func buildLinuxBinary(src, dst string) error {
 	cmd := exec.Command("go", "build", "-ldflags=-s -w", "-o", dst, src)
 	cmd.Env = append(os.Environ(),

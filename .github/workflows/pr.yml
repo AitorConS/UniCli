@@ -93,6 +93,12 @@ jobs:
           sudo apt-get install -y gcc-multilib nasm qemu-utils
           make kernel && make -C kernel tools
 
+      - name: Stage kernel artifacts for integration tests
+        run: |
+          cp kernel/output/platform/pc/bin/kernel.img kernel/output/tools/bin/
+          cp kernel/output/platform/pc/boot/boot.img   kernel/output/tools/bin/
+          ls -la kernel/output/tools/bin/
+
       - name: Build CLI binaries
         run: make build
 
