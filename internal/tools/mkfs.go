@@ -41,14 +41,17 @@ func ResolveMkfs(ctx context.Context, toolsDir, override string) (image.MkfsFunc
 
 // directFunc returns an image.MkfsFunc that calls mkfsBin with a generated Nanos manifest on stdin.
 func directFunc(mkfsBin, bootImg, kernelImg string) image.MkfsFunc {
-	return func(ctx context.Context, imgPath, binaryPath string) *exec.Cmd {
+	return func(ctx context.Context, imgPath, binaryPath string, manifest string) *exec.Cmd {
 		absBin, _ := filepath.Abs(binaryPath)
+		if manifest == "" {
+			manifest = buildNanosManifest(absBin)
+		}
 		cmd := exec.CommandContext(ctx, mkfsBin,
 			"-b", bootImg,
 			"-k", kernelImg,
 			imgPath,
 		)
-		cmd.Stdin = strings.NewReader(buildNanosManifest(absBin))
+		cmd.Stdin = strings.NewReader(manifest)
 		return cmd
 	}
 }

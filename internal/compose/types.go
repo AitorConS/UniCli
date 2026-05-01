@@ -8,6 +8,10 @@ type File struct {
 	Services map[string]Service `yaml:"services"`
 	// Networks maps network name to its definition.
 	Networks map[string]Network `yaml:"networks"`
+	// Volumes maps volume name to its configuration.
+	// Top-level volumes are created on "compose up" and optionally
+	// removed on "compose down --volumes".
+	Volumes map[string]VolumeConfig `yaml:"volumes"`
 }
 
 // Service describes a single unikernel service.
@@ -27,6 +31,7 @@ type Service struct {
 	// Ports is a list of host:guest[/proto] port mapping strings.
 	Ports []string `yaml:"ports"`
 	// Volumes is a list of "name:guestpath[:ro]" volume mount strings.
+	// Volume names must reference a top-level volumes entry.
 	Volumes []string `yaml:"volumes"`
 }
 
@@ -36,10 +41,28 @@ type Network struct {
 	Driver string `yaml:"driver"`
 }
 
-// State records running VM IDs for a compose project.
+// VolumeConfig describes a named volume defined at the top level of a compose file.
+type VolumeConfig struct {
+	// Size is the volume size as a human-readable string (e.g. "512M", "1G").
+	// Defaults to "1G" if empty.
+	Size string `yaml:"size"`
+}
+
+// DefaultSize returns the volume size, falling back to "1G".
+func (vc VolumeConfig) DefaultSize() string {
+	if vc.Size == "" {
+		return "1G"
+	}
+	return vc.Size
+}
+
+// State records running VM IDs and created volumes for a compose project.
 type State struct {
 	// Project is the compose project name (directory basename).
 	Project string `json:"project"`
 	// Services maps service name to VM ID.
 	Services map[string]string `json:"services"`
+	// CreatedVolumes lists volume names that were created by "compose up"
+	// and should be removed on "compose down --volumes".
+	CreatedVolumes []string `json:"created_volumes,omitempty"`
 }

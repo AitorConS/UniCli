@@ -552,6 +552,21 @@ func TestRun_WithInvalidPort(t *testing.T) {
 	require.Contains(t, msg, "port")
 }
 
+func TestGatewayIP(t *testing.T) {
+	cases := []struct {
+		ip   string
+		want string
+	}{
+		{"10.0.0.5", "10.0.0.1"},
+		{"192.168.1.100", "192.168.1.1"},
+		{"172.16.0.50", "172.16.0.1"},
+		{"", ""},
+	}
+	for _, tc := range cases {
+		require.Equal(t, tc.want, gatewayIP(tc.ip), "gatewayIP(%q)", tc.ip)
+	}
+}
+
 // --- helpers ---
 
 func makeVolumeStore(t *testing.T) (*volume.Store, error) {

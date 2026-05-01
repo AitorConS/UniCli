@@ -313,6 +313,40 @@ func TestBuildCmd_cpus(t *testing.T) {
 	require.Equal(t, "4", args[idx+1])
 }
 
+func TestBuildCmd_network_cfg(t *testing.T) {
+	mgr := NewQEMUManager("fake-qemu")
+	args := captureArgs(mgr, Config{
+		ImagePath:   "disk.img",
+		Memory:      "256M",
+		NetworkName: "uni-tap0",
+		IPAddress:   "10.0.0.2",
+		GatewayIP:   "10.0.0.1",
+	})
+	idx := indexOf(args, "-fw_cfg")
+	require.GreaterOrEqual(t, idx, 0, "-fw_cfg flag must be present")
+	count := 0
+	for i, v := range args {
+		if v == "-fw_cfg" && i+1 < len(args) && strings.HasPrefix(args[i+1], "name=opt/uni/network") {
+			count++
+			require.Contains(t, args[i+1], "10.0.0.2/24,10.0.0.1")
+		}
+	}
+	require.Equal(t, 1, count)
+}
+
+func TestBuildCmd_no_network_cfg_without_ip(t *testing.T) {
+	mgr := NewQEMUManager("fake-qemu")
+	args := captureArgs(mgr, Config{
+		ImagePath: "disk.img",
+		Memory:    "256M",
+	})
+	for i, v := range args {
+		if v == "-fw_cfg" && i+1 < len(args) {
+			require.NotContains(t, args[i+1], "opt/uni/network")
+		}
+	}
+}
+
 func indexOf(slice []string, s string) int {
 	for i, v := range slice {
 		if v == s {

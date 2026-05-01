@@ -73,6 +73,9 @@ type Config struct {
 	// IPAddress is the static IP address to assign to the VM. Requires TAP
 	// networking (NetworkName). If empty, no static IP is configured.
 	IPAddress string
+	// GatewayIP is the gateway IP for the VM's network. Derived from IPAddress
+	// when using TAP networking. Used to assign an IP to the bridge interface.
+	GatewayIP string
 }
 
 // process abstracts an OS process for testability.

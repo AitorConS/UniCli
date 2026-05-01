@@ -100,6 +100,16 @@ func (m *QEMUManager) Start(_ context.Context, id string) error {
 			slog.Warn("qemu start: failed to set up TAP port forwarding", "vm_id", id, "err", err)
 		}
 	}
+	if v.Cfg.NetworkName != "" && v.Cfg.GatewayIP != "" {
+		bridgeName := "uni-br0"
+	 cidr := v.Cfg.GatewayIP + "/24"
+		if err := network.CreateBridge(network.BridgeConfig{Name: bridgeName, CIDR: cidr}); err != nil {
+			slog.Warn("qemu start: failed to create bridge", "bridge", bridgeName, "err", err)
+		}
+		if err := network.AttachTAP(v.Cfg.NetworkName, bridgeName); err != nil {
+			slog.Warn("qemu start: failed to attach TAP to bridge", "tap", v.Cfg.NetworkName, "bridge", bridgeName, "err", err)
+		}
+	}
 	go m.monitor(v, cmd)
 	return nil
 }
@@ -220,6 +230,7 @@ func (m *QEMUManager) buildCmd(cfg Config) *exec.Cmd {
 
 	args = append(args, buildNetArgs(cfg)...)
 	args = append(args, buildEnvArgs(cfg.Env)...)
+	args = append(args, buildNetworkCfgArgs(cfg)...)
 	args = append(args, buildVolumeArgs(cfg.Volumes)...)
 
 	return m.mkCmd(m.qemuBin, args...)
@@ -277,6 +288,18 @@ func buildEnvArgs(env []string) []string {
 	return []string{"-fw_cfg", "name=opt/uni/env,string=" + encoded}
 }
 
+// buildNetworkCfgArgs encodes static network configuration as a QEMU fw_cfg entry.
+// The guest kernel reads it from the "opt/uni/network" key.
+// Format: "IP/CIDR,GATEWAY" (e.g. "10.0.0.2/24,10.0.0.1").
+// Only populated when IPAddress is set (TAP networking with static IP).
+func buildNetworkCfgArgs(cfg Config) []string {
+	if cfg.IPAddress == "" || cfg.GatewayIP == "" {
+		return nil
+	}
+	netCfg := cfg.IPAddress + "/24," + cfg.GatewayIP
+	return []string{"-fw_cfg", "name=opt/uni/network,string=" + netCfg}
+}
+
 func (m *QEMUManager) monitor(v *VM, cmd *exec.Cmd) {
 	_ = cmd.Wait()
 	now := time.Now()
@@ -289,6 +312,15 @@ func (m *QEMUManager) monitor(v *VM, cmd *exec.Cmd) {
 	if v.Cfg.NetworkName != "" && len(v.Cfg.PortMaps) > 0 {
 		if err := network.TeardownTAPPortForwarding(v.Cfg.NetworkName, v.Cfg.IPAddress, toNetworkPortForwards(v.Cfg.PortMaps)); err != nil {
 			slog.Warn("qemu monitor: failed to tear down TAP port forwarding", "vm_id", v.ID, "err", err)
+		}
+	}
+	if v.Cfg.NetworkName != "" && v.Cfg.GatewayIP != "" {
+		bridgeName := "uni-br0"
+		if err := network.DetachTAP(v.Cfg.NetworkName); err != nil {
+			slog.Warn("qemu monitor: failed to detach TAP from bridge", "tap", v.Cfg.NetworkName, "err", err)
+		}
+		if err := network.DestroyBridge(bridgeName); err != nil {
+			slog.Warn("qemu monitor: failed to destroy bridge", "bridge", bridgeName, "err", err)
 		}
 	}
 	if err := v.transition(StateStopped); err != nil {

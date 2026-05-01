@@ -52,6 +52,8 @@ type RunParams struct {
 	Attach      bool              `json:"attach,omitempty"`
 	// IPAddress is the static IP to assign when using TAP networking.
 	IPAddress string `json:"ip_address,omitempty"`
+	// GatewayIP is the bridge gateway address for TAP networking (auto-derived from IPAddress).
+	GatewayIP string `json:"gateway_ip,omitempty"`
 }
 
 // StopParams are the parameters for VM.Stop.
@@ -90,6 +92,7 @@ type VMDetail struct {
 	Env       []string          `json:"env,omitempty"`
 	Volumes   []VolumeMountSpec `json:"volumes,omitempty"`
 	IPAddress string            `json:"ip_address,omitempty"`
+	GatewayIP string            `json:"gateway_ip,omitempty"`
 	CreatedAt string            `json:"created_at"`
 	StartedAt *string           `json:"started_at,omitempty"`
 	StoppedAt *string           `json:"stopped_at,omitempty"`

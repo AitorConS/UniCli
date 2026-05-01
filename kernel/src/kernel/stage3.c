@@ -73,6 +73,11 @@ closure_function(5, 0, void, startup,
      * Must run before exec_elf so the new entries are visible to envp. */
     env_inject_from_fw_cfg(root);
 
+    /* Inject static network config from QEMU fw_cfg opt/uni/network
+     * (set by uni run --ip). Must run before init_network_iface so the
+     * static IP is configured instead of DHCP. */
+    net_inject_from_fw_cfg(root);
+
     value p = get(root, sym(program));
     assert(p && is_string(p));
     init_network_iface(root, bound(m));

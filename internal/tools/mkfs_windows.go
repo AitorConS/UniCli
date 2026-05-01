@@ -21,17 +21,20 @@ func wslFunc(mkfsPath, bootImg, kernelImg string) (image.MkfsFunc, error) {
 	wslMkfs := windowsToWSLPath(mkfsPath)
 	wslBoot := windowsToWSLPath(bootImg)
 	wslKernel := windowsToWSLPath(kernelImg)
-	return func(ctx context.Context, imgPath, binaryPath string) *exec.Cmd {
+	return func(ctx context.Context, imgPath, binaryPath string, manifest string) *exec.Cmd {
 		absBin, _ := filepath.Abs(binaryPath)
 		wslBin := windowsToWSLPath(absBin)
 		wslImg := windowsToWSLPath(imgPath)
+		if manifest == "" {
+			manifest = buildNanosManifest(wslBin)
+		}
 		cmd := exec.CommandContext(ctx, "wsl", "--",
 			wslMkfs,
 			"-b", wslBoot,
 			"-k", wslKernel,
 			wslImg,
 		)
-		cmd.Stdin = strings.NewReader(buildNanosManifest(wslBin))
+		cmd.Stdin = strings.NewReader(manifest)
 		return cmd
 	}, nil
 }

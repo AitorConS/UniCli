@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/AitorConS/unikernel-engine/internal/volume"
 	"gopkg.in/yaml.v3"
 )
 
@@ -54,6 +55,19 @@ func validate(f File) error {
 		for _, vol := range svc.Volumes {
 			if err := validateVolumeSpec(vol); err != nil {
 				return fmt.Errorf("compose: service %q volumes: %w", name, err)
+			}
+			volName := strings.SplitN(vol, ":", 2)[0]
+			if len(f.Volumes) > 0 {
+				if _, ok := f.Volumes[volName]; !ok {
+					return fmt.Errorf("compose: service %q references unknown volume %q", name, volName)
+				}
+			}
+		}
+	}
+	for name, vc := range f.Volumes {
+		if vc.Size != "" {
+			if _, err := volume.ParseSize(vc.Size); err != nil {
+				return fmt.Errorf("compose: volume %q: invalid size %q: %w", name, vc.Size, err)
 			}
 		}
 	}

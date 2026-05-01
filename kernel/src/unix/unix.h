@@ -14,6 +14,10 @@ void unix_shutdown(void);
  * root[environment] before exec_elf reads it. No-op if device/file absent. */
 void env_inject_from_fw_cfg(tuple root);
 
+/* net_inject_from_fw_cfg merges QEMU fw_cfg "opt/uni/network" static IP
+ * configuration into the root tuple before init_network_iface. No-op if absent. */
+void net_inject_from_fw_cfg(tuple root);
+
 void program_set_perms(tuple root, tuple prog);
 
 void dump_mem_stats(buffer b);

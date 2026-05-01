@@ -30,8 +30,9 @@ func SetupTAPPortForwarding(tapName, guestIP string, ports []PortForward) error 
 		host := fmt.Sprintf("%d", pm.HostPort)
 		guest := fmt.Sprintf("%s:%d", guestIP, pm.GuestPort)
 
-		// DNAT: rewrite destination address for incoming packets.
+		// DNAT: rewrite destination address for incoming packets on the TAP interface.
 		cmd := exec.Command("iptables", "-t", "nat", "-A", "PREROUTING",
+			"-i", tapName,
 			"-p", proto, "--dport", host,
 			"-j", "DNAT", "--to-destination", guest)
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -40,7 +41,7 @@ func SetupTAPPortForwarding(tapName, guestIP string, ports []PortForward) error 
 
 		// MASQUERADE: rewrite source address for packets leaving the host.
 		cmd = exec.Command("iptables", "-t", "nat", "-A", "POSTROUTING",
-			"-p", proto, "-d", guestIP, "--dport", fmt.Sprintf("%d", pm.GuestPort),
+			"-s", guestIP,
 			"-j", "MASQUERADE")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("iptables MASQUERADE %s/%s: %w (output: %s)", host, proto, err, strings.TrimSpace(string(out)))
@@ -68,6 +69,7 @@ func TeardownTAPPortForwarding(tapName, guestIP string, ports []PortForward) err
 		guest := fmt.Sprintf("%s:%d", guestIP, pm.GuestPort)
 
 		cmd := exec.Command("iptables", "-t", "nat", "-D", "PREROUTING",
+			"-i", tapName,
 			"-p", proto, "--dport", host,
 			"-j", "DNAT", "--to-destination", guest)
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -75,7 +77,7 @@ func TeardownTAPPortForwarding(tapName, guestIP string, ports []PortForward) err
 		}
 
 		cmd = exec.Command("iptables", "-t", "nat", "-D", "POSTROUTING",
-			"-p", proto, "-d", guestIP, "--dport", fmt.Sprintf("%d", pm.GuestPort),
+			"-s", guestIP,
 			"-j", "MASQUERADE")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			errs = append(errs, fmt.Sprintf("iptables MASQUERADE delete %s: %v (%s)", host, err, strings.TrimSpace(string(out))))

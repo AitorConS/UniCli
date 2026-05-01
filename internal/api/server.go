@@ -145,6 +145,7 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *R
 		Volumes:     volumeMountsFromSpec(p.Volumes),
 		Attach:      p.Attach,
 		IPAddress:   p.IPAddress,
+		GatewayIP:   p.GatewayIP,
 	}
 	v, err := s.mgr.Create(ctx, cfg)
 	if err != nil {
@@ -297,6 +298,7 @@ func toDetail(v *vm.VM) VMDetail {
 		Env:       v.Cfg.Env,
 		Volumes:   volumeMountsToSpec(v.Cfg.Volumes),
 		IPAddress: v.Cfg.IPAddress,
+		GatewayIP: v.Cfg.GatewayIP,
 		CreatedAt: v.CreatedAt.Format(time.RFC3339),
 	}
 	startedAt, stoppedAt := v.GetTimes()

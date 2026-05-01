@@ -5,12 +5,15 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
 // MkfsFunc creates an exec.Cmd that runs mkfs to package binaryPath into imgPath.
+// manifest is the Nanos manifest string to pass on stdin.
 // Defined here so callers can satisfy it without importing internal/tools.
-type MkfsFunc func(ctx context.Context, imgPath, binaryPath string) *exec.Cmd
+type MkfsFunc func(ctx context.Context, imgPath, binaryPath string, manifest string) *exec.Cmd
 
 // BuildConfig holds the parameters for building a unikernel image.
 type BuildConfig struct {
@@ -27,6 +30,9 @@ type BuildConfig struct {
 	Memory string
 	// CPUs is the default number of virtual CPUs.
 	CPUs int
+	// PkgFiles is a list of additional file paths to include in the image.
+	// These are typically extracted package files from the package store.
+	PkgFiles []string
 }
 
 // Builder produces unikernel images from ELF binaries and stores them.
@@ -67,7 +73,8 @@ func (b *Builder) Build(ctx context.Context, cfg BuildConfig) (Manifest, error) 
 	}
 	defer func() { _ = os.Remove(tmpPath) }()
 
-	if err := runMkfs(ctx, cfg.MkfsRun, tmpPath, cfg.BinaryPath); err != nil {
+	manifest := buildManifest(cfg.BinaryPath, cfg.PkgFiles)
+	if err := runMkfs(ctx, cfg.MkfsRun, tmpPath, cfg.BinaryPath, manifest); err != nil {
 		return Manifest{}, fmt.Errorf("build: %w", err)
 	}
 
@@ -132,12 +139,33 @@ func checkELF(path string) error {
 	return nil
 }
 
-func runMkfs(ctx context.Context, mkfsRun MkfsFunc, imgPath, binaryPath string) error {
-	cmd := mkfsRun(ctx, imgPath, binaryPath)
+func runMkfs(ctx context.Context, mkfsRun MkfsFunc, imgPath, binaryPath string, manifest string) error {
+	cmd := mkfsRun(ctx, imgPath, binaryPath, manifest)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("mkfs: %w", err)
 	}
 	return nil
+}
+
+// buildManifest constructs a Nanos manifest that includes the main program and
+// any additional package files.
+func buildManifest(binaryPath string, pkgFiles []string) string {
+	absBin, _ := filepath.Abs(binaryPath)
+	var b strings.Builder
+	b.WriteString("(\n    children:(\n        program:(contents:(host:")
+	b.WriteString(absBin)
+	b.WriteString("))\n")
+	for _, f := range pkgFiles {
+		abs, _ := filepath.Abs(f)
+		name := filepath.Base(f)
+		b.WriteString("        ")
+		b.WriteString(name)
+		b.WriteString(":(contents:(host:")
+		b.WriteString(abs)
+		b.WriteString("))\n")
+	}
+	b.WriteString("    )\n    program:/program\n    environment:()\n)")
+	return b.String()
 }

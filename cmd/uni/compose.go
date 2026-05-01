@@ -11,6 +11,7 @@ import (
 
 	"github.com/AitorConS/unikernel-engine/internal/api"
 	"github.com/AitorConS/unikernel-engine/internal/compose"
+	"github.com/AitorConS/unikernel-engine/internal/volume"
 	"github.com/spf13/cobra"
 )
 
@@ -23,7 +24,7 @@ func newComposeCmd(socketPath, storePath, outputFmt *string) *cobra.Command {
 	}
 	cmd.AddCommand(
 		newComposeUpCmd(socketPath, storePath),
-		newComposeDownCmd(socketPath),
+		newComposeDownCmd(socketPath, storePath),
 		newComposePsCmd(socketPath, outputFmt),
 		newComposeLogsCmd(socketPath),
 	)
@@ -50,6 +51,29 @@ func newComposeUpCmd(socketPath, storePath *string) *cobra.Command {
 				return fmt.Errorf("compose up: %w", err)
 			}
 
+			volPath := volumeStorePath(*storePath)
+			volStore, err := volume.NewStore(volPath)
+			if err != nil {
+				return fmt.Errorf("compose up: open volume store: %w", err)
+			}
+
+			var createdVolumes []string
+			for volName, volCfg := range f.Volumes {
+				if _, getErr := volStore.Get(volName); getErr == nil {
+					fmt.Fprintf(cmd.OutOrStdout(), "volume %s already exists, skipping\n", volName)
+					continue
+				}
+				sizeBytes, parseErr := volume.ParseSize(volCfg.DefaultSize())
+				if parseErr != nil {
+					return fmt.Errorf("compose up: volume %q: %w", volName, parseErr)
+				}
+				if _, createErr := volStore.Create(volName, sizeBytes); createErr != nil {
+					return fmt.Errorf("compose up: create volume %q: %w", volName, createErr)
+				}
+				createdVolumes = append(createdVolumes, volName)
+				fmt.Fprintf(cmd.OutOrStdout(), "created volume %s\n", volName)
+			}
+
 			client, err := api.Dial(*socketPath)
 			if err != nil {
 				return fmt.Errorf("compose up: connect to daemon: %w", err)
@@ -61,8 +85,9 @@ func newComposeUpCmd(socketPath, storePath *string) *cobra.Command {
 			}()
 
 			state := compose.State{
-				Project:  filepath.Base(filepath.Dir(composeFile)),
-				Services: make(map[string]string, len(f.Services)),
+				Project:        filepath.Base(filepath.Dir(composeFile)),
+				Services:       make(map[string]string, len(f.Services)),
+				CreatedVolumes: createdVolumes,
 			}
 
 			for _, name := range order {
@@ -93,8 +118,9 @@ func newComposeUpCmd(socketPath, storePath *string) *cobra.Command {
 	}
 }
 
-func newComposeDownCmd(socketPath *string) *cobra.Command {
+func newComposeDownCmd(socketPath, storePath *string) *cobra.Command {
 	var force bool
+	var removeVolumes bool
 	cmd := &cobra.Command{
 		Use:   "down <compose-file>",
 		Short: "Stop all services from a compose file",
@@ -115,7 +141,6 @@ func newComposeDownCmd(socketPath *string) *cobra.Command {
 				}
 			}()
 
-			// Stop in reverse order (longest dependent first).
 			names := stateServiceNames(state)
 			for i := len(names) - 1; i >= 0; i-- {
 				name := names[i]
@@ -126,10 +151,27 @@ func newComposeDownCmd(socketPath *string) *cobra.Command {
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "stopped %s\n", name)
 			}
+
+			if removeVolumes && len(state.CreatedVolumes) > 0 {
+				volPath := volumeStorePath(*storePath)
+				volStore, volErr := volume.NewStore(volPath)
+				if volErr != nil {
+					return fmt.Errorf("compose down: open volume store: %w", volErr)
+				}
+				for _, volName := range state.CreatedVolumes {
+					if rmErr := volStore.Remove(volName); rmErr != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "warning: remove volume %s: %v\n", volName, rmErr)
+						continue
+					}
+					fmt.Fprintf(cmd.OutOrStdout(), "removed volume %s\n", volName)
+				}
+			}
+
 			return removeState(args[0])
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "send SIGKILL immediately")
+	cmd.Flags().BoolVar(&removeVolumes, "volumes", false, "remove volumes created by compose up")
 	return cmd
 }
 
@@ -272,7 +314,31 @@ func composeUpWithCtx(ctx context.Context, client *api.Client, f compose.File, s
 	if err != nil {
 		return compose.State{}, err
 	}
-	state := compose.State{Services: make(map[string]string, len(f.Services))}
+
+	volPath := volumeStorePath(storePath)
+	volStore, err := volume.NewStore(volPath)
+	if err != nil {
+		return compose.State{}, fmt.Errorf("open volume store: %w", err)
+	}
+
+	var createdVolumes []string
+	for volName, volCfg := range f.Volumes {
+		if _, getErr := volStore.Get(volName); getErr != nil {
+			sizeBytes, parseErr := volume.ParseSize(volCfg.DefaultSize())
+			if parseErr != nil {
+				return compose.State{}, fmt.Errorf("volume %q: %w", volName, parseErr)
+			}
+			if _, createErr := volStore.Create(volName, sizeBytes); createErr != nil {
+				return compose.State{}, fmt.Errorf("create volume %q: %w", volName, createErr)
+			}
+			createdVolumes = append(createdVolumes, volName)
+		}
+	}
+
+	state := compose.State{
+		Services:       make(map[string]string, len(f.Services)),
+		CreatedVolumes: createdVolumes,
+	}
 	for _, name := range order {
 		svc := f.Services[name]
 		mem := svc.Memory

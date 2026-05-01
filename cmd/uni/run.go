@@ -93,6 +93,7 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 				Volumes:     volSpecs,
 				Attach:      !detach,
 				IPAddress:   ipAddr,
+				GatewayIP:   gatewayIP(ipAddr),
 			}
 			for _, pm := range portMaps {
 				params.PortMaps = append(params.PortMaps, api.PortMapSpec{
@@ -275,4 +276,23 @@ func volumeStorePath(storePath string) string {
 		return "volumes"
 	}
 	return storePath[:idx+1] + "volumes"
+}
+
+// gatewayIP derives a gateway address from a guest IP.
+// For a /24 subnet, the gateway is the first host address (x.y.z.1).
+// If ipAddr is empty, returns empty.
+func gatewayIP(ipAddr string) string {
+	if ipAddr == "" {
+		return ""
+	}
+	ip := net.ParseIP(ipAddr)
+	if ip == nil {
+		return ""
+	}
+	ip = ip.To4()
+	if ip == nil {
+		return ""
+	}
+	ip[3] = 1
+	return ip.String()
 }

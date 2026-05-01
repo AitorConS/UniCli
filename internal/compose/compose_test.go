@@ -141,7 +141,7 @@ func TestTopologicalSort_SelfDep(t *testing.T) {
 	require.ErrorContains(t, err, "cycle")
 }
 
-// --- port + volume validation tests ---
+// --- port validation tests ---
 
 func TestParse_ValidPorts(t *testing.T) {
 	data := []byte(`
@@ -183,7 +183,9 @@ services:
 	require.ErrorContains(t, err, "host:guest")
 }
 
-func TestParse_ValidVolumes(t *testing.T) {
+// --- volume validation tests ---
+
+func TestParse_ValidVolumesWithTopLevel(t *testing.T) {
 	data := []byte(`
 version: "1"
 services:
@@ -192,32 +194,124 @@ services:
     volumes:
       - "data:/data"
       - "backup:/backup:ro"
+volumes:
+  data:
+    size: 512M
+  backup:
 `)
 	f, err := compose.Parse(data)
 	require.NoError(t, err)
 	require.Equal(t, []string{"data:/data", "backup:/backup:ro"}, f.Services["db"].Volumes)
+	require.Equal(t, "512M", f.Volumes["data"].Size)
+	require.Equal(t, "", f.Volumes["backup"].Size)
+}
+
+func TestParse_VolumeDefaultSize(t *testing.T) {
+	vc := compose.VolumeConfig{}
+	require.Equal(t, "1G", vc.DefaultSize())
+	vc = compose.VolumeConfig{Size: "512M"}
+	require.Equal(t, "512M", vc.DefaultSize())
+}
+
+func TestParse_VolumesWithoutTopLevelAllowed(t *testing.T) {
+	data := []byte(`
+version: "1"
+services:
+  db:
+    image: redis:latest
+    volumes:
+      - "data:/data"
+`)
+	f, err := compose.Parse(data)
+	require.NoError(t, err)
+	require.Len(t, f.Volumes, 0)
+}
+
+func TestParse_UnknownVolume(t *testing.T) {
+	data := []byte(`
+version: "1"
+services:
+  db:
+    image: redis:latest
+    volumes:
+      - "nonexistent:/data"
+volumes:
+  data:
+    size: 512M
+`)
+	_, err := compose.Parse(data)
+	require.ErrorContains(t, err, "unknown volume")
+}
+
+func TestParse_InvalidVolumeSize(t *testing.T) {
+	data := []byte(`
+version: "1"
+services:
+  db:
+    image: redis:latest
+    volumes:
+      - "data:/data"
+volumes:
+  data:
+    size: badsize
+`)
+	_, err := compose.Parse(data)
+	require.ErrorContains(t, err, "invalid size")
 }
 
 func TestParse_InvalidVolumeSpec(t *testing.T) {
-	_, err := compose.Parse([]byte(`
+	data := []byte(`
 version: "1"
 services:
-  a:
-    image: x
+  db:
+    image: redis:latest
     volumes:
-      - "nocodon"
-`))
+      - "nocolon"
+volumes:
+  nocolon:
+`)
+	_, err := compose.Parse(data)
 	require.ErrorContains(t, err, "name:guestpath")
 }
 
 func TestParse_InvalidVolumeThirdField(t *testing.T) {
-	_, err := compose.Parse([]byte(`
+	data := []byte(`
 version: "1"
 services:
-  a:
-    image: x
+  db:
+    image: redis:latest
     volumes:
       - "data:/data:rw"
-`))
+volumes:
+  data:
+`)
+	_, err := compose.Parse(data)
 	require.ErrorContains(t, err, "ro")
+}
+
+func TestParse_EmptyVolumeName(t *testing.T) {
+	data := []byte(`
+version: "1"
+services:
+  db:
+    image: redis:latest
+    volumes:
+      - ":/data"
+volumes:
+  "":
+`)
+	_, err := compose.Parse(data)
+	require.Error(t, err)
+}
+
+func TestParse_NoVolumesTopLevelIsOK(t *testing.T) {
+	data := []byte(`
+version: "1"
+services:
+  web:
+    image: nginx:latest
+`)
+	f, err := compose.Parse(data)
+	require.NoError(t, err)
+	require.Len(t, f.Volumes, 0)
 }

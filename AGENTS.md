@@ -94,7 +94,7 @@ Self-hosted runner needed for `integration-tests` (`runs-on: [self-hosted, linux
 
 ## Phase Status
 
-Currently in **Phase 5** (Complete Runtime) — core runtime features done, polish pending.
+Currently in **Phase 6** (Package System) — core runtime complete, package system scaffolded.
 
 | Phase | Status | Key deliverables |
 |---|---|---|
@@ -102,9 +102,9 @@ Currently in **Phase 5** (Complete Runtime) — core runtime features done, poli
 | 1 — VM Manager | ✅ done | State machine, QEMU wrapper, Unix socket API, `uni run` |
 | 2 — Image System | ✅ done | Manifest, content-addressable store, registry, `uni build/images/rmi/push/pull` |
 | 3 — Full CLI | ✅ done | `uni ps/logs/stop/rm/inspect/exec`, `--output json`, 81% cmd/uni coverage |
-| 4 — Compose | ✅ mostly done | YAML parser, topological sort, `uni compose up/down/ps/logs`, rolling GitHub Release. Pending: shared volumes (4.5) |
-| 5 — Complete Runtime | 🟡 mostly done | Port mapping (`-p`), env vars (`-e` via fw_cfg), volumes (`-v`), named instances, `uni volume`. **Pending:** `--attach`, `--ip`, `uni cp`, volume integration test, TAP/bridge DNAT |
-| 6 — Package System | ⬜ next | `uni pkg list/search/get/load`, Node.js/Python/Redis/Nginx packages, package index |
+| 4 — Compose | ✅ done | YAML parser, topological sort, shared volumes, `uni compose up/down/ps/logs` |
+| 5 — Complete Runtime | ✅ done | Port mapping, env vars, volumes, named instances, `--attach`, `--ip` (host+guest fw_cfg), `uni cp` (to+from VM), `uni volume`, TAP/bridge networking |
+| 6 — Package System | ✅ scaffolded | `uni pkg list/search/get/remove`, `--pkg` flag on `uni build`, package index/store, `internal/package/` |
 | 7 — Orchestrator | ⬜ | Self-healing, scaling, health checks, `uni scale/status`, internal DNS |
 | 8 — Registry & Distribution | ⬜ | OCI-compatible registry, image signing, JWT auth (basic server/client exists) |
 | 9 — Build System | ⬜ | Multi-language `uni build` (Go/Node/Python/Rust), `unikernel.toml`, multi-arch |
@@ -117,6 +117,7 @@ Phases must be fully tested and stable before advancing. A phase is not done if 
 - `Stop()` (graceful) sends SIGTERM → 30s → SIGKILL. On Windows SIGTERM is unsupported; falls back to SIGKILL immediately.
 - `isFilePath()` handles Windows drive-letter paths (`C:\...`) in addition to Unix prefixes.
 - TAP networking (`internal/network/tap.go`) is `//go:build linux` only.
+- Bridge creation (`internal/network/bridge_linux.go`) is `//go:build linux` only.
 - `parseSig()` uses integer literals for SIGUSR1/SIGUSR2 (`syscall.Signal(10/12)`) for cross-platform compatibility.
 - `volume.ParseSize` uses `strconv.ParseInt` (not `fmt.Sscanf`) — Sscanf accepts trailing junk like `"1X"` silently.
 - `gofmt` rejects trailing-spaces alignment in struct literals. When CI flags gofmt, run `gofmt -w` directly rather than guessing the alignment.
@@ -127,12 +128,14 @@ Build pipeline in `internal/vm/qemu.go::buildCmd`:
 - Network priority: `NetworkName` (TAP) > `PortMaps` non-empty (SLIRP `hostfwd`) > `-net none`.
 - SLIRP user-mode (`-netdev user,...,hostfwd=tcp::8080-:80`) does not need TAP/bridge or root, works on any platform — preferred for `-p`.
 - Env vars are passed via `-fw_cfg name=opt/uni/env,string=KEY=VAL\n…`. The kernel reads this at boot.
+- Network config (static IP) is passed via `-fw_cfg name=opt/uni/network,string=IP/CIDR,GATEWAY`. Format: `10.0.0.2/24,10.0.0.1`.
 - Volumes attach as extra `-drive file=...,format=raw,if=virtio,index=N` after the boot disk (index 0).
 
 ## Kernel Patches (uni-specific additions to Nanos fork)
 
 - **`kernel/src/drivers/fw_cfg.{c,h}`** — QEMU fw_cfg driver, x86-only (uses I/O ports `0x510`/`0x511`). Reads named files (e.g. `opt/uni/env`) by walking the directory at entry `0x0019`. Confirms `"QEMU"` signature before use; safe no-op on bare metal.
 - **`kernel/src/unix/env_inject.c`** — `env_inject_from_fw_cfg(root)` reads `opt/uni/env` and merges entries into `root[environment]` tuple. Called from `stage3.c::startup()` before `exec_elf` builds the user stack envp. Compiles on aarch64 too (`#ifdef __x86_64__` guards the body to a stub).
+- **`kernel/src/unix/net_inject.c`** — `net_inject_from_fw_cfg(root)` reads `opt/uni/network` and injects static IP configuration (`ipaddr`, `netmask`, `gateway`) into root tuple. `init_network_iface()` picks this up to configure the first ethernet interface instead of DHCP. x86-only (fw_cfg dependency).
 - When changing kernel boot order or the manifest tuple structure, the fw_cfg call site is in `kernel/src/kernel/stage3.c::startup` right after `init_management_root` / `init_kernel_heaps_management`. Must run before `exec_elf` reads the environment tuple.
 
 ## Versioning
@@ -172,14 +175,22 @@ Both the CLI and the kernel are independently versioned with semver.
 |---|---|
 | `uni run` flag wiring | `cmd/uni/run.go` |
 | Daemon RPC dispatch | `internal/api/server.go::dispatch` |
-| QEMU command builder | `internal/vm/qemu.go::buildCmd` + `buildNetArgs`/`buildEnvArgs`/`buildVolumeArgs` |
+| QEMU command builder | `internal/vm/qemu.go::buildCmd` + `buildNetArgs`/`buildEnvArgs`/`buildNetworkCfgArgs`/`buildVolumeArgs` |
 | Port spec parser | `internal/vm/portmap.go::ParsePortMap` |
 | Compose YAML validators | `internal/compose/parser.go::validatePortSpec` / `validateVolumeSpec` |
 | Volume disk allocation | `internal/volume/volume.go::allocateDisk` (sparse via seek+write) |
 | Kernel envp construction | `kernel/src/unix/exec.c::build_exec_stack` (reads `process_root[environment]`) |
 | Boot-time env injection | `kernel/src/kernel/stage3.c::startup` calls `env_inject_from_fw_cfg(root)` |
+| Boot-time network injection | `kernel/src/kernel/stage3.c::startup` calls `net_inject_from_fw_cfg(root)` |
 | Kernel tools download/cache | `internal/tools/mkfs.go::ResolveMkfs` + `internal/tools/version.go` |
 | Kernel version check (build) | `cmd/uni/build.go::checkKernelUpdateForBuild` |
+| Network config fw_cfg | `internal/vm/qemu.go::buildNetworkCfgArgs` — `--ip` → `opt/uni/network` |
+| Host-side bridge/TAP | `internal/network/bridge_linux.go` — `CreateBridge`, `AttachTAP`, `DestroyBridge` |
+| iptables port forwarding | `internal/network/portfwd_linux.go` — DNAT + MASQUERADE with `-i tapName` |
+| Package index/store | `internal/package/package.go` — `Store`, `FetchIndex`, `Search` |
+| `uni pkg` commands | `cmd/uni/pkg.go` — list, search, get, remove |
+| `uni cp` (to VM) | `cmd/uni/cp.go::cpToVM` — dump → copy file → mkfs rebuild |
+| Compose shared volumes | `internal/compose/types.go::VolumeConfig` + `cmd/uni/compose.go::newComposeUpCmd` |
 | CLI self-update | `cmd/uni/upgrade.go::replaceBinary` |
 | CLI version (injected at build) | `cmd/uni/main.go::version` — set via `-X main.version` in `main.yml` |
 
@@ -188,13 +199,14 @@ Both the CLI and the kernel are independently versioned with semver.
 | Package | Description |
 |---|---|
 | `internal/api/` | JSON-RPC 2.0 server/client over Unix socket. VM lifecycle RPC methods. |
-| `internal/compose/` | Compose YAML parser, validator, Kahn's topological sort with cycle detection. |
-| `internal/image/` | Image build pipeline (ELF validation, mkfs, SHA256) + content-addressable store. |
-| `internal/network/` | TAP device + Linux bridge setup. Linux-only (`//go:build linux`). Stub for future TAP path. |
+| `internal/compose/` | Compose YAML parser, validator, Kahn's topological sort with cycle detection, shared volumes. |
+| `internal/image/` | Image build pipeline (ELF validation, mkfs, SHA256, package files) + content-addressable store. |
+| `internal/network/` | TAP device + Linux bridge setup, iptables port forwarding. Linux-only (`//go:build linux`). |
+| `internal/package/` | Package index fetch, local store, download, search. |
 | `internal/registry/` | HTTP image registry server (simple, non-OCI) + push/pull client. |
 | `internal/scheduler/` | **Empty stub.** Placeholder for Phase 7 orchestrator. |
 | `internal/tools/` | Kernel tools management: download, version check, platform-specific mkfs resolution. |
-| `internal/vm/` | Core package: VM lifecycle state machine, QEMU wrapper, port map parser, VM registry store. |
+| `internal/vm/` | Core package: VM lifecycle state machine, QEMU wrapper, port map parser, VM registry store, network cfg via fw_cfg. |
 | `internal/volume/` | Named volume management: sparse disk creation, attach/detach as virtio-blk devices. |
 
 ## Stub Packages (placeholders for future phases)
@@ -202,6 +214,5 @@ Both the CLI and the kernel are independently versioned with semver.
 | Path | Phase | Purpose |
 |---|---|---|
 | `internal/scheduler/` | 7 | Health checks, auto-restart, scaling, DNS |
-| `internal/network/` | 5/7 | TAP/bridge networking (tap.go exists, rest is stub) |
 | `pkg/` | 6+ | Public shared libraries |
 | `tests/unit/` | — | Empty; unit tests are co-located with source files |

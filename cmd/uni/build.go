@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/AitorConS/unikernel-engine/internal/image"
+	pkg "github.com/AitorConS/unikernel-engine/internal/package"
 	"github.com/AitorConS/unikernel-engine/internal/tools"
 	"github.com/spf13/cobra"
 )
@@ -29,6 +31,7 @@ func newBuildCmd(storePath *string) *cobra.Command {
 		cpus      int
 		mkfs      string
 		updateYes bool
+		pkgs      []string
 	)
 	cmd := &cobra.Command{
 		Use:   "build <binary>",
@@ -42,21 +45,28 @@ func newBuildCmd(storePath *string) *cobra.Command {
 
 			toolsDir := defaultToolsPath()
 
-			// Check for a newer kernel version when tools are already cached.
-			// Skip if the user provided a custom --mkfs path.
 			if mkfs == "" && os.Getenv("UNI_MKFS") == "" && tools.Exist(toolsDir) {
 				if err := checkKernelUpdateForBuild(cmd, toolsDir, updateYes); err != nil {
 					return err
 				}
 			}
 
-			// Resolve mkfs: use --mkfs override if given, otherwise auto-download.
 			if mkfs == "" {
 				mkfs = os.Getenv("UNI_MKFS")
 			}
 			mkfsRun, err := tools.ResolveMkfs(cmd.Context(), toolsDir, mkfs)
 			if err != nil {
 				return fmt.Errorf("build: %w", err)
+			}
+
+			// Resolve package dependencies if --pkg is specified.
+			var pkgFiles []string
+			if len(pkgs) > 0 {
+				resolved, err := resolvePackages(cmd.Context(), pkgs)
+				if err != nil {
+					return fmt.Errorf("build: %w", err)
+				}
+				pkgFiles = resolved
 			}
 
 			binaryPath := absPath(args[0])
@@ -70,6 +80,7 @@ func newBuildCmd(storePath *string) *cobra.Command {
 				MkfsRun:    mkfsRun,
 				Memory:     memory,
 				CPUs:       cpus,
+				PkgFiles:   pkgFiles,
 			})
 			if err != nil {
 				return fmt.Errorf("build: %w", err)
@@ -84,7 +95,82 @@ func newBuildCmd(storePath *string) *cobra.Command {
 	cmd.Flags().IntVar(&cpus, "cpus", 1, "default VM CPU count")
 	cmd.Flags().StringVar(&mkfs, "mkfs", "", "path to mkfs binary — skip auto-download (env: UNI_MKFS)")
 	cmd.Flags().BoolVarP(&updateYes, "update-kernel", "U", false, "auto-approve kernel update if one is available")
+	cmd.Flags().StringArrayVar(&pkgs, "pkg", nil, "include package in image (e.g. node:20, python:3.12) (repeatable)")
 	return cmd
+}
+
+// resolvePackages downloads and extracts packages, returning the list of
+// directory paths that should be included in the manifest.
+func resolvePackages(ctx context.Context, pkgRefs []string) ([]string, error) {
+	pkgStore, err := pkg.NewStore(pkgStorePath())
+	if err != nil {
+		return nil, fmt.Errorf("open package store: %w", err)
+	}
+
+	idx, err := pkg.FetchIndex()
+	if err != nil {
+		return nil, fmt.Errorf("fetch package index: %w", err)
+	}
+
+	var dirs []string
+	for _, ref := range pkgRefs {
+		pkgName, pkgVer := parsePkgRef(ref)
+		target := idx.Latest(pkgName)
+		if target == nil {
+			return nil, fmt.Errorf("package %q not found in index", pkgName)
+		}
+		if pkgVer != "" {
+			found := false
+			versions, ok := idx.Packages[pkgName]
+			if ok {
+				for i := range versions {
+					if versions[i].Version == pkgVer {
+						target = &versions[i]
+						found = true
+						break
+					}
+				}
+			}
+			if !found {
+				return nil, fmt.Errorf("version %q of package %q not found", pkgVer, pkgName)
+			}
+		}
+		if !pkgStore.IsDownloaded(target.Name, target.Version) {
+			if err := pkgStore.Download(*target); err != nil {
+				return nil, fmt.Errorf("download package %s: %w", target.Name, err)
+			}
+			if err := pkgStore.SaveMeta(*target); err != nil {
+				return nil, fmt.Errorf("save package meta: %w", err)
+			}
+		}
+		pkgDir := pkgStore.PackageDir(target.Name, target.Version)
+		dirs = append(dirs, pkgDir)
+	}
+	return dirs, nil
+}
+
+// pkgManifestEntries builds Nanos manifest children entries for package files.
+// Each directory listed in pkgDirs is scanned for files, which are added as
+// children entries in the manifest.
+func pkgManifestEntries(pkgDirs []string) string {
+	if len(pkgDirs) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, dir := range pkgDirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			abs, _ := filepath.Abs(filepath.Join(dir, e.Name()))
+			b.WriteString(fmt.Sprintf("        %s:(contents:(host:%s))\n", e.Name(), abs))
+		}
+	}
+	return b.String()
 }
 
 // checkKernelUpdateForBuild fetches the remote kernel version and, if it differs
