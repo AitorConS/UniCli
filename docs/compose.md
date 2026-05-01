@@ -41,6 +41,10 @@ services:
 networks:
   <network-name>:
     driver: bridge
+
+volumes:
+  <volume-name>:
+    size: <512M|1G|...>
 ```
 
 ---
@@ -54,6 +58,7 @@ networks:
 | `version` | Yes | Must be `"1"` |
 | `services` | Yes | Map of service definitions (at least one) |
 | `networks` | No | Map of network definitions |
+| `volumes` | No | Map of volume definitions (auto-created on `compose up`) |
 
 ---
 
@@ -77,6 +82,12 @@ networks:
 | Field | Required | Default | Description |
 |---|---|---|---|
 | `driver` | No | `bridge` | Network driver. Only `bridge` is supported |
+
+### Volume fields
+
+| Field | Required | Default | Description |
+|---|---|---|---|
+| `size` | No | `1G` | Volume size (QEMU format: `512M`, `1G`, `2G`) |
 
 ---
 
@@ -134,14 +145,16 @@ networks:
     driver: bridge
   frontend-net:
     driver: bridge
+
+volumes:
+  dbdata:
+    size: 1G
+  staticfiles:
+    size: 512M
 ```
 
 {: .note }
-Volumes referenced in `volumes:` must be created beforehand with `uni volume create <name>`.
-```bash
-uni volume create dbdata --size 1G
-uni volume create staticfiles --size 512M
-```
+Volumes referenced in `volumes:` are **auto-created** on `compose up` if they do not already exist. To remove them, use `compose down --volumes`. Volumes that already exist on disk are left as-is and reused.
 
 **Startup order** (resolved by dependency graph):
 
@@ -190,7 +203,11 @@ Content:
     "db":  "a3f8c2d1-7b4e-4a1f-8c2d-1a2b3c4d5e6f",
     "api": "b4e9d3e2-8c5f-5b2g-9d3e-2b3c4d5e6f7a",
     "web": "c5f0e4f3-9d6a-6c3h-ae4f-3c4d5e6f7a8b"
-  }
+  },
+  "created_volumes": [
+    "dbdata",
+    "staticfiles"
+  ]
 }
 ```
 

@@ -59,7 +59,7 @@ uni run <image> [flags]
 | `-v`, `--volume` | — | Mount a named volume: `name:guestpath[:ro]` (repeatable) |
 | `--attach` | `false` | Attach to VM serial console (blocks until VM stops) |
 | `-d`, `--detach` | `true` | Run VM in the background (overridden by `--attach`) |
-| `--ip` | — | Static IP address (requires `--network`) |
+| `--ip` | — | Static IP address, configured in the guest via fw_cfg (requires `--network`) |
 | `--network` | — | TAP interface name to attach (Linux only) |
 
 **Examples:**
@@ -259,23 +259,24 @@ uni rm a3f8c2d1
 
 ### `uni cp`
 
-Copy files to or from a stopped VM disk image. The `dump` tool is downloaded automatically on first use from the kernel release.
+Copy files to or from a stopped VM disk image. The `dump` and `mkfs` tools are downloaded automatically on first use from the kernel release.
 
 ```
 uni cp <src> <dst>
 ```
 
-`<src>` or `<dst>` must be a VM reference in the form `id:path`. The other operand is a local file path.
+One operand must be a VM reference in the form `id:path`, the other a local file path. Copying **to** a VM rebuilds the disk image with the new file included.
 
-{: .note }
-Currently only copying **from** a stopped VM is supported. Copying **to** a VM is not yet implemented.
-
-**Example:**
+**Examples:**
 
 ```bash
 # Copy a file from a stopped VM to the host
 uni cp myvm:/etc/config.json ./config.json
 # copied myvm:/etc/config.json → ./config.json
+
+# Copy a file from the host into a stopped VM
+uni cp ./local.conf myvm:/etc/config.json
+# copied ./local.conf → myvm:/etc/config.json
 
 # Copy from a VM identified by prefix
 uni cp a3f8:/var/log/app.log ./app.log
@@ -329,6 +330,7 @@ The binary must be a **static Linux ELF** (`GOOS=linux`, no dynamic library depe
 | `--cpus` | `1` | Default CPU count baked into the image |
 | `--mkfs` | *(auto-downloaded to `~/.uni/tools/mkfs`)* | Path to Nanos mkfs binary — overrides auto-download (env: `UNI_MKFS`) |
 | `-U`, `--update-kernel` | `false` | Auto-approve kernel update if one is available (skips the `[y/N]` prompt) |
+| `--pkg` | — | Include package files in the image (repeatable) |
 
 If the kernel tools are already cached and a newer kernel version is available, `uni build` will prompt before proceeding:
 
@@ -425,6 +427,77 @@ uni pull <ref> <registry-url>
 ```bash
 uni pull hello:latest http://registry.example.com:5000
 # sha256:abc123...  hello:latest
+```
+
+---
+
+## Package Commands
+
+Manage pre-packaged files that can be included in images at build time. Packages are cached locally in `~/.uni/packages/`.
+
+### `uni pkg list`
+
+List locally cached packages.
+
+```
+uni pkg list
+```
+
+```bash
+uni pkg list
+# NAME       VERSION   SIZE
+# redis      7.2       12.5MB
+# nginx      1.25      8.3MB
+```
+
+---
+
+### `uni pkg search`
+
+Search the remote package index.
+
+```
+uni pkg search <query>
+```
+
+```bash
+uni pkg search redis
+# NAME       VERSION   SIZE      DESCRIPTION
+# redis      7.2       12.5MB    In-memory data store
+# redis-cli  7.2       3.1MB     Redis command-line client
+```
+
+---
+
+### `uni pkg get`
+
+Download and install a package from the remote index.
+
+```
+uni pkg get <name>[:version]
+```
+
+```bash
+# Install the latest version
+uni pkg get redis
+
+# Install a specific version
+uni pkg get redis:7.2
+```
+
+---
+
+### `uni pkg remove`
+
+Remove a locally cached package.
+
+```
+uni pkg remove <name>[:version]
+```
+
+```bash
+uni pkg remove redis:7.2
+# redis:7.2
 ```
 
 ---
@@ -687,12 +760,13 @@ uni compose up stack.yaml
 Stop all services from a compose file, in reverse dependency order.
 
 ```
-uni compose down <compose-file> [--force]
+uni compose down <compose-file> [--force] [--volumes]
 ```
 
 | Flag | Default | Description |
 |---|---|---|
 | `--force` | `false` | SIGKILL immediately |
+| `--volumes` | `false` | Remove volumes defined in the compose `volumes:` section |
 
 ---
 
