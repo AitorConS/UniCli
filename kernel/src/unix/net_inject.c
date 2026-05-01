@@ -13,6 +13,7 @@
  * already understands.
  */
 #include <unix_internal.h>
+#include <stdio.h>
 
 #if defined(__x86_64__)
 #include <drivers/fw_cfg.h>
@@ -146,7 +147,6 @@ void net_inject_from_fw_cfg(tuple root)
     }
 
     /* Parse CIDR: data[slash_pos+1..comma_pos) */
-    bytes cidr_len = comma_pos - (slash_pos + 1);
     int cidr = 0;
     for (bytes i = slash_pos + 1; i < comma_pos; i++) {
         if (data[i] < '0' || data[i] > '9') {
