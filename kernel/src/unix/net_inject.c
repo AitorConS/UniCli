@@ -13,7 +13,6 @@
  * already understands.
  */
 #include <unix_internal.h>
-#include <stdio.h>
 
 #if defined(__x86_64__)
 #include <drivers/fw_cfg.h>
@@ -61,15 +60,10 @@ static buffer cidr_to_netmask(heap h, int cidr)
     u8 c = (mask >> 8) & 0xFF;
     u8 d = mask & 0xFF;
 
-    char tmp[16];
-    int n = snprintf(tmp, sizeof(tmp), "%d.%d.%d.%d", a, b, c, d);
-    if (n <= 0 || n >= (int)sizeof(tmp))
-        return INVALID_ADDRESS;
-
-    buffer buf = allocate_buffer(h, (bytes)n + 1);
+    buffer buf = allocate_buffer(h, 16);
     if (buf == INVALID_ADDRESS)
         return INVALID_ADDRESS;
-    buffer_write(buf, (const u8 *)tmp, (bytes)n);
+    bprintf(buf, "%d.%d.%d.%d", a, b, c, d);
     push_u8(buf, 0);
     return buf;
 }
