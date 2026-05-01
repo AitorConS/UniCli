@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/AitorConS/unikernel-engine/internal/image"
@@ -147,30 +146,6 @@ func resolvePackages(ctx context.Context, pkgRefs []string) ([]string, error) {
 		dirs = append(dirs, pkgDir)
 	}
 	return dirs, nil
-}
-
-// pkgManifestEntries builds Nanos manifest children entries for package files.
-// Each directory listed in pkgDirs is scanned for files, which are added as
-// children entries in the manifest.
-func pkgManifestEntries(pkgDirs []string) string {
-	if len(pkgDirs) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	for _, dir := range pkgDirs {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			continue
-		}
-		for _, e := range entries {
-			if e.IsDir() {
-				continue
-			}
-			abs, _ := filepath.Abs(filepath.Join(dir, e.Name()))
-			b.WriteString(fmt.Sprintf("        %s:(contents:(host:%s))\n", e.Name(), abs))
-		}
-	}
-	return b.String()
 }
 
 // checkKernelUpdateForBuild fetches the remote kernel version and, if it differs

@@ -35,8 +35,8 @@ func pkgStorePath() string {
 func newPkgListCmd() *cobra.Command {
 	var outputJSON bool
 	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List locally cached packages",
+		Use:     "list",
+		Short:   "List locally cached packages",
 		Aliases: []string{"ls"},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store, err := pkg.NewStore(pkgStorePath())
@@ -157,10 +157,10 @@ func newPkgGetCmd() *cobra.Command {
 
 func newPkgRemoveCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "remove <name>[:<version>]",
-		Short: "Remove a locally cached package",
+		Use:     "remove <name>[:<version>]",
+		Short:   "Remove a locally cached package",
 		Aliases: []string{"rm"},
-		Args:  cobra.ExactArgs(1),
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, version := parsePkgRef(args[0])
 			if version == "" {

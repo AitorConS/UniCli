@@ -102,7 +102,7 @@ func (m *QEMUManager) Start(_ context.Context, id string) error {
 	}
 	if v.Cfg.NetworkName != "" && v.Cfg.GatewayIP != "" {
 		bridgeName := "uni-br0"
-	 cidr := v.Cfg.GatewayIP + "/24"
+		cidr := v.Cfg.GatewayIP + "/24"
 		if err := network.CreateBridge(network.BridgeConfig{Name: bridgeName, CIDR: cidr}); err != nil {
 			slog.Warn("qemu start: failed to create bridge", "bridge", bridgeName, "err", err)
 		}
