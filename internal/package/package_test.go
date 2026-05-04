@@ -3,7 +3,11 @@ package pkg
 import (
 	"archive/tar"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -249,4 +253,80 @@ func TestStore_Extract_Idempotent(t *testing.T) {
 	testPkg := Package{Name: "node", Version: "20.11.0"}
 	require.NoError(t, store.Extract(testPkg))
 	require.NoError(t, store.Extract(testPkg))
+}
+
+func TestStore_Download_VerifiesSHA256(t *testing.T) {
+	content := []byte("hello from the package archive")
+	sha := sha256.Sum256(content)
+	shaHex := hex.EncodeToString(sha[:])
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(content)
+	}))
+	t.Cleanup(ts.Close)
+
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	require.NoError(t, err)
+
+	pkg := Package{
+		Name:    "testpkg",
+		Version: "1.0.0",
+		Size:    int64(len(content)),
+		SHA256:  shaHex,
+		URL:     ts.URL + "/testpkg-1.0.0.tar.gz",
+	}
+	require.NoError(t, store.Download(pkg))
+	require.True(t, store.IsDownloaded("testpkg", "1.0.0"))
+}
+
+func TestStore_Download_SHA256Mismatch(t *testing.T) {
+	content := []byte("actual content")
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(content)
+	}))
+	t.Cleanup(ts.Close)
+
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	require.NoError(t, err)
+
+	pkg := Package{
+		Name:    "badpkg",
+		Version: "1.0.0",
+		Size:    int64(len(content)),
+		SHA256:  "0000000000000000000000000000000000000000000000000000000000000000",
+		URL:     ts.URL + "/badpkg-1.0.0.tar.gz",
+	}
+	err = store.Download(pkg)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "sha256 mismatch")
+
+	archivePath := filepath.Join(dir, "badpkg", "1.0.0", "files.tar.gz")
+	_, statErr := os.Stat(archivePath)
+	require.True(t, os.IsNotExist(statErr), "archive should be removed on sha256 mismatch")
+}
+
+func TestStore_Download_SkipsSHA256WhenEmpty(t *testing.T) {
+	content := []byte("content without hash check")
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(content)
+	}))
+	t.Cleanup(ts.Close)
+
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	require.NoError(t, err)
+
+	pkg := Package{
+		Name:    "nohash",
+		Version: "1.0.0",
+		Size:    int64(len(content)),
+		SHA256:  "",
+		URL:     ts.URL + "/nohash-1.0.0.tar.gz",
+	}
+	require.NoError(t, store.Download(pkg))
+	require.True(t, store.IsDownloaded("nohash", "1.0.0"))
 }

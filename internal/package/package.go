@@ -9,10 +9,13 @@ package pkg
 import (
 	"archive/tar"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -79,7 +82,7 @@ func (s *Store) IsDownloaded(name, version string) bool {
 }
 
 // Download fetches the package archive from its URL and stores it locally.
-// Verifies the SHA-256 digest after download.
+// Verifies size and SHA-256 digest after download.
 func (s *Store) Download(pkg Package) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -91,10 +94,11 @@ func (s *Store) Download(pkg Package) error {
 
 	archivePath := filepath.Join(dir, "files.tar.gz")
 	if _, err := os.Stat(archivePath); err == nil {
+		slog.Info("package already downloaded", "name", pkg.Name, "version", pkg.Version)
 		return nil
 	}
 
-	fmt.Printf("Downloading package %s %s...\n", pkg.Name, pkg.Version)
+	slog.Info("downloading package", "name", pkg.Name, "version", pkg.Version)
 
 	req, err := http.NewRequest(http.MethodGet, pkg.URL, nil)
 	if err != nil {
@@ -115,12 +119,20 @@ func (s *Store) Download(pkg Package) error {
 	if err != nil {
 		return fmt.Errorf("package download create %s: %w", archivePath, err)
 	}
-	defer func() { _ = f.Close() }()
 
-	size, err := io.Copy(f, resp.Body)
+	hash := sha256.New()
+	mw := io.MultiWriter(f, hash)
+
+	size, err := io.Copy(mw, resp.Body)
 	if err != nil {
+		_ = f.Close()
 		_ = os.Remove(archivePath)
 		return fmt.Errorf("package download write: %w", err)
+	}
+
+	if err := f.Close(); err != nil {
+		_ = os.Remove(archivePath)
+		return fmt.Errorf("package download close: %w", err)
 	}
 
 	if pkg.Size > 0 && size != pkg.Size {
@@ -128,7 +140,15 @@ func (s *Store) Download(pkg Package) error {
 		return fmt.Errorf("package download: size mismatch (got %d, want %d)", size, pkg.Size)
 	}
 
-	fmt.Printf("Package %s %s downloaded (%.1f MB)\n", pkg.Name, pkg.Version, float64(size)/(1<<20))
+	if pkg.SHA256 != "" {
+		got := hex.EncodeToString(hash.Sum(nil))
+		if !strings.EqualFold(got, pkg.SHA256) {
+			_ = os.Remove(archivePath)
+			return fmt.Errorf("package download: sha256 mismatch (got %s, want %s)", got, pkg.SHA256)
+		}
+	}
+
+	slog.Info("package downloaded", "name", pkg.Name, "version", pkg.Version, "size_mb", fmt.Sprintf("%.1f", float64(size)/(1<<20)))
 	return nil
 }
 

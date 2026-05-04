@@ -73,7 +73,7 @@ func (b *Builder) Build(ctx context.Context, cfg BuildConfig) (Manifest, error) 
 	}
 	defer func() { _ = os.Remove(tmpPath) }()
 
-	manifest := buildManifest(cfg.BinaryPath, cfg.PkgFiles)
+	manifest := BuildManifest(cfg.BinaryPath, cfg.PkgFiles)
 	if err := runMkfs(ctx, cfg.MkfsRun, tmpPath, cfg.BinaryPath, manifest); err != nil {
 		return Manifest{}, fmt.Errorf("build: %w", err)
 	}
@@ -149,9 +149,9 @@ func runMkfs(ctx context.Context, mkfsRun MkfsFunc, imgPath, binaryPath string, 
 	return nil
 }
 
-// buildManifest constructs a Nanos manifest that includes the main program and
+// BuildManifest constructs a Nanos manifest that includes the main program and
 // any additional package files.
-func buildManifest(binaryPath string, pkgFiles []string) string {
+func BuildManifest(binaryPath string, pkgFiles []string) string {
 	absBin, _ := filepath.Abs(binaryPath)
 	var b strings.Builder
 	b.WriteString("(\n    children:(\n        program:(contents:(host:")
