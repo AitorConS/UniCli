@@ -163,13 +163,18 @@ func newPkgRemoveCmd() *cobra.Command {
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, version := parsePkgRef(args[0])
-			if version == "" {
-				version = "latest"
-			}
 
 			store, err := pkg.NewStore(pkgStorePath())
 			if err != nil {
 				return fmt.Errorf("pkg remove: %w", err)
+			}
+
+			if version == "" {
+				if err := store.RemoveAll(name); err != nil {
+					return fmt.Errorf("pkg remove: %w", err)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "Removed all versions of package %s.\n", name)
+				return nil
 			}
 			if err := store.Remove(name, version); err != nil {
 				return fmt.Errorf("pkg remove: %w", err)

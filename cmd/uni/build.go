@@ -99,7 +99,7 @@ func newBuildCmd(storePath *string) *cobra.Command {
 }
 
 // resolvePackages downloads and extracts packages, returning the list of
-// directory paths that should be included in the manifest.
+// file paths that should be included in the manifest.
 func resolvePackages(ctx context.Context, pkgRefs []string) ([]string, error) {
 	pkgStore, err := pkg.NewStore(pkgStorePath())
 	if err != nil {
@@ -111,7 +111,7 @@ func resolvePackages(ctx context.Context, pkgRefs []string) ([]string, error) {
 		return nil, fmt.Errorf("fetch package index: %w", err)
 	}
 
-	var dirs []string
+	var files []string
 	for _, ref := range pkgRefs {
 		pkgName, pkgVer := parsePkgRef(ref)
 		target := idx.Latest(pkgName)
@@ -142,10 +142,18 @@ func resolvePackages(ctx context.Context, pkgRefs []string) ([]string, error) {
 				return nil, fmt.Errorf("save package meta: %w", err)
 			}
 		}
-		pkgDir := pkgStore.PackageDir(target.Name, target.Version)
-		dirs = append(dirs, pkgDir)
+		if !pkgStore.IsExtracted(target.Name, target.Version) {
+			if err := pkgStore.Extract(*target); err != nil {
+				return nil, fmt.Errorf("extract package %s: %w", target.Name, err)
+			}
+		}
+		pkgFiles, err := pkgStore.ExtractedFiles(target.Name, target.Version)
+		if err != nil {
+			return nil, fmt.Errorf("list package files %s: %w", target.Name, err)
+		}
+		files = append(files, pkgFiles...)
 	}
-	return dirs, nil
+	return files, nil
 }
 
 // checkKernelUpdateForBuild fetches the remote kernel version and, if it differs

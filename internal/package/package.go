@@ -7,9 +7,12 @@
 package pkg
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -128,13 +131,112 @@ func (s *Store) Download(pkg Package) error {
 	return nil
 }
 
-// Remove deletes a locally cached package.
+// Remove deletes a specific version of a locally cached package.
 func (s *Store) Remove(name, version string) error {
 	dir := s.PackageDir(name, version)
 	if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("package remove %s: %w", name, err)
 	}
 	return nil
+}
+
+// RemoveAll deletes all locally cached versions of a package.
+func (s *Store) RemoveAll(name string) error {
+	dir := filepath.Join(s.root, name)
+	if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("package remove all %s: %w", name, err)
+	}
+	return nil
+}
+
+// Extract decompresses the package archive into a files subdirectory.
+// After extraction the individual files can be listed with ExtractedFiles.
+func (s *Store) Extract(pkg Package) error {
+	dir := s.PackageDir(pkg.Name, pkg.Version)
+	archivePath := filepath.Join(dir, "files.tar.gz")
+	filesDir := filepath.Join(dir, "files")
+
+	if s.IsExtracted(pkg.Name, pkg.Version) {
+		return nil
+	}
+
+	f, err := os.Open(archivePath)
+	if err != nil {
+		return fmt.Errorf("package extract open %s: %w", archivePath, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return fmt.Errorf("package extract gzip %s: %w", pkg.Name, err)
+	}
+	defer func() { _ = gz.Close() }()
+
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("package extract tar %s: %w", pkg.Name, err)
+		}
+
+		target := filepath.Join(filesDir, hdr.Name)
+
+		switch hdr.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, fs.FileMode(hdr.Mode)); err != nil {
+				return fmt.Errorf("package extract mkdir %s: %w", target, err)
+			}
+		case tar.TypeReg:
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				return fmt.Errorf("package extract mkdir %s: %w", filepath.Dir(target), err)
+			}
+			out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, fs.FileMode(hdr.Mode))
+			if err != nil {
+				return fmt.Errorf("package extract create %s: %w", target, err)
+			}
+			if _, err := io.Copy(out, tr); err != nil {
+				_ = out.Close()
+				return fmt.Errorf("package extract write %s: %w", target, err)
+			}
+			if err := out.Close(); err != nil {
+				return fmt.Errorf("package extract close %s: %w", target, err)
+			}
+		}
+	}
+	return nil
+}
+
+// IsExtracted returns true if the package has been extracted and its files directory is non-empty.
+func (s *Store) IsExtracted(name, version string) bool {
+	filesDir := filepath.Join(s.PackageDir(name, version), "files")
+	entries, err := os.ReadDir(filesDir)
+	if err != nil {
+		return false
+	}
+	return len(entries) > 0
+}
+
+// ExtractedFiles returns the absolute paths of all regular files inside the
+// package's extracted files directory.
+func (s *Store) ExtractedFiles(name, version string) ([]string, error) {
+	filesDir := filepath.Join(s.PackageDir(name, version), "files")
+	var files []string
+	err := filepath.WalkDir(filesDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			files = append(files, path)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("package list files %s %s: %w", name, version, err)
+	}
+	return files, nil
 }
 
 // List returns all locally cached package versions.

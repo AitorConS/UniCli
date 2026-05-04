@@ -1,6 +1,8 @@
 package pkg
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -140,4 +142,111 @@ func TestPackage_JSON(t *testing.T) {
 	require.Equal(t, pkg.Name, decoded.Name)
 	require.Equal(t, pkg.Version, decoded.Version)
 	require.Equal(t, pkg.SHA256, decoded.SHA256)
+}
+
+func TestStore_RemoveAll(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	require.NoError(t, err)
+
+	require.NoError(t, store.SaveMeta(Package{Name: "node", Version: "20.11.0"}))
+	require.NoError(t, store.SaveMeta(Package{Name: "node", Version: "18.19.0"}))
+
+	require.NoError(t, store.RemoveAll("node"))
+
+	pkgs, err := store.List()
+	require.NoError(t, err)
+	require.Len(t, pkgs, 0)
+}
+
+func TestStore_RemoveAll_NotFound(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	require.NoError(t, err)
+
+	require.NoError(t, store.RemoveAll("nonexistent"))
+}
+
+func TestStore_ExtractAndFiles(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	require.NoError(t, err)
+
+	pkgDir := store.PackageDir("node", "20.11.0")
+	require.NoError(t, os.MkdirAll(pkgDir, 0o755))
+
+	archivePath := filepath.Join(pkgDir, "files.tar.gz")
+	f, err := os.Create(archivePath)
+	require.NoError(t, err)
+
+	gw := gzip.NewWriter(f)
+	tw := tar.NewWriter(gw)
+
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name: "bin", Typeflag: tar.TypeDir, Mode: 0o755,
+	}))
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name: "bin/node", Typeflag: tar.TypeReg, Size: 9, Mode: 0o755,
+	}))
+	_, err = tw.Write([]byte("fake node"))
+	require.NoError(t, err)
+
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name: "lib", Typeflag: tar.TypeDir, Mode: 0o755,
+	}))
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name: "lib/libnode.so", Typeflag: tar.TypeReg, Size: 8, Mode: 0o644,
+	}))
+	_, err = tw.Write([]byte("fakelib!"))
+	require.NoError(t, err)
+
+	require.NoError(t, tw.Close())
+	require.NoError(t, gw.Close())
+	require.NoError(t, f.Close())
+
+	require.False(t, store.IsExtracted("node", "20.11.0"))
+
+	testPkg := Package{Name: "node", Version: "20.11.0"}
+	require.NoError(t, store.Extract(testPkg))
+
+	require.True(t, store.IsExtracted("node", "20.11.0"))
+
+	files, err := store.ExtractedFiles("node", "20.11.0")
+	require.NoError(t, err)
+	require.Len(t, files, 2)
+
+	names := map[string]bool{}
+	for _, f := range files {
+		names[filepath.Base(f)] = true
+	}
+	require.True(t, names["node"])
+	require.True(t, names["libnode.so"])
+}
+
+func TestStore_Extract_Idempotent(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	require.NoError(t, err)
+
+	pkgDir := store.PackageDir("node", "20.11.0")
+	require.NoError(t, os.MkdirAll(pkgDir, 0o755))
+
+	archivePath := filepath.Join(pkgDir, "files.tar.gz")
+	f, err := os.Create(archivePath)
+	require.NoError(t, err)
+
+	gw := gzip.NewWriter(f)
+	tw := tar.NewWriter(gw)
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name: "hello", Typeflag: tar.TypeReg, Size: 5, Mode: 0o644,
+	}))
+	_, err = tw.Write([]byte("hello"))
+	require.NoError(t, err)
+	require.NoError(t, tw.Close())
+	require.NoError(t, gw.Close())
+	require.NoError(t, f.Close())
+
+	testPkg := Package{Name: "node", Version: "20.11.0"}
+	require.NoError(t, store.Extract(testPkg))
+	require.NoError(t, store.Extract(testPkg))
 }
