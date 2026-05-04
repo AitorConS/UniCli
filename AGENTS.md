@@ -94,7 +94,7 @@ Self-hosted runner needed for `integration-tests` (`runs-on: [self-hosted, linux
 
 ## Phase Status
 
-Currently in **Phase 6** (Package System) — core runtime complete, package system scaffolded.
+Currently in **Phase 6** (Package System) — core runtime complete, package system with archive extraction.
 
 | Phase | Status | Key deliverables |
 |---|---|---|
@@ -104,7 +104,7 @@ Currently in **Phase 6** (Package System) — core runtime complete, package sys
 | 3 — Full CLI | ✅ done | `uni ps/logs/stop/rm/inspect/exec`, `--output json`, 81% cmd/uni coverage |
 | 4 — Compose | ✅ done | YAML parser, topological sort, shared volumes, `uni compose up/down/ps/logs` |
 | 5 — Complete Runtime | ✅ done | Port mapping, env vars, volumes, named instances, `--attach`, `--ip` (host+guest fw_cfg), `uni cp` (to+from VM), `uni volume`, TAP/bridge networking |
-| 6 — Package System | ✅ scaffolded | `uni pkg list/search/get/remove`, `--pkg` flag on `uni build`, package index/store, `internal/package/` |
+| 6 — Package System | ✅ done | `uni pkg list/search/get/remove`, `--pkg` flag on `uni build`, package index/store, archive extraction, `internal/package/` |
 | 7 — Orchestrator | ⬜ | Self-healing, scaling, health checks, `uni scale/status`, internal DNS |
 | 8 — Registry & Distribution | ⬜ | OCI-compatible registry, image signing, JWT auth (basic server/client exists) |
 | 9 — Build System | ⬜ | Multi-language `uni build` (Go/Node/Python/Rust), `unikernel.toml`, multi-arch |
@@ -187,8 +187,9 @@ Both the CLI and the kernel are independently versioned with semver.
 | Network config fw_cfg | `internal/vm/qemu.go::buildNetworkCfgArgs` — `--ip` → `opt/uni/network` |
 | Host-side bridge/TAP | `internal/network/bridge_linux.go` — `CreateBridge`, `AttachTAP`, `DestroyBridge` |
 | iptables port forwarding | `internal/network/portfwd_linux.go` — DNAT + MASQUERADE with `-i tapName` |
-| Package index/store | `internal/package/package.go` — `Store`, `FetchIndex`, `Search` |
-| `uni pkg` commands | `cmd/uni/pkg.go` — list, search, get, remove |
+| Package index/store | `internal/package/package.go` — `Store`, `FetchIndex`, `Search`, `Extract`, `ExtractedFiles`, `RemoveAll` |
+| `uni pkg` commands | `cmd/uni/pkg.go` — list, search, get, remove (all versions) |
+| Package resolution (build) | `cmd/uni/build.go::resolvePackages` — download, extract, list files for manifest |
 | `uni cp` (to VM) | `cmd/uni/cp.go::cpToVM` — dump → copy file → mkfs rebuild |
 | Compose shared volumes | `internal/compose/types.go::VolumeConfig` + `cmd/uni/compose.go::newComposeUpCmd` |
 | CLI self-update | `cmd/uni/upgrade.go::replaceBinary` |
@@ -202,7 +203,7 @@ Both the CLI and the kernel are independently versioned with semver.
 | `internal/compose/` | Compose YAML parser, validator, Kahn's topological sort with cycle detection, shared volumes. |
 | `internal/image/` | Image build pipeline (ELF validation, mkfs, SHA256, package files) + content-addressable store. |
 | `internal/network/` | TAP device + Linux bridge setup, iptables port forwarding. Linux-only (`//go:build linux`). |
-| `internal/package/` | Package index fetch, local store, download, search. |
+| `internal/package/` | Package index fetch, local store, download, extract, search, remove. |
 | `internal/registry/` | HTTP image registry server (simple, non-OCI) + push/pull client. |
 | `internal/scheduler/` | **Empty stub.** Placeholder for Phase 7 orchestrator. |
 | `internal/tools/` | Kernel tools management: download, version check, platform-specific mkfs resolution. |

@@ -330,7 +330,7 @@ The binary must be a **static Linux ELF** (`GOOS=linux`, no dynamic library depe
 | `--cpus` | `1` | Default CPU count baked into the image |
 | `--mkfs` | *(auto-downloaded to `~/.uni/tools/mkfs`)* | Path to Nanos mkfs binary — overrides auto-download (env: `UNI_MKFS`) |
 | `-U`, `--update-kernel` | `false` | Auto-approve kernel update if one is available (skips the `[y/N]` prompt) |
-| `--pkg` | — | Include package files in the image (repeatable) |
+| `--pkg` | — | Include package in the image (repeatable). Downloads, extracts, and includes the package files |
 
 If the kernel tools are already cached and a newer kernel version is available, `uni build` will prompt before proceeding:
 
@@ -350,6 +350,12 @@ uni build ./myapi --name api --tag v1.2.0
 
 # With resource defaults
 uni build ./api --name api --tag latest --memory 512M --cpus 2
+
+# Include a runtime package
+uni build ./myapp --name myapp --pkg node:20
+
+# Include multiple packages
+uni build ./myapp --name myapp --pkg node:20 --pkg redis:7
 ```
 
 **Output:**
@@ -489,15 +495,19 @@ uni pkg get redis:7.2
 
 ### `uni pkg remove`
 
-Remove a locally cached package.
+Remove locally cached package(s). Without a version suffix, all versions of the package are removed.
 
 ```
 uni pkg remove <name>[:version]
 ```
 
 ```bash
+# Remove a specific version
 uni pkg remove redis:7.2
-# redis:7.2
+
+# Remove all locally cached versions
+uni pkg remove redis
+# Removed all versions of package redis.
 ```
 
 ---

@@ -197,13 +197,25 @@ Parses compose YAML files and resolves startup order:
 
 Manages pre-packaged files that can be included in images at build time:
 
-- **Store** — local cache at `~/.uni/packages/` holding downloaded package files
+- **Store** — local cache at `~/.uni/packages/<name>/<version>/` holding:
+  - `files.tar.gz` — the downloaded package archive
+  - `files/` — extracted contents of the archive
+  - `meta.json` — package metadata (name, version, SHA256, etc.)
 - **FetchIndex** — retrieves the remote package index listing available packages and versions
-- **Search** — queries the remote index by name or keyword
+- **Download** — fetches the package archive from its URL and stores it locally (with size verification)
+- **Extract** — decompresses `files.tar.gz` into the `files/` subdirectory
+- **ExtractedFiles** — lists all regular files inside the extracted package
+- **Search** — queries the remote index by name, description, or runtime
 - **Get** — downloads a package (optionally a specific version) to the local store
-- **Remove** — deletes a locally cached package
+- **Remove** — deletes a specific version; **RemoveAll** — deletes all versions of a package
 
-Packages are included at build time via `uni build --pkg <name>`, which copies the package files into the image before running `mkfs`.
+Packages are included at build time via `uni build --pkg <name>[:<version>]`. The build pipeline:
+
+1. `resolvePackages()` fetches the remote index and resolves each `--pkg` reference
+2. Downloads the archive (`files.tar.gz`) if not already cached
+3. Extracts the archive into `files/` if not already extracted
+4. Collects all individual file paths from `files/` via `ExtractedFiles()`
+5. Passes the file list to `buildManifest()` which includes each file in the Nanos manifest
 
 ### Environment Variable Injection
 
