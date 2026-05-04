@@ -22,7 +22,8 @@ import (
 )
 
 // IndexURL is the base URL for the package index.
-const IndexURL = "https://github.com/AitorConS/UniCLi/releases/download/pkg-index/packages.json"
+// Can be overridden in tests to point to a local server.
+var IndexURL = "https://github.com/AitorConS/UniCLi/releases/download/pkg-index/packages.json"
 
 // Package describes a downloadable runtime package.
 type Package struct {
