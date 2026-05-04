@@ -13,8 +13,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	pkg "github.com/AitorConS/unikernel-engine/internal/package"
 	"github.com/AitorConS/unikernel-engine/internal/image"
+	pkg "github.com/AitorConS/unikernel-engine/internal/package"
 	"github.com/stretchr/testify/require"
 )
 
