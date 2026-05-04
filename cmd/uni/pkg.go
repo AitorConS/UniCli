@@ -24,7 +24,13 @@ func newPkgCmd() *cobra.Command {
 	return cmd
 }
 
+// pkgStoreDir can be overridden in tests to use a temp directory.
+var pkgStoreDir string
+
 func pkgStorePath() string {
+	if pkgStoreDir != "" {
+		return pkgStoreDir
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return filepath.Join(".uni", "packages")
