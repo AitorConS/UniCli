@@ -38,7 +38,9 @@ uni CLI (cobra) → Unix socket → unid daemon → KVM/QEMU wrapper
 
 **VM Manager (`internal/vm/`)** — KVM/QEMU wrapper. `VM` struct is concurrent-safe (`sync.RWMutex`). State machine: `created → starting → running → stopping → stopped`. KVM ioctls wrapped in testable interfaces — never call ioctls directly in business logic.
 
-**Image System (`internal/image/`)** — custom JSON manifest + raw disk image, content-addressable by SHA256. `uni build` validates ELF magic bytes, runs `mkfs`, computes SHA256, writes to `~/.uni/images/<sha256>/`.
+**Image System (`internal/image/`)** — custom JSON manifest + raw disk image, content-addressable by SHA256. `uni build` validates ELF magic bytes, runs `mkfs`, computes SHA256, writes to `~/.uni/images/<sha256>/`. `BuildManifest()` constructs the Nanos manifest including package files from `--pkg`.
+
+**Package System (`internal/package/`)** — manages pre-packaged runtime files for `uni build --pkg`. Pipeline: `FetchIndex()` → `Download()` (SHA-256 verified) → `Extract()` (tar.gz) → `ExtractedFiles()` (file list for manifest). Local store at `~/.uni/packages/<name>/<version>/` with `files.tar.gz`, `files/`, `meta.json`. `IndexURL` is a `var` (overridable in tests). `RemoveAll()` deletes all versions; `Remove()` deletes one.
 
 **Registry (`internal/registry/`)** — HTTP image registry (simple, non-OCI). Endpoints: `GET /v2/images`, `GET /v2/images/{ref}`, `GET /v2/images/{ref}/disk`, `POST /v2/images` (multipart), `DELETE /v2/images/{ref}`.
 
@@ -75,6 +77,8 @@ uni CLI (cobra) → Unix socket → unid daemon → KVM/QEMU wrapper
 
 - Unit tests co-located: `internal/vm/vm_test.go`
 - Integration tests in `tests/integration/`, tagged `//go:build integration`
+- CLI tests in `cmd/uni/` use in-process daemon (`startDaemon`), fake QEMU, `httptest.NewServer` for registry and package index
+- Overrideable test vars: `pkg.IndexURL` (package index URL), `pkgStoreDir` (package store path)
 - Use `testify/require` (fail fast), `gomock`/`mockery` for mocks
 - Table-driven tests for all parser/validator logic
 - Target 80%+ coverage on `internal/` and `pkg/`
@@ -94,7 +98,7 @@ Self-hosted runner needed for `integration-tests` (`runs-on: [self-hosted, linux
 
 ## Phase Status
 
-Currently in **Phase 6** (Package System) — core runtime complete, package system with archive extraction.
+Currently in **Phase 6** (Package System) — complete. Ready for Phase 7 (Orchestrator).
 
 | Phase | Status | Key deliverables |
 |---|---|---|
@@ -121,6 +125,10 @@ Phases must be fully tested and stable before advancing. A phase is not done if 
 - `parseSig()` uses integer literals for SIGUSR1/SIGUSR2 (`syscall.Signal(10/12)`) for cross-platform compatibility.
 - `volume.ParseSize` uses `strconv.ParseInt` (not `fmt.Sscanf`) — Sscanf accepts trailing junk like `"1X"` silently.
 - `gofmt` rejects trailing-spaces alignment in struct literals. When CI flags gofmt, run `gofmt -w` directly rather than guessing the alignment.
+- `pkg.IndexURL` is a `var` (not `const`) so tests can override it to point at `httptest.NewServer`.
+- `pkgStoreDir` in `cmd/uni/pkg.go` is a package-level `var` that overrides `pkgStorePath()` in tests — set it to `t.TempDir()` and restore in `t.Cleanup()`.
+- `Download()` in `internal/package/` closes the file handle before `os.Remove` on error — Windows cannot delete an open file.
+- `uni pkg remove <name>` (without version) calls `RemoveAll()` which deletes all locally cached versions of that package.
 
 ## QEMU Command Construction
 
@@ -188,8 +196,13 @@ Both the CLI and the kernel are independently versioned with semver.
 | Host-side bridge/TAP | `internal/network/bridge_linux.go` — `CreateBridge`, `AttachTAP`, `DestroyBridge` |
 | iptables port forwarding | `internal/network/portfwd_linux.go` — DNAT + MASQUERADE with `-i tapName` |
 | Package index/store | `internal/package/package.go` — `Store`, `FetchIndex`, `Search`, `Extract`, `ExtractedFiles`, `RemoveAll` |
+| Package download with SHA-256 | `internal/package/package.go::Download` — verifies `Package.SHA256` after download, removes archive on mismatch; skips when empty |
 | `uni pkg` commands | `cmd/uni/pkg.go` — list, search, get, remove (all versions) |
 | Package resolution (build) | `cmd/uni/build.go::resolvePackages` — download, extract, list files for manifest |
+| Manifest with package files | `internal/image/builder.go::BuildManifest` — includes extracted package files as manifest children |
+| `uni pkg` CLI tests | `cmd/uni/pkg_test.go` — search, get, list, remove, remove-all-versions, not-found, parsePkgRef |
+| `resolvePackages` tests | `cmd/uni/resolve_test.go` — download→extract→list pipeline, specific version, not-found, multiple packages |
+| Package pipeline integration test | `tests/integration/package_pipeline_test.go` — full Download→Extract→ExtractedFiles→BuildManifest end-to-end |
 | `uni cp` (to VM) | `cmd/uni/cp.go::cpToVM` — dump → copy file → mkfs rebuild |
 | Compose shared volumes | `internal/compose/types.go::VolumeConfig` + `cmd/uni/compose.go::newComposeUpCmd` |
 | CLI self-update | `cmd/uni/upgrade.go::replaceBinary` |
@@ -201,9 +214,9 @@ Both the CLI and the kernel are independently versioned with semver.
 |---|---|
 | `internal/api/` | JSON-RPC 2.0 server/client over Unix socket. VM lifecycle RPC methods. |
 | `internal/compose/` | Compose YAML parser, validator, Kahn's topological sort with cycle detection, shared volumes. |
-| `internal/image/` | Image build pipeline (ELF validation, mkfs, SHA256, package files) + content-addressable store. |
+| `internal/image/` | Image build pipeline (ELF validation, mkfs, SHA256, `BuildManifest` with package files) + content-addressable store. |
 | `internal/network/` | TAP device + Linux bridge setup, iptables port forwarding. Linux-only (`//go:build linux`). |
-| `internal/package/` | Package index fetch, local store, download, extract, search, remove. |
+| `internal/package/` | Package index fetch, local store, download (SHA-256 verified), extract (tar.gz), search, remove. |
 | `internal/registry/` | HTTP image registry server (simple, non-OCI) + push/pull client. |
 | `internal/scheduler/` | **Empty stub.** Placeholder for Phase 7 orchestrator. |
 | `internal/tools/` | Kernel tools management: download, version check, platform-specific mkfs resolution. |
