@@ -15,9 +15,7 @@ import (
 	"github.com/AitorConS/unikernel-engine/internal/network"
 )
 
-var defaultCommandFunc CommandFunc = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-	return exec.CommandContext(ctx, name, args...)
-}
+var defaultCommandFunc CommandFunc = exec.CommandContext
 
 const gracePeriod = 30 * time.Second
 

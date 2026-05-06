@@ -45,7 +45,7 @@ func (s *FileStore) Create(cfg Config) (*VM, error) {
 		return nil, err
 	}
 	if err := s.writeState(v); err != nil {
-		s.MemoryStore.Remove(v.ID)
+		_ = s.MemoryStore.Remove(v.ID)
 		return nil, fmt.Errorf("persist vm %s: %w", v.ID, err)
 	}
 	return v, nil
@@ -105,17 +105,18 @@ func (s *FileStore) Restore() error {
 			done:      make(chan struct{}),
 		}
 
-		if st.State == StateRunning || st.State == StateStarting {
+		switch st.State {
+		case StateRunning, StateStarting:
 			slog.Info("restore: marking vm as stopped (daemon restart)", "vm_id", v.ID)
 			v.State = StateStopped
 			now := time.Now()
 			v.StoppedAt = &now
 			v.DaemonRecovered = true
 			close(v.done)
-		} else if st.State == StateCreated {
-			// A VM that was created but never started; keep it as-is.
-		} else if st.State == StateStopped {
+		case StateStopped:
 			close(v.done)
+		default:
+			// StateCreated or unknown: keep as-is.
 		}
 
 		s.MemoryStore.mu.Lock()
