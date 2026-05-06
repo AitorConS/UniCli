@@ -147,6 +147,16 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *R
 		IPAddress:   p.IPAddress,
 		GatewayIP:   p.GatewayIP,
 	}
+	if p.HealthCheck != nil {
+		cfg.HealthCheck = &vm.HealthCheckConfig{
+			Type:     p.HealthCheck.Type,
+			Port:     p.HealthCheck.Port,
+			Path:     p.HealthCheck.Path,
+			Interval: time.Duration(p.HealthCheck.Interval) * time.Second,
+			Timeout:  time.Duration(p.HealthCheck.Timeout) * time.Second,
+			Retries:  p.HealthCheck.Retries,
+		}
+	}
 	v, err := s.mgr.Create(ctx, cfg)
 	if err != nil {
 		return nil, &RPCError{Code: -32000, Message: err.Error()}
@@ -301,6 +311,7 @@ func toDetail(v *vm.VM) VMDetail {
 		GatewayIP:       v.Cfg.GatewayIP,
 		CreatedAt:       v.CreatedAt.Format(time.RFC3339),
 		DaemonRecovered: v.DaemonRecovered,
+		Health:          string(v.GetHealthStatus()),
 	}
 	startedAt, stoppedAt := v.GetTimes()
 	if startedAt != nil {

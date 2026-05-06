@@ -37,17 +37,19 @@ func WithStore(s Store) Option {
 
 // QEMUManager implements Manager by spawning qemu-system-x86_64 processes.
 type QEMUManager struct {
-	store   Store
-	qemuBin string
-	mkCmd   CommandFunc
+	store    Store
+	qemuBin  string
+	mkCmd    CommandFunc
+	hchecker *HealthChecker
 }
 
 // NewQEMUManager returns a QEMUManager using qemuBin as the QEMU executable.
 func NewQEMUManager(qemuBin string, opts ...Option) *QEMUManager {
 	m := &QEMUManager{
-		store:   NewMemoryStore(),
-		qemuBin: qemuBin,
-		mkCmd:   defaultCommandFunc,
+		store:    NewMemoryStore(),
+		qemuBin:  qemuBin,
+		mkCmd:    defaultCommandFunc,
+		hchecker: NewHealthChecker(),
 	}
 	for _, o := range opts {
 		o(m)
@@ -124,6 +126,7 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 		}
 	}
 	go m.monitor(v, cmd)
+	m.hchecker.Start(ctx, v)
 	return nil
 }
 
@@ -138,6 +141,7 @@ func (m *QEMUManager) Stop(ctx context.Context, id string) error {
 		return fmt.Errorf("qemu stop %s: %w", id, err)
 	}
 	_ = m.store.Save(v)
+	m.hchecker.Stop(v.ID)
 	v.mu.RLock()
 	proc := v.proc
 	v.mu.RUnlock()
@@ -174,6 +178,7 @@ func (m *QEMUManager) Kill(_ context.Context, id string) error {
 		return fmt.Errorf("qemu kill %s: %w", id, err)
 	}
 	_ = m.store.Save(v)
+	m.hchecker.Stop(v.ID)
 	v.mu.RLock()
 	proc := v.proc
 	v.mu.RUnlock()
@@ -212,6 +217,7 @@ func (m *QEMUManager) Remove(_ context.Context, id string) error {
 	if st := v.GetState(); st != StateStopped {
 		return fmt.Errorf("qemu remove %s: vm is %s, must be stopped first", id, st)
 	}
+	m.hchecker.Stop(v.ID)
 	if err := m.store.Remove(v.ID); err != nil {
 		return fmt.Errorf("qemu remove %s: %w", id, err)
 	}

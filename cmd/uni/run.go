@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/AitorConS/unikernel-engine/internal/api"
@@ -16,18 +17,19 @@ import (
 
 func newRunCmd(socketPath, storePath *string) *cobra.Command {
 	var (
-		memory  string
-		cpus    int
-		ports   []string
-		envs    []string
-		envFile string
-		name    string
-		rm      bool
-		volumes []string
-		attach  bool
-		detach  bool
-		ipAddr  string
-		network string
+		memory      string
+		cpus        int
+		ports       []string
+		envs        []string
+		envFile     string
+		name        string
+		rm          bool
+		volumes     []string
+		attach      bool
+		detach      bool
+		ipAddr      string
+		network     string
+		healthCheck string
 	)
 	cmd := &cobra.Command{
 		Use:   "run <image>",
@@ -95,6 +97,13 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 				IPAddress:   ipAddr,
 				GatewayIP:   gatewayIP(ipAddr),
 			}
+			if healthCheck != "" {
+				hc, err := parseHealthCheck(healthCheck)
+				if err != nil {
+					return fmt.Errorf("run: %w", err)
+				}
+				params.HealthCheck = &hc
+			}
 			for _, pm := range portMaps {
 				params.PortMaps = append(params.PortMaps, api.PortMapSpec{
 					HostPort:  pm.HostPort,
@@ -131,6 +140,7 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 	cmd.Flags().BoolVarP(&detach, "detach", "d", true, "run VM in the background")
 	cmd.Flags().StringVar(&ipAddr, "ip", "", "static IP address (requires --network)")
 	cmd.Flags().StringVar(&network, "network", "", "TAP interface name to attach (Linux only)")
+	cmd.Flags().StringVar(&healthCheck, "health-check", "", "health check: tcp:PORT or http:PORT:/path")
 	return cmd
 }
 
@@ -295,4 +305,30 @@ func gatewayIP(ipAddr string) string {
 	}
 	ip[3] = 1
 	return ip.String()
+}
+
+func parseHealthCheck(spec string) (api.HealthCheckSpec, error) {
+	parts := strings.SplitN(spec, ":", 3)
+	if len(parts) < 2 {
+		return api.HealthCheckSpec{}, fmt.Errorf("health check format: tcp:PORT or http:PORT:/path")
+	}
+	hcType := strings.ToLower(parts[0])
+	port, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return api.HealthCheckSpec{}, fmt.Errorf("health check port must be a number: %w", err)
+	}
+	if hcType != "tcp" && hcType != "http" {
+		return api.HealthCheckSpec{}, fmt.Errorf("health check type must be tcp or http, got %q", hcType)
+	}
+	hc := api.HealthCheckSpec{
+		Type: hcType,
+		Port: port,
+	}
+	if hcType == "http" && len(parts) == 3 {
+		hc.Path = parts[2]
+		if !strings.HasPrefix(hc.Path, "/") {
+			hc.Path = "/" + hc.Path
+		}
+	}
+	return hc, nil
 }

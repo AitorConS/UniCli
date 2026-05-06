@@ -46,6 +46,37 @@ type VolumeMount struct {
 	ReadOnly bool
 }
 
+// HealthStatus represents the result of a health check probe.
+type HealthStatus string
+
+const (
+	// HealthHealthy means the probe succeeded.
+	HealthHealthy HealthStatus = "healthy"
+	// HealthUnhealthy means the probe failed.
+	HealthUnhealthy HealthStatus = "unhealthy"
+	// HealthStarting means the VM is within the grace period and not yet probed.
+	HealthStarting HealthStatus = "starting"
+	// HealthUnknown means no health check is configured.
+	HealthUnknown HealthStatus = "unknown"
+)
+
+// HealthCheckConfig defines how to probe a VM for liveness.
+type HealthCheckConfig struct {
+	// Type is "tcp" or "http". For HTTP, a GET request is made to Path.
+	Type string
+	// Port is the guest port to probe.
+	Port int
+	// Path is the HTTP path (only used when Type is "http").
+	Path string
+	// Interval between probes. Defaults to 10s if zero.
+	Interval time.Duration
+	// Timeout per probe. Defaults to 3s if zero.
+	Timeout time.Duration
+	// Retries is the number of consecutive failures before marking unhealthy.
+	// Defaults to 3 if zero.
+	Retries int
+}
+
 // Config holds the parameters used to create a VM.
 type Config struct {
 	// ImagePath is the raw disk image containing the kernel and application.
@@ -76,6 +107,8 @@ type Config struct {
 	// GatewayIP is the gateway IP for the VM's network. Derived from IPAddress
 	// when using TAP networking. Used to assign an IP to the bridge interface.
 	GatewayIP string
+	// HealthCheck configures liveness probing for the VM. Nil disables probing.
+	HealthCheck *HealthCheckConfig
 }
 
 // process abstracts an OS process for testability.
@@ -126,6 +159,8 @@ type VM struct {
 	// DaemonRecovered is true when this VM was recovered from a previous
 	// daemon run. The original QEMU process is gone; the VM is in StateStopped.
 	DaemonRecovered bool
+	// HealthStatus is the latest probe result. "unknown" if no health check.
+	HealthStatus HealthStatus
 
 	mu            sync.RWMutex
 	proc          process
@@ -165,6 +200,20 @@ func (v *VM) GetTimes() (startedAt, stoppedAt *time.Time) {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 	return v.StartedAt, v.StoppedAt
+}
+
+// GetHealthStatus returns the current health status under a read lock.
+func (v *VM) GetHealthStatus() HealthStatus {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	return v.HealthStatus
+}
+
+// SetHealthStatus sets the health status under a write lock.
+func (v *VM) SetHealthStatus(s HealthStatus) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.HealthStatus = s
 }
 
 // transition atomically moves v to state to, validating the edge and logging.

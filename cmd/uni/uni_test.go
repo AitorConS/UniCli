@@ -567,6 +567,37 @@ func TestGatewayIP(t *testing.T) {
 	}
 }
 
+func TestParseHealthCheck(t *testing.T) {
+	cases := []struct {
+		input string
+		want  api.HealthCheckSpec
+	}{
+		{"tcp:8080", api.HealthCheckSpec{Type: "tcp", Port: 8080}},
+		{"http:3000:/healthz", api.HealthCheckSpec{Type: "http", Port: 3000, Path: "/healthz"}},
+		{"http:80", api.HealthCheckSpec{Type: "http", Port: 80}},
+		{"http:8080:health", api.HealthCheckSpec{Type: "http", Port: 8080, Path: "/health"}},
+	}
+	for _, tc := range cases {
+		got, err := parseHealthCheck(tc.input)
+		require.NoError(t, err)
+		require.Equal(t, tc.want, got, "parseHealthCheck(%q)", tc.input)
+	}
+}
+
+func TestParseHealthCheck_Invalid(t *testing.T) {
+	_, err := parseHealthCheck("badformat")
+	require.Error(t, err)
+
+	_, err = parseHealthCheck("udp:8080")
+	require.Error(t, err)
+
+	_, err = parseHealthCheck("tcp:abc")
+	require.Error(t, err)
+
+	_, err = parseHealthCheck(":8080")
+	require.Error(t, err)
+}
+
 // --- helpers ---
 
 func makeVolumeStore(t *testing.T) (*volume.Store, error) {

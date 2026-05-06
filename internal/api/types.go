@@ -50,10 +50,19 @@ type RunParams struct {
 	AutoRemove  bool              `json:"auto_remove,omitempty"`
 	Volumes     []VolumeMountSpec `json:"volumes,omitempty"`
 	Attach      bool              `json:"attach,omitempty"`
-	// IPAddress is the static IP to assign when using TAP networking.
-	IPAddress string `json:"ip_address,omitempty"`
-	// GatewayIP is the bridge gateway address for TAP networking (auto-derived from IPAddress).
-	GatewayIP string `json:"gateway_ip,omitempty"`
+	IPAddress   string            `json:"ip_address,omitempty"`
+	GatewayIP   string            `json:"gateway_ip,omitempty"`
+	HealthCheck *HealthCheckSpec  `json:"health_check,omitempty"`
+}
+
+// HealthCheckSpec is the wire representation of a health check configuration.
+type HealthCheckSpec struct {
+	Type     string `json:"type"`
+	Port     int    `json:"port,omitempty"`
+	Path     string `json:"path,omitempty"`
+	Interval int    `json:"interval_seconds,omitempty"`
+	Timeout  int    `json:"timeout_seconds,omitempty"`
+	Retries  int    `json:"retries,omitempty"`
 }
 
 // StopParams are the parameters for VM.Stop.
@@ -97,6 +106,7 @@ type VMDetail struct {
 	StartedAt       *string           `json:"started_at,omitempty"`
 	StoppedAt       *string           `json:"stopped_at,omitempty"`
 	DaemonRecovered bool              `json:"daemon_recovered,omitempty"`
+	Health          string            `json:"health,omitempty"`
 }
 
 // LogsResponse carries the captured serial console output for a VM.
