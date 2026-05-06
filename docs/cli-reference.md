@@ -61,6 +61,8 @@ uni run <image> [flags]
 | `-d`, `--detach` | `true` | Run VM in the background (overridden by `--attach`) |
 | `--ip` | — | Static IP address, configured in the guest via fw_cfg (requires `--network`) |
 | `--network` | — | TAP interface name to attach (Linux only) |
+| `--health-check` | — | Health check probe: `tcp:PORT` or `http:PORT:/path` |
+| `--restart` | — | Restart policy: `never`, `on-failure`, or `always[:max-retries]` |
 
 **Examples:**
 
@@ -101,6 +103,18 @@ uni run myapp:latest --name api --attach -p 8080:8080
 # Run with TAP networking and static IP (Linux only)
 uni run myapp:latest --network tap0 --ip 192.168.100.10 -p 8080:80
 
+# Run with a health check (TCP probe on port 8080)
+uni run myapp:latest --health-check tcp:8080
+
+# Run with an HTTP health check
+uni run myapp:latest --health-check http:8080:/healthz
+
+# Restart automatically on failure (up to 5 times)
+uni run myapp:latest --restart on-failure:5
+
+# Always restart (unlimited retries)
+uni run myapp:latest --restart always
+
 # Output the VM ID for scripting
 ID=$(uni run hello:latest --name api)
 echo "Started VM: $ID"
@@ -117,7 +131,7 @@ With `--attach`, the command blocks and streams the VM's serial console output t
 
 ### `uni ps`
 
-List all registered VMs.
+List all registered VMs with health status.
 
 ```
 uni ps
@@ -127,9 +141,9 @@ uni ps
 
 ```bash
 uni ps
-# ID                                    STATE    IMAGE
-# a3f8c2d1-7b4e-4a1f-8c2d-1a2b3c4d5e6f  running  hello:latest
-# b4e9d3e2-8c5f-5b2g-9d3e-2b3c4d5e6f7a  stopped  api:v2
+# ID                                    NAME     STATE    HEALTH     IMAGE
+# a3f8c2d1-7b4e-4a1f-8c2d-1a2b3c4d5e6f  web      running  healthy    hello:latest
+# b4e9d3e2-8c5f-5b2g-9d3e-2b3c4d5e6f7a  -        stopped  unknown    api:v2
 
 # JSON output
 uni --output json ps
@@ -141,9 +155,40 @@ uni --output json ps
   {
     "id": "a3f8c2d1-7b4e-4a1f-8c2d-1a2b3c4d5e6f",
     "state": "running",
+    "name": "web",
+    "health": "healthy",
     "image": "hello:latest"
   }
 ]
+```
+
+---
+
+### `uni status`
+
+Show a summary of the daemon and all VMs, including health and restart information.
+
+```
+uni status
+```
+
+**Examples:**
+
+```bash
+uni status
+# Total:      3
+# Running:    2
+# Stopped:    1
+# Healthy:    1
+# Unhealthy:  0
+#
+# ID                                    NAME     STATE    HEALTH     RESTARTS  IMAGE
+# a3f8c2d1-7b4e-4a1f-8c2d-1a2b3c4d5e6f  web      running  healthy    0         hello:latest
+# b4e9d3e2-8c5f-5b2g-9d3e-2b3c4d5e6f7a  api      running  starting   1         api:v2
+# c5f0a4b3-9d6e-4c2f-a1b3-5d6e7f8a9b0c  -        stopped  -          0         worker:latest
+
+# JSON output
+uni --output json status
 ```
 
 ---

@@ -23,7 +23,8 @@ Uni is structured as a **client–daemon** system, the same model used by Docker
 ┌─────────────────────────────────────────────────────────┐
 │  uni  (CLI — short-lived process)                       │
 │                                                         │
-│  build · run · ps · logs · stop · rm · inspect · exec · cp │
+│  build · run · ps · status · logs · stop · rm · inspect · exec · cp │
+│  compose up · compose down · compose ps · compose logs  │
 │  compose up · compose down · compose ps · compose logs  │
 │  volume create · volume ls · volume rm · volume inspect │
 │  pkg list · pkg search · pkg get · pkg remove           │
@@ -104,9 +105,11 @@ created → starting → running → stopping → stopped
 Every transition is atomic (protected by `sync.RWMutex`) and logged with `slog`.
 
 **Key types:**
-- `VM` — represents one virtual machine (ID, config, state, timestamps, log buffer)
+- `VM` — represents one virtual machine (ID, config, state, timestamps, log buffer, health status, restart count)
 - `QEMUManager` — implements the `Manager` interface by spawning `qemu-system-x86_64`
-- `Store` — thread-safe in-memory registry of all known VMs
+- `Store` — thread-safe registry interface for all known VMs; `MemoryStore` for in-memory, `FileStore` for JSON persistence
+- `HealthChecker` — manages TCP/HTTP probe goroutines per VM
+- `RestartConfig` / `RestartPolicy` — controls automatic restart behaviour
 
 **QEMU command built per VM:**
 ```bash
@@ -286,6 +289,65 @@ Each VM can use one of two networking modes:
 
 {: .note }
 TAP networking requires Linux and elevated permissions. It is not available on Windows. See `internal/network/tap.go` (Linux-only build tag).
+
+---
+
+## Health Checks
+
+VMs can be configured with liveness probes that run periodically after startup:
+
+- **TCP probe** — succeeds if a TCP connection can be established to the guest port
+- **HTTP probe** — succeeds if an HTTP GET to the guest port/path returns a 2xx status code
+
+**Configuration** (via `--health-check` flag or API):
+
+| Parameter | Default | Description |
+|---|---|---|
+| Type | — | `tcp` or `http` |
+| Port | — | Guest port to probe (maps to host port via PortMaps if set) |
+| Path | `/` | HTTP path (only for `http` type) |
+| Interval | 10s | Time between probes |
+| Timeout | 3s | Per-probe timeout |
+| Retries | 3 | Consecutive failures before marking `unhealthy` |
+
+**Probe target resolution**: when `PortMaps` are configured, the probe targets the host-side port. Otherwise it targets the guest port directly on `127.0.0.1`.
+
+**Health States:**
+
+| State | Meaning |
+|---|---|
+| `starting` | Probe period not yet elapsed |
+| `healthy` | Last probe succeeded |
+| `unhealthy` | Consecutive failures exceeded `Retries` |
+| `unknown` | No health check configured |
+
+---
+
+## Restart Policies
+
+When a VM exits (crashes or terminates), the daemon can automatically restart it:
+
+| Policy | Behavior |
+|---|---|
+| `never` | Never restart (default) |
+| `on-failure` | Restart only on non-zero exit code |
+| `always` | Always restart, even on clean exit (unless explicitly stopped) |
+
+**Configuration** (via `--restart` flag or API):
+
+```
+--restart never              # never restart (default)
+--restart on-failure         # restart on crash (unlimited retries)
+--restart on-failure:5       # restart on crash, max 5 retries
+--restart always             # always restart (unlimited retries)
+--restart always:3           # always restart, max 3 retries
+```
+
+**Exponential backoff** between restarts: 1s, 2s, 4s, 8s, 16s, capped at 30s.
+
+**Important:** `StateStopped` is terminal — the restart creates a **new VM** with the same Config. The old VM is removed from the store and the new VM gets a fresh ID and incremented `RestartCount`.
+
+Explicit stop operations (`uni stop` or `uni kill`) set an `explicitStop` flag that prevents restart regardless of policy.
 
 ---
 

@@ -98,7 +98,7 @@ Self-hosted runner needed for `integration-tests` (`runs-on: [self-hosted, linux
 
 ## Phase Status
 
-Currently in **Phase 6** (Package System) — complete. Ready for Phase 7 (Orchestrator).
+Currently in **Phase 7** (Orchestrator) — phases 7.0–7.4 complete.
 
 | Phase | Status | Key deliverables |
 |---|---|---|
@@ -109,7 +109,13 @@ Currently in **Phase 6** (Package System) — complete. Ready for Phase 7 (Orche
 | 4 — Compose | ✅ done | YAML parser, topological sort, shared volumes, `uni compose up/down/ps/logs` |
 | 5 — Complete Runtime | ✅ done | Port mapping, env vars, volumes, named instances, `--attach`, `--ip` (host+guest fw_cfg), `uni cp` (to+from VM), `uni volume`, TAP/bridge networking |
 | 6 — Package System | ✅ done | `uni pkg list/search/get/remove`, `--pkg` flag on `uni build`, package index/store, archive extraction, `internal/package/` |
-| 7 — Orchestrator | ⬜ | Self-healing, scaling, health checks, `uni scale/status`, internal DNS |
+| 7.0 — Stabilization | ✅ done | Test coverage (tools, cp, kernel, upgrade, unid tests), `httpclient` 30s timeout, `CommandFunc` context, `MockManager`, lint fixes |
+| 7.1 — Persistence | ✅ done | `Store` interface, `FileStore` with `state.json`, `Restore()` on daemon startup, `DaemonRecovered` flag |
+| 7.2 — Health Checks | ✅ done | `HealthChecker` (TCP/HTTP probes), `--health-check` flag, `HealthStatus` on VM/VMDetail, configurable interval/timeout/retries |
+| 7.3 — Auto-Restart | ✅ done | `RestartPolicy` (never/on-failure/always), `--restart` flag, exponential backoff, `RestartCount`, `explicitStop` tracking |
+| 7.4 — Service/Status | ✅ done | `uni status` command, health/restart columns in `uni ps`, `RestartSpec` in API |
+| 7.5 — IPAM + Networks | ⬜ | Subnet allocator, bridge-per-network, internal DNS resolver, `uni network` command |
+| 7.6 — Integration | ⬜ | Compose health checks, compose restart policies, e2e test, AGENTS.md update |
 | 8 — Registry & Distribution | ⬜ | OCI-compatible registry, image signing, JWT auth (basic server/client exists) |
 | 9 — Build System | ⬜ | Multi-language `uni build` (Go/Node/Python/Rust), `unikernel.toml`, multi-arch |
 | 10 — Observability | ⬜ | Prometheus metrics, web dashboard, multi-node cluster, daemon persistence |
@@ -129,6 +135,10 @@ Phases must be fully tested and stable before advancing. A phase is not done if 
 - `pkgStoreDir` in `cmd/uni/pkg.go` is a package-level `var` that overrides `pkgStorePath()` in tests — set it to `t.TempDir()` and restore in `t.Cleanup()`.
 - `Download()` in `internal/package/` closes the file handle before `os.Remove` on error — Windows cannot delete an open file.
 - `uni pkg remove <name>` (without version) calls `RemoveAll()` which deletes all locally cached versions of that package.
+- Health check probes (`internal/vm/health.go`) use background context with timeouts; cancelled probe goroutines are cleaned up in `HealthChecker.Stop()`.
+- Restart policy `always` restarts on any exit (including clean shutdown) unless `Stop()` or `Kill()` was called, which sets `explicitStop`. `on-failure` only restarts on non-zero exit code. `never` (default) never restarts.
+- `restartVM()` creates a NEW VM with the same Config — `StateStopped` is terminal, the old VM is removed from the store and replaced.
+- Exponential backoff: 1s, 2s, 4s, 8s, 16s, capped at 30s. Controlled by `RestartCount` on the VM.
 
 ## QEMU Command Construction
 
@@ -207,6 +217,12 @@ Both the CLI and the kernel are independently versioned with semver.
 | Compose shared volumes | `internal/compose/types.go::VolumeConfig` + `cmd/uni/compose.go::newComposeUpCmd` |
 | CLI self-update | `cmd/uni/upgrade.go::replaceBinary` |
 | CLI version (injected at build) | `cmd/uni/main.go::version` — set via `-X main.version` in `main.yml` |
+| Health check probes | `internal/vm/health.go` — `HealthChecker`, TCP/HTTP probes, backoff, `probeTarget` |
+| Restart policy logic | `internal/vm/qemu.go::monitor` — evaluates `RestartConfig` on process exit, calls `restartVM` with backoff |
+| Restart policy CLI flag | `cmd/uni/run.go::parseRestartPolicy` — `--restart never/on-failure/always[:N]` |
+| Health check CLI flag | `cmd/uni/run.go::parseHealthCheck` — `--health-check tcp:PORT/http:PORT:/path` |
+| VM persistence | `internal/vm/filestore.go` — `FileStore` with `state.json`, `Restore()` on daemon startup |
+| VM status command | `cmd/uni/status.go` — `uni status` shows VM summary with health/restart info |
 
 ## Internal Packages
 
@@ -218,15 +234,15 @@ Both the CLI and the kernel are independently versioned with semver.
 | `internal/network/` | TAP device + Linux bridge setup, iptables port forwarding. Linux-only (`//go:build linux`). |
 | `internal/package/` | Package index fetch, local store, download (SHA-256 verified), extract (tar.gz), search, remove. |
 | `internal/registry/` | HTTP image registry server (simple, non-OCI) + push/pull client. |
-| `internal/scheduler/` | **Empty stub.** Placeholder for Phase 7 orchestrator. |
+| `internal/scheduler/` | **Empty stub.** Placeholder for Phase 7.5+ orchestrator features. |
 | `internal/tools/` | Kernel tools management: download, version check, platform-specific mkfs resolution. |
-| `internal/vm/` | Core package: VM lifecycle state machine, QEMU wrapper, port map parser, VM registry store, network cfg via fw_cfg. |
+| `internal/vm/` | Core package: VM lifecycle state machine, QEMU wrapper, port map parser, VM registry store, network cfg via fw_cfg, health checks, restart policies, persistence. |
 | `internal/volume/` | Named volume management: sparse disk creation, attach/detach as virtio-blk devices. |
 
 ## Stub Packages (placeholders for future phases)
 
 | Path | Phase | Purpose |
 |---|---|---|
-| `internal/scheduler/` | 7 | Health checks, auto-restart, scaling, DNS |
+| `internal/scheduler/` | 7.5 | IPAM, subnet allocator, internal DNS |
 | `pkg/` | 6+ | Public shared libraries |
 | `tests/unit/` | — | Empty; unit tests are co-located with source files |
