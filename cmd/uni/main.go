@@ -45,6 +45,7 @@ func newRootCmd() *cobra.Command {
 		newPushCmd(&storePath),
 		newPullCmd(&storePath),
 		newPsCmd(&socketPath, &outputFmt),
+		newStatusCmd(&socketPath, &outputFmt),
 		newLogsCmd(&socketPath),
 		newStopCmd(&socketPath),
 		newRmCmd(&socketPath),

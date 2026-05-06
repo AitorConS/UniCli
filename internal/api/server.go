@@ -295,10 +295,11 @@ func (s *Server) handleInspect(params json.RawMessage) (any, *RPCError) {
 
 func toInfo(v *vm.VM) VMInfo {
 	return VMInfo{
-		ID:    v.ID,
-		State: string(v.GetState()),
-		Image: v.Cfg.ImagePath,
-		Name:  v.Cfg.Name,
+		ID:     v.ID,
+		State:  string(v.GetState()),
+		Image:  v.Cfg.ImagePath,
+		Name:   v.Cfg.Name,
+		Health: string(v.GetHealthStatus()),
 	}
 }
 

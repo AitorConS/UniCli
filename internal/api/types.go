@@ -90,10 +90,11 @@ type SignalParams struct {
 
 // VMInfo is the compact serialisable representation of a VM.
 type VMInfo struct {
-	ID    string `json:"id"`
-	State string `json:"state"`
-	Image string `json:"image"`
-	Name  string `json:"name,omitempty"`
+	ID     string `json:"id"`
+	State  string `json:"state"`
+	Image  string `json:"image"`
+	Name   string `json:"name,omitempty"`
+	Health string `json:"health,omitempty"`
 }
 
 // VMDetail is the full serialisable representation of a VM.

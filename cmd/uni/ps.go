@@ -34,9 +34,13 @@ func newPsCmd(socketPath *string, outputFmt *string) *cobra.Command {
 			}
 
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "ID\tSTATE\tIMAGE")
+			fmt.Fprintln(w, "ID\tNAME\tSTATE\tHEALTH\tIMAGE")
 			for _, info := range infos {
-				fmt.Fprintf(w, "%s\t%s\t%s\n", info.ID, info.State, info.Image)
+				name := info.Name
+				if name == "" {
+					name = "-"
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", info.ID, name, info.State, info.Health, info.Image)
 			}
 			return w.Flush()
 		},
