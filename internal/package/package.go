@@ -22,6 +22,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/AitorConS/unikernel-engine/internal/httpclient"
 )
 
 // IndexURL is the base URL for the package index.
@@ -105,7 +107,7 @@ func (s *Store) Download(pkg Package) error {
 		return fmt.Errorf("package download request: %w", err)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpclient.Default.Do(req)
 	if err != nil {
 		return fmt.Errorf("package download %s: %w", pkg.Name, err)
 	}
@@ -323,7 +325,7 @@ func FetchIndex() (*Index, error) {
 	if err != nil {
 		return nil, fmt.Errorf("package index request: %w", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpclient.Default.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("package index fetch: %w", err)
 	}

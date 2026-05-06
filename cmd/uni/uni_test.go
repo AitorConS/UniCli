@@ -23,7 +23,7 @@ import (
 // fakeQEMUCmd returns a vm.CommandFunc that spawns a fake QEMU process.
 // Cross-platform: uses sleep on Unix and PowerShell on Windows.
 func fakeQEMUCmd() vm.CommandFunc {
-	return func(_ string, _ ...string) *exec.Cmd {
+	return func(_ context.Context, _ string, _ ...string) *exec.Cmd {
 		if runtime.GOOS == "windows" {
 			return exec.Command("powershell", "-Command", "while ($true) { Start-Sleep -Seconds 3600 }")
 		}

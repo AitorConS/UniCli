@@ -16,7 +16,7 @@ import (
 // immediately. Cross-platform: uses sleep/true on Unix and PowerShell/cmd
 // on Windows.
 func fakeQEMUCmd(block bool) CommandFunc {
-	return func(_ string, _ ...string) *exec.Cmd {
+	return func(_ context.Context, _ string, _ ...string) *exec.Cmd {
 		if block {
 			if runtime.GOOS == "windows" {
 				return exec.Command("powershell", "-Command", "while ($true) { Start-Sleep -Seconds 3600 }")
@@ -222,11 +222,11 @@ func TestQEMUManager_List(t *testing.T) {
 
 func captureArgs(mgr *QEMUManager, cfg Config) []string {
 	var got []string
-	mgr.mkCmd = func(_ string, args ...string) *exec.Cmd {
+	mgr.mkCmd = func(_ context.Context, _ string, args ...string) *exec.Cmd {
 		got = args
-		return fakeQEMUCmd(false)("", args...)
+		return fakeQEMUCmd(false)(context.Background(), "", args...)
 	}
-	_ = mgr.buildCmd(cfg)
+	_ = mgr.buildCmd(context.Background(), cfg)
 	return got
 }
 

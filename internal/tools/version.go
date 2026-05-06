@@ -10,14 +10,18 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/AitorConS/unikernel-engine/internal/httpclient"
 )
 
 const (
 	versionFileName = "kernel-version.txt"
-	githubAPIBase   = "https://api.github.com/repos/AitorConS/UniCLi"
-	releaseBase     = "https://github.com/AitorConS/UniCLi/releases/download"
-	// kernelTagPrefix is prepended to the semver when creating GitHub release tags.
 	kernelTagPrefix = "kernel-"
+)
+
+var (
+	githubAPIBase = "https://api.github.com/repos/AitorConS/UniCLi"
+	releaseBase   = "https://github.com/AitorConS/UniCLi/releases/download"
 )
 
 // artifactNames are the files that make up the kernel toolset.
@@ -55,7 +59,7 @@ func ListRemoteVersions(ctx context.Context) ([]string, error) {
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpclient.Default.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("tools: fetch releases: %w", err)
 	}

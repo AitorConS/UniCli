@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/AitorConS/unikernel-engine/internal/api"
+	"github.com/AitorConS/unikernel-engine/internal/httpclient"
 	"github.com/spf13/cobra"
 )
 
@@ -360,7 +361,7 @@ func listCLIVersions(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpclient.Default.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch releases: %w", err)
 	}
@@ -390,7 +391,7 @@ func downloadTo(ctx context.Context, url string, w io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpclient.Default.Do(req)
 	if err != nil {
 		return fmt.Errorf("download: %w", err)
 	}

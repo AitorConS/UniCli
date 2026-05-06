@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/AitorConS/unikernel-engine/internal/httpclient"
 	"github.com/AitorConS/unikernel-engine/internal/image"
 )
 
@@ -75,7 +76,7 @@ func downloadArtifact(ctx context.Context, url, dest string) error {
 	if err != nil {
 		return fmt.Errorf("tools: build request: %w", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpclient.Default.Do(req)
 	if err != nil {
 		return fmt.Errorf("tools: download %s: %w", name, err)
 	}

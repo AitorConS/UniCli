@@ -17,8 +17,8 @@ import (
 
 const gracePeriod = 30 * time.Second
 
-// CommandFunc builds an exec.Cmd. Defaults to exec.Command; replaceable in tests.
-type CommandFunc func(name string, args ...string) *exec.Cmd
+// CommandFunc builds an exec.Cmd. Defaults to exec.CommandContext; replaceable in tests.
+type CommandFunc func(ctx context.Context, name string, args ...string) *exec.Cmd
 
 // Option configures a QEMUManager.
 type Option func(*QEMUManager)
@@ -40,12 +40,16 @@ func NewQEMUManager(qemuBin string, opts ...Option) *QEMUManager {
 	m := &QEMUManager{
 		store:   NewStore(),
 		qemuBin: qemuBin,
-		mkCmd:   exec.Command,
+		mkCmd:   defaultCommandFunc,
 	}
 	for _, o := range opts {
 		o(m)
 	}
 	return m
+}
+
+func defaultCommandFunc(ctx context.Context, name string, args ...string) *exec.Cmd {
+	return exec.CommandContext(ctx, name, args...)
 }
 
 // Create registers a new VM with the given config.
@@ -58,7 +62,9 @@ func (m *QEMUManager) Create(_ context.Context, cfg Config) (*VM, error) {
 }
 
 // Start launches the QEMU process for the VM identified by id.
-func (m *QEMUManager) Start(_ context.Context, id string) error {
+// The ctx parameter controls the command lifecycle; cancelling ctx will kill
+// the QEMU process via exec.CommandContext.
+func (m *QEMUManager) Start(ctx context.Context, id string) error {
 	v, err := m.store.Resolve(id)
 	if err != nil {
 		return fmt.Errorf("qemu start %s: %w", id, err)
@@ -66,7 +72,7 @@ func (m *QEMUManager) Start(_ context.Context, id string) error {
 	if err := v.transition(StateStarting); err != nil {
 		return fmt.Errorf("qemu start %s: %w", id, err)
 	}
-	cmd := m.buildCmd(v.Cfg)
+	cmd := m.buildCmd(ctx, v.Cfg)
 
 	var stdout io.Writer = &v.logBuf
 	if v.Cfg.Attach {
@@ -217,7 +223,7 @@ func (m *QEMUManager) List() []*VM {
 	return m.store.List()
 }
 
-func (m *QEMUManager) buildCmd(cfg Config) *exec.Cmd {
+func (m *QEMUManager) buildCmd(ctx context.Context, cfg Config) *exec.Cmd {
 	args := []string{
 		"-m", cfg.Memory,
 		"-drive", "file=" + cfg.ImagePath + ",format=raw,if=virtio",
@@ -233,7 +239,8 @@ func (m *QEMUManager) buildCmd(cfg Config) *exec.Cmd {
 	args = append(args, buildNetworkCfgArgs(cfg)...)
 	args = append(args, buildVolumeArgs(cfg.Volumes)...)
 
-	return m.mkCmd(m.qemuBin, args...)
+	cmd := m.mkCmd(ctx, m.qemuBin, args...)
+	return cmd
 }
 
 // buildNetArgs returns the QEMU network arguments for cfg.

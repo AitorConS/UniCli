@@ -15,7 +15,7 @@ import (
 
 // fakeQEMUCmd returns a vm.CommandFunc suitable for tests.
 func fakeQEMUCmd(block bool) vm.CommandFunc {
-	return func(_ string, _ ...string) *exec.Cmd {
+	return func(_ context.Context, _ string, _ ...string) *exec.Cmd {
 		if block {
 			if runtime.GOOS == "windows" {
 				return exec.Command("powershell", "-Command", "while ($true) { Start-Sleep -Seconds 3600 }")
