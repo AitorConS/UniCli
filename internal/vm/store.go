@@ -7,19 +7,36 @@ import (
 	"time"
 )
 
-// Store is a thread-safe in-memory registry of VMs.
-type Store struct {
+// Store is the interface for a VM registry. Implementations may persist
+// state to disk (FileStore) or keep it in memory only (MemoryStore).
+type Store interface {
+	Create(cfg Config) (*VM, error)
+	Get(id string) (*VM, error)
+	Resolve(nameOrID string) (*VM, error)
+	List() []*VM
+	Remove(id string) error
+	Save(v *VM) error
+	Restore() error
+}
+
+// MemoryStore is a thread-safe in-memory registry of VMs.
+type MemoryStore struct {
 	mu  sync.RWMutex
 	vms map[string]*VM
 }
 
-// NewStore returns an empty Store.
-func NewStore() *Store {
-	return &Store{vms: make(map[string]*VM)}
+// NewMemoryStore returns an empty in-memory Store.
+func NewMemoryStore() *MemoryStore {
+	return &MemoryStore{vms: make(map[string]*VM)}
 }
 
-// Create registers a new VM with the given config and returns it.
-func (s *Store) Create(cfg Config) (*VM, error) {
+// NewStore returns an empty in-memory Store.
+// Deprecated: use NewMemoryStore for clarity.
+func NewStore() *MemoryStore {
+	return NewMemoryStore()
+}
+
+func (s *MemoryStore) Create(cfg Config) (*VM, error) {
 	id, err := newID()
 	if err != nil {
 		return nil, fmt.Errorf("create vm: generate id: %w", err)
@@ -37,8 +54,7 @@ func (s *Store) Create(cfg Config) (*VM, error) {
 	return v, nil
 }
 
-// Get returns the VM with the given exact id or an error if not found.
-func (s *Store) Get(id string) (*VM, error) {
+func (s *MemoryStore) Get(id string) (*VM, error) {
 	s.mu.RLock()
 	v, ok := s.vms[id]
 	s.mu.RUnlock()
@@ -48,25 +64,20 @@ func (s *Store) Get(id string) (*VM, error) {
 	return v, nil
 }
 
-// Resolve looks up a VM by name, exact ID, or unique ID prefix (in that order).
-// Returns an error if nothing matches or if a prefix matches more than one VM.
-func (s *Store) Resolve(nameOrID string) (*VM, error) {
+func (s *MemoryStore) Resolve(nameOrID string) (*VM, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// exact ID
 	if v, ok := s.vms[nameOrID]; ok {
 		return v, nil
 	}
 
-	// name match
 	for _, v := range s.vms {
 		if v.Cfg.Name == nameOrID {
 			return v, nil
 		}
 	}
 
-	// ID prefix match
 	var matched *VM
 	for id, v := range s.vms {
 		if len(nameOrID) <= len(id) && id[:len(nameOrID)] == nameOrID {
@@ -83,8 +94,7 @@ func (s *Store) Resolve(nameOrID string) (*VM, error) {
 	return nil, fmt.Errorf("vm %q not found", nameOrID)
 }
 
-// List returns a snapshot of all VMs in the store.
-func (s *Store) List() []*VM {
+func (s *MemoryStore) List() []*VM {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	out := make([]*VM, 0, len(s.vms))
@@ -94,8 +104,7 @@ func (s *Store) List() []*VM {
 	return out
 }
 
-// Remove deletes the VM with the given exact id. Returns an error if not found.
-func (s *Store) Remove(id string) error {
+func (s *MemoryStore) Remove(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.vms[id]; !ok {
@@ -104,6 +113,12 @@ func (s *Store) Remove(id string) error {
 	delete(s.vms, id)
 	return nil
 }
+
+// Save is a no-op for MemoryStore; state lives only in memory.
+func (s *MemoryStore) Save(_ *VM) error { return nil }
+
+// Restore is a no-op for MemoryStore; there is nothing to restore from.
+func (s *MemoryStore) Restore() error { return nil }
 
 func newID() (string, error) {
 	b := make([]byte, 6)

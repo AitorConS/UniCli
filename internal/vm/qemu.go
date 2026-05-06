@@ -15,6 +15,10 @@ import (
 	"github.com/AitorConS/unikernel-engine/internal/network"
 )
 
+var defaultCommandFunc CommandFunc = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+	return exec.CommandContext(ctx, name, args...)
+}
+
 const gracePeriod = 30 * time.Second
 
 // CommandFunc builds an exec.Cmd. Defaults to exec.CommandContext; replaceable in tests.
@@ -28,9 +32,14 @@ func WithCommandFunc(fn CommandFunc) Option {
 	return func(m *QEMUManager) { m.mkCmd = fn }
 }
 
+// WithStore injects a custom Store implementation (e.g. FileStore for persistence).
+func WithStore(s Store) Option {
+	return func(m *QEMUManager) { m.store = s }
+}
+
 // QEMUManager implements Manager by spawning qemu-system-x86_64 processes.
 type QEMUManager struct {
-	store   *Store
+	store   Store
 	qemuBin string
 	mkCmd   CommandFunc
 }
@@ -38,7 +47,7 @@ type QEMUManager struct {
 // NewQEMUManager returns a QEMUManager using qemuBin as the QEMU executable.
 func NewQEMUManager(qemuBin string, opts ...Option) *QEMUManager {
 	m := &QEMUManager{
-		store:   NewStore(),
+		store:   NewMemoryStore(),
 		qemuBin: qemuBin,
 		mkCmd:   defaultCommandFunc,
 	}
@@ -48,9 +57,8 @@ func NewQEMUManager(qemuBin string, opts ...Option) *QEMUManager {
 	return m
 }
 
-func defaultCommandFunc(ctx context.Context, name string, args ...string) *exec.Cmd {
-	return exec.CommandContext(ctx, name, args...)
-}
+// Store returns the underlying Store for lifecycle operations like Restore.
+func (m *QEMUManager) Store() Store { return m.store }
 
 // Create registers a new VM with the given config.
 func (m *QEMUManager) Create(_ context.Context, cfg Config) (*VM, error) {
@@ -101,6 +109,7 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 		_ = cmd.Process.Kill()
 		return fmt.Errorf("qemu start %s: %w", id, err)
 	}
+	_ = m.store.Save(v)
 	if v.Cfg.NetworkName != "" && len(v.Cfg.PortMaps) > 0 {
 		if err := network.SetupTAPPortForwarding(v.Cfg.NetworkName, v.Cfg.IPAddress, toNetworkPortForwards(v.Cfg.PortMaps)); err != nil {
 			slog.Warn("qemu start: failed to set up TAP port forwarding", "vm_id", id, "err", err)
@@ -130,6 +139,7 @@ func (m *QEMUManager) Stop(ctx context.Context, id string) error {
 	if err := v.transition(StateStopping); err != nil {
 		return fmt.Errorf("qemu stop %s: %w", id, err)
 	}
+	_ = m.store.Save(v)
 	v.mu.RLock()
 	proc := v.proc
 	v.mu.RUnlock()
@@ -165,6 +175,7 @@ func (m *QEMUManager) Kill(_ context.Context, id string) error {
 	if err := v.transition(StateStopping); err != nil {
 		return fmt.Errorf("qemu kill %s: %w", id, err)
 	}
+	_ = m.store.Save(v)
 	v.mu.RLock()
 	proc := v.proc
 	v.mu.RUnlock()
@@ -333,6 +344,7 @@ func (m *QEMUManager) monitor(v *VM, cmd *exec.Cmd) {
 	if err := v.transition(StateStopped); err != nil {
 		slog.Debug("monitor: transition to stopped", "vm_id", v.ID, "err", err)
 	}
+	_ = m.store.Save(v)
 }
 
 // toNetworkPortForwards converts vm.PortMap slices to network.PortForward.

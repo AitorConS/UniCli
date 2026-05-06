@@ -82,20 +82,21 @@ type VMInfo struct {
 
 // VMDetail is the full serialisable representation of a VM.
 type VMDetail struct {
-	ID        string            `json:"id"`
-	State     string            `json:"state"`
-	Image     string            `json:"image"`
-	Name      string            `json:"name,omitempty"`
-	Memory    string            `json:"memory"`
-	CPUs      int               `json:"cpus"`
-	Ports     []PortMapSpec     `json:"ports,omitempty"`
-	Env       []string          `json:"env,omitempty"`
-	Volumes   []VolumeMountSpec `json:"volumes,omitempty"`
-	IPAddress string            `json:"ip_address,omitempty"`
-	GatewayIP string            `json:"gateway_ip,omitempty"`
-	CreatedAt string            `json:"created_at"`
-	StartedAt *string           `json:"started_at,omitempty"`
-	StoppedAt *string           `json:"stopped_at,omitempty"`
+	ID              string            `json:"id"`
+	State           string            `json:"state"`
+	Image           string            `json:"image"`
+	Name            string            `json:"name,omitempty"`
+	Memory          string            `json:"memory"`
+	CPUs            int               `json:"cpus"`
+	Ports           []PortMapSpec     `json:"ports,omitempty"`
+	Env             []string          `json:"env,omitempty"`
+	Volumes         []VolumeMountSpec `json:"volumes,omitempty"`
+	IPAddress       string            `json:"ip_address,omitempty"`
+	GatewayIP       string            `json:"gateway_ip,omitempty"`
+	CreatedAt       string            `json:"created_at"`
+	StartedAt       *string           `json:"started_at,omitempty"`
+	StoppedAt       *string           `json:"stopped_at,omitempty"`
+	DaemonRecovered bool              `json:"daemon_recovered,omitempty"`
 }
 
 // LogsResponse carries the captured serial console output for a VM.

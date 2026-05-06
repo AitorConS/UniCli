@@ -123,6 +123,9 @@ type VM struct {
 	StartedAt *time.Time
 	// StoppedAt is when the QEMU process exited (nil until then).
 	StoppedAt *time.Time
+	// DaemonRecovered is true when this VM was recovered from a previous
+	// daemon run. The original QEMU process is gone; the VM is in StateStopped.
+	DaemonRecovered bool
 
 	mu            sync.RWMutex
 	proc          process

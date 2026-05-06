@@ -54,10 +54,15 @@ func newRootCmd() *cobra.Command {
 }
 
 func serve(ctx context.Context, socketPath, qemuBin, registryAddr, storePath string) error {
-	mgr := vm.NewQEMUManager(qemuBin)
+	mgr := vm.NewQEMUManager(qemuBin, vm.WithStore(vm.NewFileStore(vmsDir(storePath))))
 
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
+
+	store := mgr.Store()
+	if err := store.Restore(); err != nil {
+		slog.Warn("unid: failed to restore VMs from disk", "err", err)
+	}
 
 	vmSrv, err := api.NewServer(mgr, socketPath, stop, version)
 	if err != nil {
@@ -67,13 +72,13 @@ func serve(ctx context.Context, socketPath, qemuBin, registryAddr, storePath str
 	slog.Info("unid listening", "socket", socketPath, "qemu", qemuBin)
 
 	if registryAddr != "" {
-		store, err := image.NewStore(storePath)
+		imgStore, err := image.NewStore(storePath)
 		if err != nil {
 			return fmt.Errorf("unid: image store: %w", err)
 		}
 		regSrv := &http.Server{
 			Addr:    registryAddr,
-			Handler: registry.NewServer(store).Handler(),
+			Handler: registry.NewServer(imgStore).Handler(),
 		}
 		go func() {
 			slog.Info("registry listening", "addr", registryAddr)
@@ -109,4 +114,12 @@ func defaultStorePath() string {
 		return ".uni/images"
 	}
 	return home + "/.uni/images"
+}
+
+func vmsDir(storePath string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ".uni/vms"
+	}
+	return home + "/.uni/vms"
 }

@@ -288,18 +288,19 @@ func toInfo(v *vm.VM) VMInfo {
 
 func toDetail(v *vm.VM) VMDetail {
 	d := VMDetail{
-		ID:        v.ID,
-		State:     string(v.GetState()),
-		Image:     v.Cfg.ImagePath,
-		Name:      v.Cfg.Name,
-		Memory:    v.Cfg.Memory,
-		CPUs:      v.Cfg.CPUs,
-		Ports:     portMapsToSpec(v.Cfg.PortMaps),
-		Env:       v.Cfg.Env,
-		Volumes:   volumeMountsToSpec(v.Cfg.Volumes),
-		IPAddress: v.Cfg.IPAddress,
-		GatewayIP: v.Cfg.GatewayIP,
-		CreatedAt: v.CreatedAt.Format(time.RFC3339),
+		ID:              v.ID,
+		State:           string(v.GetState()),
+		Image:           v.Cfg.ImagePath,
+		Name:            v.Cfg.Name,
+		Memory:          v.Cfg.Memory,
+		CPUs:            v.Cfg.CPUs,
+		Ports:           portMapsToSpec(v.Cfg.PortMaps),
+		Env:             v.Cfg.Env,
+		Volumes:         volumeMountsToSpec(v.Cfg.Volumes),
+		IPAddress:       v.Cfg.IPAddress,
+		GatewayIP:       v.Cfg.GatewayIP,
+		CreatedAt:       v.CreatedAt.Format(time.RFC3339),
+		DaemonRecovered: v.DaemonRecovered,
 	}
 	startedAt, stoppedAt := v.GetTimes()
 	if startedAt != nil {
