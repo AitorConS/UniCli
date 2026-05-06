@@ -60,6 +60,28 @@ const (
 	HealthUnknown HealthStatus = "unknown"
 )
 
+// RestartPolicy determines when a VM is automatically restarted after exiting.
+type RestartPolicy string
+
+const (
+	// RestartNever means the VM is never automatically restarted.
+	RestartNever RestartPolicy = "never"
+	// RestartOnFailure means the VM is restarted only if it exits with a non-zero
+	// exit code (crash).
+	RestartOnFailure RestartPolicy = "on-failure"
+	// RestartAlways means the VM is always restarted regardless of exit status,
+	// unless explicitly stopped.
+	RestartAlways RestartPolicy = "always"
+)
+
+// RestartConfig controls automatic VM restart behaviour.
+type RestartConfig struct {
+	// Policy is the restart policy: "never", "on-failure", or "always".
+	Policy RestartPolicy
+	// MaxRetries is the maximum number of restart attempts. 0 means unlimited.
+	MaxRetries int
+}
+
 // HealthCheckConfig defines how to probe a VM for liveness.
 type HealthCheckConfig struct {
 	// Type is "tcp" or "http". For HTTP, a GET request is made to Path.
@@ -109,6 +131,8 @@ type Config struct {
 	GatewayIP string
 	// HealthCheck configures liveness probing for the VM. Nil disables probing.
 	HealthCheck *HealthCheckConfig
+	// Restart controls automatic restart behaviour when the VM exits.
+	Restart RestartConfig
 }
 
 // process abstracts an OS process for testability.
@@ -161,6 +185,8 @@ type VM struct {
 	DaemonRecovered bool
 	// HealthStatus is the latest probe result. "unknown" if no health check.
 	HealthStatus HealthStatus
+	// RestartCount is the number of times this VM has been restarted.
+	RestartCount int
 
 	mu            sync.RWMutex
 	proc          process
@@ -168,6 +194,7 @@ type VM struct {
 	logBuf        safeBuffer
 	logPipeReader io.Reader
 	logPipeWriter *io.PipeWriter
+	explicitStop  bool
 }
 
 // Done returns a channel that is closed when the VM reaches StateStopped.
@@ -214,6 +241,28 @@ func (v *VM) SetHealthStatus(s HealthStatus) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	v.HealthStatus = s
+}
+
+// GetRestartCount returns the number of times this VM has been restarted.
+func (v *VM) GetRestartCount() int {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	return v.RestartCount
+}
+
+// SetExplicitStop marks the VM as explicitly stopped by the user.
+// When true, the monitor goroutine will not attempt to restart the VM.
+func (v *VM) SetExplicitStop() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.explicitStop = true
+}
+
+// IsExplicitStop returns whether the VM was explicitly stopped.
+func (v *VM) IsExplicitStop() bool {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	return v.explicitStop
 }
 
 // transition atomically moves v to state to, validating the edge and logging.

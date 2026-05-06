@@ -30,6 +30,7 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 		ipAddr      string
 		network     string
 		healthCheck string
+		restart     string
 	)
 	cmd := &cobra.Command{
 		Use:   "run <image>",
@@ -104,6 +105,13 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 				}
 				params.HealthCheck = &hc
 			}
+			if restart != "" {
+				rp, err := parseRestartPolicy(restart)
+				if err != nil {
+					return fmt.Errorf("run: %w", err)
+				}
+				params.Restart = &rp
+			}
 			for _, pm := range portMaps {
 				params.PortMaps = append(params.PortMaps, api.PortMapSpec{
 					HostPort:  pm.HostPort,
@@ -141,6 +149,7 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 	cmd.Flags().StringVar(&ipAddr, "ip", "", "static IP address (requires --network)")
 	cmd.Flags().StringVar(&network, "network", "", "TAP interface name to attach (Linux only)")
 	cmd.Flags().StringVar(&healthCheck, "health-check", "", "health check: tcp:PORT or http:PORT:/path")
+	cmd.Flags().StringVar(&restart, "restart", "", "restart policy: never, on-failure, always[:max-retries]")
 	return cmd
 }
 
@@ -331,4 +340,24 @@ func parseHealthCheck(spec string) (api.HealthCheckSpec, error) {
 		}
 	}
 	return hc, nil
+}
+
+func parseRestartPolicy(spec string) (api.RestartSpec, error) {
+	parts := strings.SplitN(spec, ":", 2)
+	policy := strings.ToLower(parts[0])
+	if policy != string(vm.RestartNever) && policy != string(vm.RestartOnFailure) && policy != string(vm.RestartAlways) {
+		return api.RestartSpec{}, fmt.Errorf("restart policy must be never, on-failure, or always, got %q", policy)
+	}
+	rs := api.RestartSpec{Policy: policy}
+	if len(parts) == 2 {
+		maxRetries, err := strconv.Atoi(parts[1])
+		if err != nil {
+			return api.RestartSpec{}, fmt.Errorf("restart max-retries must be a number: %w", err)
+		}
+		if maxRetries < 0 {
+			return api.RestartSpec{}, fmt.Errorf("restart max-retries must be >= 0, got %d", maxRetries)
+		}
+		rs.MaxRetries = maxRetries
+	}
+	return rs, nil
 }

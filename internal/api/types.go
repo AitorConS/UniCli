@@ -53,6 +53,7 @@ type RunParams struct {
 	IPAddress   string            `json:"ip_address,omitempty"`
 	GatewayIP   string            `json:"gateway_ip,omitempty"`
 	HealthCheck *HealthCheckSpec  `json:"health_check,omitempty"`
+	Restart     *RestartSpec      `json:"restart,omitempty"`
 }
 
 // HealthCheckSpec is the wire representation of a health check configuration.
@@ -63,6 +64,12 @@ type HealthCheckSpec struct {
 	Interval int    `json:"interval_seconds,omitempty"`
 	Timeout  int    `json:"timeout_seconds,omitempty"`
 	Retries  int    `json:"retries,omitempty"`
+}
+
+// RestartSpec is the wire representation of a restart policy.
+type RestartSpec struct {
+	Policy     string `json:"policy"`
+	MaxRetries int    `json:"max_retries,omitempty"`
 }
 
 // StopParams are the parameters for VM.Stop.
@@ -107,6 +114,8 @@ type VMDetail struct {
 	StoppedAt       *string           `json:"stopped_at,omitempty"`
 	DaemonRecovered bool              `json:"daemon_recovered,omitempty"`
 	Health          string            `json:"health,omitempty"`
+	RestartCount    int               `json:"restart_count,omitempty"`
+	RestartPolicy   string            `json:"restart_policy,omitempty"`
 }
 
 // LogsResponse carries the captured serial console output for a VM.

@@ -19,6 +19,7 @@ type vmState struct {
 	StartedAt       *time.Time `json:"started_at,omitempty"`
 	StoppedAt       *time.Time `json:"stopped_at,omitempty"`
 	DaemonRecovered bool       `json:"daemon_recovered,omitempty"`
+	RestartCount    int        `json:"restart_count,omitempty"`
 }
 
 // FileStore is a Store that persists VM state to disk as JSON files.
@@ -96,13 +97,14 @@ func (s *FileStore) Restore() error {
 			continue
 		}
 		v := &VM{
-			ID:        st.ID,
-			Cfg:       st.Config,
-			State:     st.State,
-			CreatedAt: st.CreatedAt,
-			StartedAt: st.StartedAt,
-			StoppedAt: st.StoppedAt,
-			done:      make(chan struct{}),
+			ID:           st.ID,
+			Cfg:          st.Config,
+			State:        st.State,
+			CreatedAt:    st.CreatedAt,
+			StartedAt:    st.StartedAt,
+			StoppedAt:    st.StoppedAt,
+			RestartCount: st.RestartCount,
+			done:         make(chan struct{}),
 		}
 
 		switch st.State {
@@ -139,6 +141,7 @@ func (s *FileStore) writeState(v *VM) error {
 		StartedAt:       v.StartedAt,
 		StoppedAt:       v.StoppedAt,
 		DaemonRecovered: v.DaemonRecovered,
+		RestartCount:    v.RestartCount,
 	}
 	v.mu.RUnlock()
 

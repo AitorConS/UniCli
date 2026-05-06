@@ -157,6 +157,12 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *R
 			Retries:  p.HealthCheck.Retries,
 		}
 	}
+	if p.Restart != nil {
+		cfg.Restart = vm.RestartConfig{
+			Policy:     vm.RestartPolicy(p.Restart.Policy),
+			MaxRetries: p.Restart.MaxRetries,
+		}
+	}
 	v, err := s.mgr.Create(ctx, cfg)
 	if err != nil {
 		return nil, &RPCError{Code: -32000, Message: err.Error()}
@@ -312,6 +318,8 @@ func toDetail(v *vm.VM) VMDetail {
 		CreatedAt:       v.CreatedAt.Format(time.RFC3339),
 		DaemonRecovered: v.DaemonRecovered,
 		Health:          string(v.GetHealthStatus()),
+		RestartCount:    v.GetRestartCount(),
+		RestartPolicy:   string(v.Cfg.Restart.Policy),
 	}
 	startedAt, stoppedAt := v.GetTimes()
 	if startedAt != nil {

@@ -142,6 +142,7 @@ func (m *QEMUManager) Stop(ctx context.Context, id string) error {
 	}
 	_ = m.store.Save(v)
 	m.hchecker.Stop(v.ID)
+	v.SetExplicitStop()
 	v.mu.RLock()
 	proc := v.proc
 	v.mu.RUnlock()
@@ -179,6 +180,7 @@ func (m *QEMUManager) Kill(_ context.Context, id string) error {
 	}
 	_ = m.store.Save(v)
 	m.hchecker.Stop(v.ID)
+	v.SetExplicitStop()
 	v.mu.RLock()
 	proc := v.proc
 	v.mu.RUnlock()
@@ -323,13 +325,14 @@ func buildNetworkCfgArgs(cfg Config) []string {
 }
 
 func (m *QEMUManager) monitor(v *VM, cmd *exec.Cmd) {
-	_ = cmd.Wait()
+	exitErr := cmd.Wait()
 	now := time.Now()
 	v.mu.Lock()
 	v.StoppedAt = &now
 	if v.logPipeWriter != nil {
 		_ = v.logPipeWriter.Close()
 	}
+	explicitStop := v.explicitStop
 	v.mu.Unlock()
 	if v.Cfg.NetworkName != "" && len(v.Cfg.PortMaps) > 0 {
 		if err := network.TeardownTAPPortForwarding(v.Cfg.NetworkName, v.Cfg.IPAddress, toNetworkPortForwards(v.Cfg.PortMaps)); err != nil {
@@ -349,9 +352,76 @@ func (m *QEMUManager) monitor(v *VM, cmd *exec.Cmd) {
 		slog.Debug("monitor: transition to stopped", "vm_id", v.ID, "err", err)
 	}
 	_ = m.store.Save(v)
+	m.hchecker.Stop(v.ID)
+
+	if explicitStop {
+		slog.Info("monitor: vm stopped explicitly, not restarting", "vm_id", v.ID)
+		return
+	}
+	if v.Cfg.Restart.Policy == RestartNever || v.Cfg.Restart.Policy == "" {
+		return
+	}
+	shouldRestart := false
+	switch v.Cfg.Restart.Policy {
+	case RestartAlways:
+		shouldRestart = true
+	case RestartOnFailure:
+		if exitErr != nil {
+			shouldRestart = true
+		}
+	}
+	if !shouldRestart {
+		slog.Info("monitor: vm exited normally, not restarting", "vm_id", v.ID, "policy", v.Cfg.Restart.Policy)
+		return
+	}
+	maxRetries := v.Cfg.Restart.MaxRetries
+	if maxRetries > 0 {
+		v.mu.Lock()
+		restartCount := v.RestartCount
+		v.mu.Unlock()
+		if restartCount >= maxRetries {
+			slog.Info("monitor: max retries reached, not restarting", "vm_id", v.ID, "retries", restartCount, "max", maxRetries)
+			return
+		}
+	}
+	go m.restartVM(v)
 }
 
-// toNetworkPortForwards converts vm.PortMap slices to network.PortForward.
+// restartVM creates a replacement VM with the same config, removes the old
+// one, and starts the replacement. Uses exponential backoff capped at 30s.
+func (m *QEMUManager) restartVM(old *VM) {
+	old.mu.Lock()
+	restartCount := old.RestartCount
+	old.mu.Unlock()
+
+	backoff := time.Duration(1<<uint(restartCount)) * time.Second
+	if backoff > 30*time.Second {
+		backoff = 30 * time.Second
+	}
+	slog.Info("monitor: restarting vm", "vm_id", old.ID, "attempt", restartCount+1, "backoff", backoff)
+	time.Sleep(backoff)
+
+	ctx := context.Background()
+	cfg := old.Cfg
+	newVM, err := m.store.Create(cfg)
+	if err != nil {
+		slog.Error("monitor: failed to create replacement vm", "vm_id", old.ID, "err", err)
+		return
+	}
+	newVM.mu.Lock()
+	newVM.RestartCount = restartCount + 1
+	newVM.mu.Unlock()
+	_ = m.store.Save(newVM)
+
+	if err := m.Start(ctx, newVM.ID); err != nil {
+		slog.Error("monitor: failed to start replacement vm", "vm_id", newVM.ID, "err", err)
+		return
+	}
+	slog.Info("monitor: replacement vm started", "old_id", old.ID, "new_id", newVM.ID)
+	if err := m.store.Remove(old.ID); err != nil {
+		slog.Warn("monitor: failed to remove old vm from store", "vm_id", old.ID, "err", err)
+	}
+}
 func toNetworkPortForwards(pms []PortMap) []network.PortForward {
 	out := make([]network.PortForward, len(pms))
 	for i, pm := range pms {
