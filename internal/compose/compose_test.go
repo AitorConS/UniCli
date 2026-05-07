@@ -315,3 +315,122 @@ services:
 	require.NoError(t, err)
 	require.Len(t, f.Volumes, 0)
 }
+
+func TestParse_HealthCheckTCP(t *testing.T) {
+	data := []byte(`
+version: "1"
+services:
+  api:
+    image: api:latest
+    health_check: "tcp:8080"
+`)
+	f, err := compose.Parse(data)
+	require.NoError(t, err)
+	require.Equal(t, "tcp:8080", f.Services["api"].HealthCheck)
+}
+
+func TestParse_HealthCheckHTTP(t *testing.T) {
+	data := []byte(`
+version: "1"
+services:
+  web:
+    image: web:latest
+    health_check: "http:80/health"
+`)
+	f, err := compose.Parse(data)
+	require.NoError(t, err)
+	require.Equal(t, "http:80/health", f.Services["web"].HealthCheck)
+}
+
+func TestParse_HealthCheckInvalid(t *testing.T) {
+	_, err := compose.Parse([]byte(`
+version: "1"
+services:
+  api:
+    image: api:latest
+    health_check: "udp:80"
+`))
+	require.ErrorContains(t, err, "health_check")
+}
+
+func TestParse_HealthCheckBadPort(t *testing.T) {
+	_, err := compose.Parse([]byte(`
+version: "1"
+services:
+  api:
+    image: api:latest
+    health_check: "tcp:abc"
+`))
+	require.ErrorContains(t, err, "health_check")
+}
+
+func TestParse_HealthCheckMissingPort(t *testing.T) {
+	_, err := compose.Parse([]byte(`
+version: "1"
+services:
+  api:
+    image: api:latest
+    health_check: "tcp"
+`))
+	require.ErrorContains(t, err, "health_check")
+}
+
+func TestParse_RestartNever(t *testing.T) {
+	data := []byte(`
+version: "1"
+services:
+  api:
+    image: api:latest
+    restart: never
+`)
+	f, err := compose.Parse(data)
+	require.NoError(t, err)
+	require.Equal(t, "never", f.Services["api"].Restart)
+}
+
+func TestParse_RestartAlwaysWithRetries(t *testing.T) {
+	data := []byte(`
+version: "1"
+services:
+  api:
+    image: api:latest
+    restart: "always:5"
+`)
+	f, err := compose.Parse(data)
+	require.NoError(t, err)
+	require.Equal(t, "always:5", f.Services["api"].Restart)
+}
+
+func TestParse_RestartInvalid(t *testing.T) {
+	_, err := compose.Parse([]byte(`
+version: "1"
+services:
+  api:
+    image: api:latest
+    restart: always
+    health_check: "tcp:bad"
+`))
+	require.Error(t, err)
+}
+
+func TestParse_RestartBadPolicy(t *testing.T) {
+	_, err := compose.Parse([]byte(`
+version: "1"
+services:
+  api:
+    image: api:latest
+    restart: invalid
+`))
+	require.ErrorContains(t, err, "restart")
+}
+
+func TestParse_RestartBadRetries(t *testing.T) {
+	_, err := compose.Parse([]byte(`
+version: "1"
+services:
+  api:
+    image: api:latest
+    restart: "on-failure:abc"
+`))
+	require.ErrorContains(t, err, "restart")
+}

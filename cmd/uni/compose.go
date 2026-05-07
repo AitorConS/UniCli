@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"text/tabwriter"
+	"time"
 
 	"github.com/AitorConS/unikernel-engine/internal/api"
 	"github.com/AitorConS/unikernel-engine/internal/compose"
@@ -151,6 +152,12 @@ func newComposeUpCmd(socketPath, storePath *string) *cobra.Command {
 				}
 				state.Services[name] = info.ID
 				fmt.Fprintf(cmd.OutOrStdout(), "started %s → %s\n", name, info.ID)
+
+				if svc.HealthCheck != "" {
+					if err := waitForHealthy(cmd, client, info.ID, name, 60*time.Second); err != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "warning: service %q not healthy: %v\n", name, err)
+					}
+				}
 			}
 
 			return writeState(composeFile, state)
@@ -431,6 +438,20 @@ func buildServiceRunParams(svc compose.Service, diskPath, mem, storePath string)
 		return api.RunParams{}, fmt.Errorf("volumes: %w", err)
 	}
 	params.Volumes = volSpecs
+	if svc.HealthCheck != "" {
+		hc, err := parseHealthCheck(svc.HealthCheck)
+		if err != nil {
+			return api.RunParams{}, fmt.Errorf("health_check: %w", err)
+		}
+		params.HealthCheck = &hc
+	}
+	if svc.Restart != "" {
+		rs, err := parseRestartPolicy(svc.Restart)
+		if err != nil {
+			return api.RunParams{}, fmt.Errorf("restart: %w", err)
+		}
+		params.Restart = &rs
+	}
 	return params, nil
 }
 
@@ -445,4 +466,25 @@ func parseComposePortSpec(s string) (api.PortMapSpec, error) {
 		GuestPort: pm.GuestPort,
 		Protocol:  string(pm.Protocol),
 	}, nil
+}
+
+const healthCheckInterval = 500 * time.Millisecond
+
+func waitForHealthy(cmd *cobra.Command, client *api.Client, id, name string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		info, err := client.Get(cmd.Context(), id)
+		if err != nil {
+			return fmt.Errorf("get vm status: %w", err)
+		}
+		if info.Health == "healthy" {
+			fmt.Fprintf(cmd.OutOrStdout(), "service %s is healthy\n", name)
+			return nil
+		}
+		if info.Health == "unhealthy" {
+			return fmt.Errorf("service %s is unhealthy", name)
+		}
+		time.Sleep(healthCheckInterval)
+	}
+	return fmt.Errorf("timed out waiting for %s to become healthy", name)
 }

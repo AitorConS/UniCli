@@ -16,23 +16,16 @@ type File struct {
 
 // Service describes a single unikernel service.
 type Service struct {
-	// Image is a name:tag reference or file path.
-	Image string `yaml:"image"`
-	// Memory is the QEMU memory string (e.g. "256M").
-	Memory string `yaml:"memory"`
-	// CPUs is the number of virtual CPUs; 0 uses QEMU default.
-	CPUs int `yaml:"cpus"`
-	// DependsOn lists services that must start before this one.
-	DependsOn []string `yaml:"depends_on"`
-	// Networks lists logical network names to attach.
-	Networks []string `yaml:"networks"`
-	// Environment is a list of KEY=VALUE pairs.
+	Image       string   `yaml:"image"`
+	Memory      string   `yaml:"memory"`
+	CPUs        int      `yaml:"cpus"`
+	DependsOn   []string `yaml:"depends_on"`
+	Networks    []string `yaml:"networks"`
 	Environment []string `yaml:"environment"`
-	// Ports is a list of host:guest[/proto] port mapping strings.
-	Ports []string `yaml:"ports"`
-	// Volumes is a list of "name:guestpath[:ro]" volume mount strings.
-	// Volume names must reference a top-level volumes entry.
-	Volumes []string `yaml:"volumes"`
+	Ports       []string `yaml:"ports"`
+	Volumes     []string `yaml:"volumes"`
+	HealthCheck string   `yaml:"health_check,omitempty"`
+	Restart     string   `yaml:"restart,omitempty"`
 }
 
 // Network describes a logical network.
