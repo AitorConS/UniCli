@@ -30,11 +30,11 @@ uni CLI (cobra) → Unix socket → unid daemon → KVM/QEMU wrapper
                  Nanos kernel (C+ASM fork) ← image loader
 ```
 
-**CLI (`cmd/uni/`)** — one file per subcommand, cobra, zero business logic, all work delegated to `unid` via Unix socket. Always has `--output json` flag.
+**CLI (`cmd/uni/`)** — one file per subcommand, cobra, zero business logic, all work delegated to `unid` via Unix socket. Always has `--output json` flag. Subcommands: `run`, `build`, `images`, `rmi`, `push`, `pull`, `ps`, `status`, `logs`, `stop`, `rm`, `inspect`, `exec`, `compose`, `volume`, `network`, `kernel`, `pkg`, `cp`, `upgrade`.
 
-**Daemon (`cmd/unid/`)** — persistent process, Unix socket API (JSON-RPC 2.0), cluster-aware scheduling.
+**Daemon (`cmd/unid/`)** — persistent process, Unix socket API (JSON-RPC 2.0), cluster-aware scheduling. Creates `~/.uni/networks/` Network Store on startup.
 
-**API (`internal/api/`)** — JSON-RPC 2.0 over Unix domain socket. Methods: `VM.Run`, `VM.Stop`, `VM.Kill`, `VM.Signal`, `VM.Remove`, `VM.List`, `VM.Get`, `VM.Logs`, `VM.Inspect`.
+**API (`internal/api/`)** — JSON-RPC 2.0 over Unix domain socket. Methods: `VM.Run`, `VM.Stop`, `VM.Kill`, `VM.Signal`, `VM.Remove`, `VM.List`, `VM.Get`, `VM.Logs`, `VM.Inspect`, `Network.Create`, `Network.List`, `Network.Get`, `Network.Remove`, `Network.AllocateIP`, `Network.ReleaseIP`.
 
 **VM Manager (`internal/vm/`)** — KVM/QEMU wrapper. `VM` struct is concurrent-safe (`sync.RWMutex`). State machine: `created → starting → running → stopping → stopped`. KVM ioctls wrapped in testable interfaces — never call ioctls directly in business logic.
 
@@ -46,7 +46,7 @@ uni CLI (cobra) → Unix socket → unid daemon → KVM/QEMU wrapper
 
 **Volume System (`internal/volume/`)** — named persistent virtio-blk disks at `~/.uni/volumes/<name>/disk.img`. Sparse files via seek+write. Created with `uni volume create`, mounted with `uni run -v name:/guest/path[:ro]`. Survive VM restarts.
 
-**Compose (`internal/compose/`)** — YAML parser + validator. Topological sort via Kahn's algorithm with cycle detection. Writes `.uni-compose-state.json` alongside compose file: `{"project": "...", "services": {"frontend": "<vm-id>", "backend": "<vm-id>"}}`.
+**Compose (`internal/compose/`)** — YAML parser + validator. Topological sort via Kahn's algorithm with cycle detection. Writes `.uni-compose-state.json` alongside compose file: `{"project": "...", "services": {"frontend": "<vm-id>", "backend": "<vm-id>"}, "created_networks": ["mynet"]}`. Networks section creates/destroys bridges on `compose up`/`compose down`.
 
 **Kernel Tools (`internal/tools/`)** — auto-downloads `mkfs`, `kernel.img`, `boot.img` from GitHub releases to `~/.uni/tools/`. Handles version checking and updates. Platform-specific mkfs resolution.
 
@@ -62,7 +62,7 @@ uni CLI (cobra) → Unix socket → unid daemon → KVM/QEMU wrapper
 | Config | TOML (daemon), JSON (manifests), YAML (compose) |
 | DI | Manual constructor injection — no framework |
 | Image format | JSON manifest + raw disk, SHA256 content-addressable |
-| Networking | TAP + Linux bridge; internal DNS in `unid` |
+| Networking | TAP + Linux bridge with IPAM; `~/.uni/networks/<name>/` store; dynamic `uni-br-<name>` bridges; auto IP allocation from /24 subnets in 10.100.0.0/16 |
 
 ## Code Rules
 
@@ -98,7 +98,7 @@ Self-hosted runner needed for `integration-tests` (`runs-on: [self-hosted, linux
 
 ## Phase Status
 
-Currently in **Phase 7** (Orchestrator) — phases 7.0–7.4 complete.
+Currently in **Phase 7** (Orchestrator) — phases 7.0–7.5 complete.
 
 | Phase | Status | Key deliverables |
 |---|---|---|
@@ -114,8 +114,9 @@ Currently in **Phase 7** (Orchestrator) — phases 7.0–7.4 complete.
 | 7.2 — Health Checks | ✅ done | `HealthChecker` (TCP/HTTP probes), `--health-check` flag, `HealthStatus` on VM/VMDetail, configurable interval/timeout/retries |
 | 7.3 — Auto-Restart | ✅ done | `RestartPolicy` (never/on-failure/always), `--restart` flag, exponential backoff, `RestartCount`, `explicitStop` tracking |
 | 7.4 — Service/Status | ✅ done | `uni status` command, health/restart columns in `uni ps`, `RestartSpec` in API |
-| 7.5 — IPAM + Networks | ⬜ | Subnet allocator, bridge-per-network, internal DNS resolver, `uni network` command |
-| 7.6 — Integration | ⬜ | Compose health checks, compose restart policies, e2e test, AGENTS.md update |
+| 7.5 — IPAM + Networks | ✅ done | Network Store + IPAM (`internal/network/store.go`), `uni network create/ls/inspect/rm`, dynamic bridges (`uni-br-<name>`), `uni run --network <name>` auto-allocates IP, compose network integration, JSON-RPC `Network.*` endpoints |
+| 7.6 — DNS | ⬜ | Internal DNS resolver in `unid`, name-to-IP resolution for VMs |
+| 7.7 — Integration | ⬜ | Compose health checks, compose restart policies, e2e test, AGENTS.md update |
 | 8 — Registry & Distribution | ⬜ | OCI-compatible registry, image signing, JWT auth (basic server/client exists) |
 | 9 — Build System | ⬜ | Multi-language `uni build` (Go/Node/Python/Rust), `unikernel.toml`, multi-arch |
 | 10 — Observability | ⬜ | Prometheus metrics, web dashboard, multi-node cluster, daemon persistence |
@@ -139,14 +140,43 @@ Phases must be fully tested and stable before advancing. A phase is not done if 
 - Restart policy `always` restarts on any exit (including clean shutdown) unless `Stop()` or `Kill()` was called, which sets `explicitStop`. `on-failure` only restarts on non-zero exit code. `never` (default) never restarts.
 - `restartVM()` creates a NEW VM with the same Config — `StateStopped` is terminal, the old VM is removed from the store and replaced.
 - Exponential backoff: 1s, 2s, 4s, 8s, 16s, capped at 30s. Controlled by `RestartCount` on the VM.
+- Network Store persists in `~/.uni/networks/<name>/` with `meta.json` (Network struct) and `state.json` (allocated IPs). IPAM assigns from `.2` upward; gateway is always `.1`.
+- `uni network create <name>` auto-allocates a `/24` from `10.100.0.0/16` if `--subnet` is not specified. Bridges are named `uni-br-<name>`.
+- `uni run --network <name>` resolves the network, auto-allocates an IP via IPAM, and passes `BridgeName`/`SubnetMask`/`GatewayIP` to the daemon.
+- Compose `networks:` section creates networks on `compose up` and removes them on `compose down`. Services with `networks:` get auto-allocated IPs.
 
-## QEMU Command Construction
+## CLI Subcommands
+
+| Command | Flags | Description |
+|---|---|---|
+| `uni run <image>` | `--memory`, `-p/--port`, `-e/--env`, `--env-file`, `--name`, `--rm`, `-v/--volume`, `--attach`, `-d/--detach`, `--ip`, `--network`, `--health-check`, `--restart` | Create and start a unikernel VM |
+| `uni build` | `--name`, `--tag`, `--pkg` | Build a unikernel image |
+| `uni images` | — | List local images |
+| `uni rmi` | — | Remove a local image |
+| `uni push` | — | Push image to registry |
+| `uni pull` | — | Pull image from registry |
+| `uni ps` | — | List running VMs |
+| `uni status` | — | Show VM summary with health/restart info |
+| `uni logs <id>` | — | Show captured serial console output |
+| `uni stop <id>` | `--force` | Stop (or kill) a VM |
+| `uni rm <id>` | — | Remove a stopped VM |
+| `uni inspect <id>` | — | Full VM detail as JSON |
+| `uni exec <id> <cmd>` | — | Execute command in VM |
+| `uni compose up/down/ps/logs` | `--volumes` | Multi-service orchestration |
+| `uni volume create/ls/rm/inspect` | — | Manage persistent volumes |
+| `uni network create/ls/inspect/rm` | `--subnet`, `--driver` | Manage networks |
+| `uni run --network <name>` | `--network`, `--ip` | Auto-allocate IP from network |
+| `uni kernel check/update/list/use` | — | Manage kernel tools |
+| `uni pkg list/search/get/remove` | — | Manage packages |
+| `uni cp <src> <dst>` | — | Copy files to/from VM |
+| `uni upgrade` | — | Self-update CLI binary |
 
 Build pipeline in `internal/vm/qemu.go::buildCmd`:
 - Network priority: `NetworkName` (TAP) > `PortMaps` non-empty (SLIRP `hostfwd`) > `-net none`.
 - SLIRP user-mode (`-netdev user,...,hostfwd=tcp::8080-:80`) does not need TAP/bridge or root, works on any platform — preferred for `-p`.
 - Env vars are passed via `-fw_cfg name=opt/uni/env,string=KEY=VAL\n…`. The kernel reads this at boot.
-- Network config (static IP) is passed via `-fw_cfg name=opt/uni/network,string=IP/CIDR,GATEWAY`. Format: `10.0.0.2/24,10.0.0.1`.
+- Network config (static IP) is passed via `-fw_cfg name=opt/uni/network,string=IP/MASK,GATEWAY`. Format uses `Config.SubnetMask` (not hardcoded `/24`): `10.0.0.2/24,10.0.0.1`.
+- Bridge and TAP interfaces use dynamic names from the network store: bridge = `uni-br-<network-name>`, TAP remains as `Config.NetworkName`.
 - Volumes attach as extra `-drive file=...,format=raw,if=virtio,index=N` after the boot disk (index 0).
 
 ## Kernel Patches (uni-specific additions to Nanos fork)
@@ -202,8 +232,9 @@ Both the CLI and the kernel are independently versioned with semver.
 | Boot-time network injection | `kernel/src/kernel/stage3.c::startup` calls `net_inject_from_fw_cfg(root)` |
 | Kernel tools download/cache | `internal/tools/mkfs.go::ResolveMkfs` + `internal/tools/version.go` |
 | Kernel version check (build) | `cmd/uni/build.go::checkKernelUpdateForBuild` |
-| Network config fw_cfg | `internal/vm/qemu.go::buildNetworkCfgArgs` — `--ip` → `opt/uni/network` |
-| Host-side bridge/TAP | `internal/network/bridge_linux.go` — `CreateBridge`, `AttachTAP`, `DestroyBridge` |
+| Network config fw_cfg | `internal/vm/qemu.go::buildNetworkCfgArgs` — uses `Config.SubnetMask` (not hardcoded `/24`); format: `IP/MASK,GW` |
+| Host-side bridge/TAP | `internal/network/bridge_linux.go` — `CreateBridge`, `AttachTAP`, `DestroyBridge`; bridge name from `Config.BridgeName` (not hardcoded) |
+| Network Store + IPAM | `internal/network/store.go` — `Store` with `Create/Get/List/Remove/AllocateIP/ReleaseIP`; persistent `~/.uni/networks/<name>/` with `meta.json` + `state.json`; subnet allocator from 10.100.0.0/16 |
 | iptables port forwarding | `internal/network/portfwd_linux.go` — DNAT + MASQUERADE with `-i tapName` |
 | Package index/store | `internal/package/package.go` — `Store`, `FetchIndex`, `Search`, `Extract`, `ExtractedFiles`, `RemoveAll` |
 | Package download with SHA-256 | `internal/package/package.go::Download` — verifies `Package.SHA256` after download, removes archive on mismatch; skips when empty |
@@ -223,6 +254,9 @@ Both the CLI and the kernel are independently versioned with semver.
 | Health check CLI flag | `cmd/uni/run.go::parseHealthCheck` — `--health-check tcp:PORT/http:PORT:/path` |
 | VM persistence | `internal/vm/filestore.go` — `FileStore` with `state.json`, `Restore()` on daemon startup |
 | VM status command | `cmd/uni/status.go` — `uni status` shows VM summary with health/restart info |
+| Network CLI | `cmd/uni/network.go` — `uni network create/ls/inspect/rm`, `--subnet` and `--driver` flags |
+| Network config auto-IP | `cmd/uni/run.go` — `--network <name>` resolves network from store, auto-allocates IP via IPAM |
+| Compose network integration | `cmd/uni/compose.go` — creates networks in `compose up`, assigns IPs to services, removes in `compose down` |
 
 ## Internal Packages
 
@@ -231,7 +265,7 @@ Both the CLI and the kernel are independently versioned with semver.
 | `internal/api/` | JSON-RPC 2.0 server/client over Unix socket. VM lifecycle RPC methods. |
 | `internal/compose/` | Compose YAML parser, validator, Kahn's topological sort with cycle detection, shared volumes. |
 | `internal/image/` | Image build pipeline (ELF validation, mkfs, SHA256, `BuildManifest` with package files) + content-addressable store. |
-| `internal/network/` | TAP device + Linux bridge setup, iptables port forwarding. Linux-only (`//go:build linux`). |
+| `internal/network/` | TAP device + Linux bridge setup, iptables port forwarding (Linux-only), **Network Store + IPAM** (`store.go`) with persistent `~/.uni/networks/<name>/` directories. Network type with subnet allocator (10.100.0.0/16 → /24 blocks), AllocateIP/ReleaseIP, bridge-per-network convention (`uni-br-<name>`). |
 | `internal/package/` | Package index fetch, local store, download (SHA-256 verified), extract (tar.gz), search, remove. |
 | `internal/registry/` | HTTP image registry server (simple, non-OCI) + push/pull client. |
 | `internal/scheduler/` | **Empty stub.** Placeholder for Phase 7.5+ orchestrator features. |
@@ -243,6 +277,6 @@ Both the CLI and the kernel are independently versioned with semver.
 
 | Path | Phase | Purpose |
 |---|---|---|
-| `internal/scheduler/` | 7.5 | IPAM, subnet allocator, internal DNS |
+| `internal/scheduler/` | 7.6+ | Internal DNS resolver, name-to-IP resolution |
 | `pkg/` | 6+ | Public shared libraries |
 | `tests/unit/` | — | Empty; unit tests are co-located with source files |
