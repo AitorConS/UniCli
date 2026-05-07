@@ -46,7 +46,7 @@ uni CLI (cobra) → Unix socket → unid daemon → KVM/QEMU wrapper
 
 **Volume System (`internal/volume/`)** — named persistent virtio-blk disks at `~/.uni/volumes/<name>/disk.img`. Sparse files via seek+write. Created with `uni volume create`, mounted with `uni run -v name:/guest/path[:ro]`. Survive VM restarts.
 
-**Compose (`internal/compose/`)** — YAML parser + validator. Topological sort via Kahn's algorithm with cycle detection. Writes `.uni-compose-state.json` alongside compose file: `{"project": "...", "services": {"frontend": "<vm-id>", "backend": "<vm-id>"}, "created_networks": ["mynet"]}`. Networks section creates/destroys bridges on `compose up`/`compose down`.
+**Compose (`internal/compose/`)** — YAML parser + validator. Topological sort via Kahn's algorithm with cycle detection. Writes `.uni-compose-state.json` alongside compose file: `{"project": "...", "services": {"frontend": "<vm-id>", "backend": "<vm-id>"}, "created_networks": ["mynet"]}`. Networks section creates/destroys bridges on `compose up`/`compose down`. Services support `health_check` (tcp/http probes) and `restart` (never/on-failure/always[:N]) directives.
 
 **Kernel Tools (`internal/tools/`)** — auto-downloads `mkfs`, `kernel.img`, `boot.img` from GitHub releases to `~/.uni/tools/`. Handles version checking and updates. Platform-specific mkfs resolution.
 
@@ -98,7 +98,7 @@ Self-hosted runner needed for `integration-tests` (`runs-on: [self-hosted, linux
 
 ## Phase Status
 
-Currently in **Phase 7** (Orchestrator) — phases 7.0–7.5 complete.
+Currently in **Phase 7** (Orchestrator) — phases 7.0–7.7 complete.
 
 | Phase | Status | Key deliverables |
 |---|---|---|
@@ -116,7 +116,7 @@ Currently in **Phase 7** (Orchestrator) — phases 7.0–7.5 complete.
 | 7.4 — Service/Status | ✅ done | `uni status` command, health/restart columns in `uni ps`, `RestartSpec` in API |
 | 7.5 — IPAM + Networks | ✅ done | Network Store + IPAM (`internal/network/store.go`), `uni network create/ls/inspect/rm`, dynamic bridges (`uni-br-<name>`), `uni run --network <name>` auto-allocates IP, compose network integration, JSON-RPC `Network.*` endpoints |
 | 7.6 — DNS | ⬜ | Internal DNS resolver in `unid`, name-to-IP resolution for VMs |
-| 7.7 — Integration | ⬜ | Compose health checks, compose restart policies, e2e test, AGENTS.md update |
+| 7.7 — Integration | ✅ done | Compose health checks (`health_check:`) and restart policies (`restart:`), wait-for-healthy in `compose up`, parser validation, AGENTS.md update |
 | 8 — Registry & Distribution | ⬜ | OCI-compatible registry, image signing, JWT auth (basic server/client exists) |
 | 9 — Build System | ⬜ | Multi-language `uni build` (Go/Node/Python/Rust), `unikernel.toml`, multi-arch |
 | 10 — Observability | ⬜ | Prometheus metrics, web dashboard, multi-node cluster, daemon persistence |
@@ -257,6 +257,9 @@ Both the CLI and the kernel are independently versioned with semver.
 | Network CLI | `cmd/uni/network.go` — `uni network create/ls/inspect/rm`, `--subnet` and `--driver` flags |
 | Network config auto-IP | `cmd/uni/run.go` — `--network <name>` resolves network from store, auto-allocates IP via IPAM |
 | Compose network integration | `cmd/uni/compose.go` — creates networks in `compose up`, assigns IPs to services, removes in `compose down` |
+| Compose health checks | `cmd/uni/compose.go` — `health_check:` field in compose services, mapped to `api.HealthCheckSpec`, wait-for-healthy in `compose up` |
+| Compose restart policies | `cmd/uni/compose.go` — `restart:` field in compose services, mapped to `api.RestartSpec` |
+| Compose YAML validation | `internal/compose/parser.go` — `validateHealthCheckSpec`, `validateRestartSpec` |
 
 ## Internal Packages
 
