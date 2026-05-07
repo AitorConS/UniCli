@@ -13,6 +13,7 @@ import (
 
 	"github.com/AitorConS/unikernel-engine/internal/api"
 	"github.com/AitorConS/unikernel-engine/internal/image"
+	"github.com/AitorConS/unikernel-engine/internal/network"
 	"github.com/AitorConS/unikernel-engine/internal/registry"
 	"github.com/AitorConS/unikernel-engine/internal/vm"
 	"github.com/spf13/cobra"
@@ -56,6 +57,11 @@ func newRootCmd() *cobra.Command {
 func serve(ctx context.Context, socketPath, qemuBin, registryAddr, storePath string) error {
 	mgr := vm.NewQEMUManager(qemuBin, vm.WithStore(vm.NewFileStore(vmsDir(storePath))))
 
+	netStore, err := network.NewStore(networksDir())
+	if err != nil {
+		return fmt.Errorf("unid: network store: %w", err)
+	}
+
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
@@ -64,7 +70,7 @@ func serve(ctx context.Context, socketPath, qemuBin, registryAddr, storePath str
 		slog.Warn("unid: failed to restore VMs from disk", "err", err)
 	}
 
-	vmSrv, err := api.NewServer(mgr, socketPath, stop, version)
+	vmSrv, err := api.NewServer(mgr, netStore, socketPath, stop, version)
 	if err != nil {
 		return fmt.Errorf("unid: vm server: %w", err)
 	}
@@ -122,4 +128,12 @@ func vmsDir(storePath string) string {
 		return ".uni/vms"
 	}
 	return home + "/.uni/vms"
+}
+
+func networksDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ".uni/networks"
+	}
+	return home + "/.uni/networks"
 }

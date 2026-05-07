@@ -57,6 +57,7 @@ func newRootCmd() *cobra.Command {
 		newPkgCmd(),
 		newCpCmd(&socketPath),
 		newUpgradeCmd(&socketPath),
+		newNetworkCmd(&socketPath, &outputFmt),
 	)
 	return root
 }

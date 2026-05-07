@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/AitorConS/unikernel-engine/internal/api"
+	"github.com/AitorConS/unikernel-engine/internal/network"
 	"github.com/AitorConS/unikernel-engine/internal/vm"
 	"github.com/stretchr/testify/require"
 )
@@ -33,7 +34,9 @@ func startTestServer(t *testing.T) (*api.Client, context.CancelFunc) {
 	t.Helper()
 	socketPath := filepath.Join(t.TempDir(), "unid.sock")
 	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd(true)))
-	srv, err := api.NewServer(mgr, socketPath, nil, "")
+	netStore, err := network.NewStore(t.TempDir())
+	require.NoError(t, err)
+	srv, err := api.NewServer(mgr, netStore, socketPath, nil, "")
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -137,7 +140,9 @@ func TestServer_Run_WithPortsAndEnv(t *testing.T) {
 func TestServer_Run_AutoRemove(t *testing.T) {
 	socketPath := filepath.Join(t.TempDir(), "unid.sock")
 	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd(false)))
-	srv, err := api.NewServer(mgr, socketPath, nil, "")
+	netStore, err := network.NewStore(t.TempDir())
+	require.NoError(t, err)
+	srv, err := api.NewServer(mgr, netStore, socketPath, nil, "")
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -175,7 +180,9 @@ func TestServer_Run_AutoRemove(t *testing.T) {
 func TestServer_UnknownMethod(t *testing.T) {
 	socketPath := filepath.Join(t.TempDir(), "unid.sock")
 	mgr := vm.NewQEMUManager("fake-qemu")
-	srv, err := api.NewServer(mgr, socketPath, nil, "")
+	netStore, err := network.NewStore(t.TempDir())
+	require.NoError(t, err)
+	srv, err := api.NewServer(mgr, netStore, socketPath, nil, "")
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())

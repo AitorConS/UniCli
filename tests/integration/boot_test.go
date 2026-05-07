@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/AitorConS/unikernel-engine/internal/api"
+	"github.com/AitorConS/unikernel-engine/internal/network"
 	"github.com/AitorConS/unikernel-engine/internal/vm"
 	"github.com/stretchr/testify/require"
 )
@@ -31,7 +32,9 @@ func TestVMLifecycle(t *testing.T) {
 	img := makeTrivialImage(t)
 	mgr := vm.NewQEMUManager(defaultQEMU)
 
-	srv, err := api.NewServer(mgr, defaultSocket, nil, "")
+	netStore, err := network.NewStore(t.TempDir())
+	require.NoError(t, err)
+	srv, err := api.NewServer(mgr, netStore, defaultSocket, nil, "")
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)

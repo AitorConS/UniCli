@@ -129,6 +129,12 @@ type Config struct {
 	// GatewayIP is the gateway IP for the VM's network. Derived from IPAddress
 	// when using TAP networking. Used to assign an IP to the bridge interface.
 	GatewayIP string
+	// BridgeName is the Linux bridge interface name for the VM's network.
+	// When set, the daemon creates/destroys this bridge on VM start/stop.
+	BridgeName string
+	// SubnetMask is the CIDR mask for the VM's network (e.g. "24").
+	// Used to build the guest network configuration passed via fw_cfg.
+	SubnetMask string
 	// HealthCheck configures liveness probing for the VM. Nil disables probing.
 	HealthCheck *HealthCheckConfig
 	// Restart controls automatic restart behaviour when the VM exits.

@@ -9,6 +9,7 @@ import (
 
 	"github.com/AitorConS/unikernel-engine/internal/api"
 	"github.com/AitorConS/unikernel-engine/internal/compose"
+	"github.com/AitorConS/unikernel-engine/internal/network"
 	"github.com/AitorConS/unikernel-engine/internal/vm"
 	"github.com/stretchr/testify/require"
 )
@@ -40,7 +41,9 @@ func startComposeDaemon(t *testing.T) (*api.Client, string) {
 	t.Helper()
 	socketPath := filepath.Join(t.TempDir(), "unid.sock")
 	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd()))
-	srv, err := api.NewServer(mgr, socketPath, nil, "")
+	netStore, err := network.NewStore(t.TempDir())
+	require.NoError(t, err)
+	srv, err := api.NewServer(mgr, netStore, socketPath, nil, "")
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())

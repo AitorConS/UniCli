@@ -125,6 +125,68 @@ func (c *Client) DaemonVersion(_ context.Context) (string, error) {
 	return resp["version"], nil
 }
 
+// NetworkCreate creates a new network.
+func (c *Client) NetworkCreate(_ context.Context, name, subnet, driver string) (NetworkInfo, error) {
+	var info NetworkInfo
+	p := NetworkCreateParams{Name: name, Subnet: subnet, Driver: driver}
+	if err := c.call("Network.Create", p, &info); err != nil {
+		return NetworkInfo{}, fmt.Errorf("client network create: %w", err)
+	}
+	return info, nil
+}
+
+// NetworkList returns all networks.
+func (c *Client) NetworkList(_ context.Context) ([]NetworkInfo, error) {
+	var infos []NetworkInfo
+	if err := c.call("Network.List", nil, &infos); err != nil {
+		return nil, fmt.Errorf("client network list: %w", err)
+	}
+	return infos, nil
+}
+
+// NetworkGet returns a single network by name.
+func (c *Client) NetworkGet(_ context.Context, name string) (NetworkInfo, error) {
+	var info NetworkInfo
+	if err := c.call("Network.Get", struct {
+		Name string `json:"name"`
+	}{Name: name}, &info); err != nil {
+		return NetworkInfo{}, fmt.Errorf("client network get: %w", err)
+	}
+	return info, nil
+}
+
+// NetworkRemove deletes a network by name.
+func (c *Client) NetworkRemove(_ context.Context, name string) error {
+	if err := c.call("Network.Remove", struct {
+		Name string `json:"name"`
+	}{Name: name}, nil); err != nil {
+		return fmt.Errorf("client network remove: %w", err)
+	}
+	return nil
+}
+
+// NetworkAllocateIP allocates an IP address from the network's subnet.
+func (c *Client) NetworkAllocateIP(_ context.Context, networkName string) (string, error) {
+	var resp map[string]string
+	if err := c.call("Network.AllocateIP", struct {
+		Network string `json:"network"`
+	}{Network: networkName}, &resp); err != nil {
+		return "", fmt.Errorf("client network allocate ip: %w", err)
+	}
+	return resp["ip"], nil
+}
+
+// NetworkReleaseIP releases an allocated IP address back to the network.
+func (c *Client) NetworkReleaseIP(_ context.Context, networkName, ip string) error {
+	if err := c.call("Network.ReleaseIP", struct {
+		Network string `json:"network"`
+		IP      string `json:"ip"`
+	}{Network: networkName, IP: ip}, nil); err != nil {
+		return fmt.Errorf("client network release ip: %w", err)
+	}
+	return nil
+}
+
 // Inspect returns full details for the VM.
 func (c *Client) Inspect(_ context.Context, id string) (VMDetail, error) {
 	var detail VMDetail

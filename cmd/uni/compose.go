@@ -84,10 +84,31 @@ func newComposeUpCmd(socketPath, storePath *string) *cobra.Command {
 				}
 			}()
 
+			var createdNetworks []string
+			networkIPs := make(map[string]string)
+			for netName, netCfg := range f.Networks {
+				driver := netCfg.Driver
+				if driver == "" {
+					driver = "bridge"
+				}
+				_, getErr := client.NetworkGet(cmd.Context(), netName)
+				if getErr == nil {
+					fmt.Fprintf(cmd.OutOrStdout(), "network %s already exists, skipping\n", netName)
+					continue
+				}
+				_, createErr := client.NetworkCreate(cmd.Context(), netName, netCfg.Subnet, driver)
+				if createErr != nil {
+					return fmt.Errorf("compose up: create network %q: %w", netName, createErr)
+				}
+				createdNetworks = append(createdNetworks, netName)
+				fmt.Fprintf(cmd.OutOrStdout(), "created network %s\n", netName)
+			}
+
 			state := compose.State{
-				Project:        filepath.Base(filepath.Dir(composeFile)),
-				Services:       make(map[string]string, len(f.Services)),
-				CreatedVolumes: createdVolumes,
+				Project:         filepath.Base(filepath.Dir(composeFile)),
+				Services:        make(map[string]string, len(f.Services)),
+				CreatedVolumes:  createdVolumes,
+				CreatedNetworks: createdNetworks,
 			}
 
 			for _, name := range order {
@@ -105,6 +126,25 @@ func newComposeUpCmd(socketPath, storePath *string) *cobra.Command {
 					return fmt.Errorf("compose up: service %q: %w", name, buildErr)
 				}
 				params.Name = name
+
+				if len(svc.Networks) > 0 {
+					netName := svc.Networks[0]
+					netInfo, netErr := client.NetworkGet(cmd.Context(), netName)
+					if netErr != nil {
+						return fmt.Errorf("compose up: service %q network %q: %w", name, netName, netErr)
+					}
+					params.NetworkName = netName
+					params.BridgeName = netInfo.Bridge
+					params.GatewayIP = netInfo.Gateway
+					params.SubnetMask = extractMask(netInfo.Subnet)
+					ip, allocErr := client.NetworkAllocateIP(cmd.Context(), netName)
+					if allocErr != nil {
+						return fmt.Errorf("compose up: service %q allocate ip: %w", name, allocErr)
+					}
+					params.IPAddress = ip
+					networkIPs[name] = ip
+				}
+
 				info, runErr := client.Run(cmd.Context(), params)
 				if runErr != nil {
 					return fmt.Errorf("compose up: service %q: %w", name, runErr)
@@ -165,6 +205,14 @@ func newComposeDownCmd(socketPath, storePath *string) *cobra.Command {
 					}
 					fmt.Fprintf(cmd.OutOrStdout(), "removed volume %s\n", volName)
 				}
+			}
+
+			for _, netName := range state.CreatedNetworks {
+				if rmErr := client.NetworkRemove(cmd.Context(), netName); rmErr != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: remove network %s: %v\n", netName, rmErr)
+					continue
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "removed network %s\n", netName)
 			}
 
 			return removeState(args[0])

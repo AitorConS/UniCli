@@ -116,8 +116,15 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 		}
 	}
 	if v.Cfg.NetworkName != "" && v.Cfg.GatewayIP != "" {
-		bridgeName := "uni-br0"
-		cidr := v.Cfg.GatewayIP + "/24"
+		bridgeName := v.Cfg.BridgeName
+		if bridgeName == "" {
+			bridgeName = "uni-br0"
+		}
+		mask := v.Cfg.SubnetMask
+		if mask == "" {
+			mask = "24"
+		}
+		cidr := v.Cfg.GatewayIP + "/" + mask
 		if err := network.CreateBridge(network.BridgeConfig{Name: bridgeName, CIDR: cidr}); err != nil {
 			slog.Warn("qemu start: failed to create bridge", "bridge", bridgeName, "err", err)
 		}
@@ -320,7 +327,11 @@ func buildNetworkCfgArgs(cfg Config) []string {
 	if cfg.IPAddress == "" || cfg.GatewayIP == "" {
 		return nil
 	}
-	netCfg := cfg.IPAddress + "/24," + cfg.GatewayIP
+	netMask := cfg.SubnetMask
+	if netMask == "" {
+		netMask = "24"
+	}
+	netCfg := cfg.IPAddress + "/" + netMask + "," + cfg.GatewayIP
 	return []string{"-fw_cfg", "name=opt/uni/network,string=" + netCfg}
 }
 
@@ -340,7 +351,10 @@ func (m *QEMUManager) monitor(v *VM, cmd *exec.Cmd) {
 		}
 	}
 	if v.Cfg.NetworkName != "" && v.Cfg.GatewayIP != "" {
-		bridgeName := "uni-br0"
+		bridgeName := v.Cfg.BridgeName
+		if bridgeName == "" {
+			bridgeName = "uni-br0"
+		}
 		if err := network.DetachTAP(v.Cfg.NetworkName); err != nil {
 			slog.Warn("qemu monitor: failed to detach TAP from bridge", "tap", v.Cfg.NetworkName, "err", err)
 		}

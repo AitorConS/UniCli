@@ -52,6 +52,8 @@ type RunParams struct {
 	Attach      bool              `json:"attach,omitempty"`
 	IPAddress   string            `json:"ip_address,omitempty"`
 	GatewayIP   string            `json:"gateway_ip,omitempty"`
+	BridgeName  string            `json:"bridge_name,omitempty"`
+	SubnetMask  string            `json:"subnet_mask,omitempty"`
 	HealthCheck *HealthCheckSpec  `json:"health_check,omitempty"`
 	Restart     *RestartSpec      `json:"restart,omitempty"`
 }
@@ -128,4 +130,28 @@ type LogsResponse struct {
 // IDParams carries a single VM identifier.
 type IDParams struct {
 	ID string `json:"id"`
+}
+
+// NetworkCreateParams are the parameters for Network.Create.
+type NetworkCreateParams struct {
+	Name   string `json:"name"`
+	Subnet string `json:"subnet,omitempty"`
+	Driver string `json:"driver,omitempty"`
+}
+
+// NetworkInfo is the serialisable representation of a network.
+type NetworkInfo struct {
+	Name      string `json:"name"`
+	Driver    string `json:"driver"`
+	Subnet    string `json:"subnet"`
+	Gateway   string `json:"gateway"`
+	Bridge    string `json:"bridge"`
+	CreatedAt string `json:"created_at"`
+}
+
+// NetworkConnectParams connects a VM to a network.
+type NetworkConnectParams struct {
+	Network string `json:"network"`
+	VMID    string `json:"vm_id"`
+	IP      string `json:"ip,omitempty"`
 }

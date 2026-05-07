@@ -37,8 +37,8 @@ type Service struct {
 
 // Network describes a logical network.
 type Network struct {
-	// Driver is the network driver; only "bridge" is supported.
 	Driver string `yaml:"driver"`
+	Subnet string `yaml:"subnet,omitempty"`
 }
 
 // VolumeConfig describes a named volume defined at the top level of a compose file.
@@ -58,11 +58,8 @@ func (vc VolumeConfig) DefaultSize() string {
 
 // State records running VM IDs and created volumes for a compose project.
 type State struct {
-	// Project is the compose project name (directory basename).
-	Project string `json:"project"`
-	// Services maps service name to VM ID.
-	Services map[string]string `json:"services"`
-	// CreatedVolumes lists volume names that were created by "compose up"
-	// and should be removed on "compose down --volumes".
-	CreatedVolumes []string `json:"created_volumes,omitempty"`
+	Project         string            `json:"project"`
+	Services        map[string]string `json:"services"`
+	CreatedVolumes  []string          `json:"created_volumes,omitempty"`
+	CreatedNetworks []string          `json:"created_networks,omitempty"`
 }

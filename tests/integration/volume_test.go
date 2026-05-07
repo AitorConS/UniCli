@@ -14,6 +14,7 @@ import (
 
 	"github.com/AitorConS/unikernel-engine/internal/api"
 	"github.com/AitorConS/unikernel-engine/internal/image"
+	"github.com/AitorConS/unikernel-engine/internal/network"
 	"github.com/AitorConS/unikernel-engine/internal/tools"
 	"github.com/AitorConS/unikernel-engine/internal/vm"
 	"github.com/AitorConS/unikernel-engine/internal/volume"
@@ -66,7 +67,9 @@ func TestVolumePersistence(t *testing.T) {
 	require.NoError(t, err)
 
 	mgr := vm.NewQEMUManager(defaultQEMU)
-	srv, err := api.NewServer(mgr, defaultSocket, nil, "")
+	netStore, err := network.NewStore(t.TempDir())
+	require.NoError(t, err)
+	srv, err := api.NewServer(mgr, netStore, defaultSocket, nil, "")
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

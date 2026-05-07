@@ -67,8 +67,27 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 				}
 			}
 
-			if network != "" && len(ports) > 0 && ipAddr == "" {
-				return fmt.Errorf("run: port forwarding with TAP networking requires --ip")
+			var (
+				gwIP      string
+				bridgeNm  string
+				subnetMsk string
+			)
+			if network != "" {
+				client, err := api.Dial(*socketPath)
+				if err != nil {
+					return fmt.Errorf("run: connect to daemon: %w", err)
+				}
+				netInfo, err := client.NetworkGet(cmd.Context(), network)
+				if err != nil {
+					return fmt.Errorf("run: network %q not found: %w", network, err)
+				}
+				gwIP = netInfo.Gateway
+				bridgeNm = netInfo.Bridge
+				subnetMsk = extractMask(netInfo.Subnet)
+				if ipAddr != "" && gwIP == "" {
+					gwIP = gatewayIP(ipAddr)
+				}
+				_ = client.Close()
 			}
 
 			if cmd.Flags().Changed("attach") {
@@ -85,6 +104,16 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 				}
 			}()
 
+			if network != "" && ipAddr == "" {
+				allocatedIP, allocErr := client.NetworkAllocateIP(cmd.Context(), network)
+				if allocErr == nil {
+					ipAddr = allocatedIP
+					if gwIP == "" {
+						gwIP = gatewayIP(ipAddr)
+					}
+				}
+			}
+
 			params := api.RunParams{
 				ImagePath:   diskPath,
 				Memory:      memory,
@@ -96,7 +125,9 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 				Volumes:     volSpecs,
 				Attach:      !detach,
 				IPAddress:   ipAddr,
-				GatewayIP:   gatewayIP(ipAddr),
+				GatewayIP:   gwIP,
+				BridgeName:  bridgeNm,
+				SubnetMask:  subnetMsk,
 			}
 			if healthCheck != "" {
 				hc, err := parseHealthCheck(healthCheck)
@@ -147,7 +178,7 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 	cmd.Flags().BoolVar(&attach, "attach", false, "attach to VM serial console (blocks until VM stops)")
 	cmd.Flags().BoolVarP(&detach, "detach", "d", true, "run VM in the background")
 	cmd.Flags().StringVar(&ipAddr, "ip", "", "static IP address (requires --network)")
-	cmd.Flags().StringVar(&network, "network", "", "TAP interface name to attach (Linux only)")
+	cmd.Flags().StringVar(&network, "network", "", "network name to attach (managed by 'uni network'; Linux only)")
 	cmd.Flags().StringVar(&healthCheck, "health-check", "", "health check: tcp:PORT or http:PORT:/path")
 	cmd.Flags().StringVar(&restart, "restart", "", "restart policy: never, on-failure, always[:max-retries]")
 	return cmd
@@ -314,6 +345,14 @@ func gatewayIP(ipAddr string) string {
 	}
 	ip[3] = 1
 	return ip.String()
+}
+
+func extractMask(cidr string) string {
+	parts := strings.SplitN(cidr, "/", 2)
+	if len(parts) == 2 {
+		return parts[1]
+	}
+	return "24"
 }
 
 func parseHealthCheck(spec string) (api.HealthCheckSpec, error) {

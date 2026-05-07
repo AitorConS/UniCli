@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AitorConS/unikernel-engine/internal/network"
 	"github.com/AitorConS/unikernel-engine/internal/vm"
 )
 
@@ -17,8 +18,9 @@ import (
 // vm.Manager.
 type Server struct {
 	mgr        vm.Manager
+	netStore   *network.Store
 	listener   net.Listener
-	shutdownFn func() // called by Daemon.Shutdown RPC; may be nil
+	shutdownFn func()
 	version    string
 }
 
@@ -27,7 +29,7 @@ type Server struct {
 // pass nil to disable remote shutdown.
 // version is returned by Daemon.Version RPC; pass "" if unknown.
 // Any existing socket file at socketPath is removed before binding.
-func NewServer(mgr vm.Manager, socketPath string, shutdownFn func(), version string) (*Server, error) {
+func NewServer(mgr vm.Manager, netStore *network.Store, socketPath string, shutdownFn func(), version string) (*Server, error) {
 	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("api server remove stale socket: %w", err)
 	}
@@ -35,7 +37,7 @@ func NewServer(mgr vm.Manager, socketPath string, shutdownFn func(), version str
 	if err != nil {
 		return nil, fmt.Errorf("api server listen %s: %w", socketPath, err)
 	}
-	return &Server{mgr: mgr, listener: l, shutdownFn: shutdownFn, version: version}, nil
+	return &Server{mgr: mgr, netStore: netStore, listener: l, shutdownFn: shutdownFn, version: version}, nil
 }
 
 // Serve accepts connections and handles them until ctx is cancelled.
@@ -124,6 +126,18 @@ func (s *Server) dispatch(ctx context.Context, req *Request, conn net.Conn) (any
 		return s.handleDaemonShutdown()
 	case "Daemon.Version":
 		return s.handleDaemonVersion()
+	case "Network.Create":
+		return s.handleNetworkCreate(req.Params)
+	case "Network.List":
+		return s.handleNetworkList()
+	case "Network.Get":
+		return s.handleNetworkGet(req.Params)
+	case "Network.Remove":
+		return s.handleNetworkRemove(req.Params)
+	case "Network.AllocateIP":
+		return s.handleNetworkAllocateIP(req.Params)
+	case "Network.ReleaseIP":
+		return s.handleNetworkReleaseIP(req.Params)
 	default:
 		return nil, &RPCError{Code: -32601, Message: "method not found: " + req.Method}
 	}
@@ -146,6 +160,8 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *R
 		Attach:      p.Attach,
 		IPAddress:   p.IPAddress,
 		GatewayIP:   p.GatewayIP,
+		BridgeName:  p.BridgeName,
+		SubnetMask:  p.SubnetMask,
 	}
 	if p.HealthCheck != nil {
 		cfg.HealthCheck = &vm.HealthCheckConfig{
@@ -453,6 +469,96 @@ func (s *Server) handleAttach(ctx context.Context, params json.RawMessage, conn 
 			return
 		default:
 		}
+	}
+}
+
+func (s *Server) handleNetworkCreate(params json.RawMessage) (any, *RPCError) {
+	var p NetworkCreateParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+	}
+	n, err := s.netStore.Create(p.Name, p.Subnet, p.Driver)
+	if err != nil {
+		return nil, &RPCError{Code: -32000, Message: err.Error()}
+	}
+	return networkToInfo(n), nil
+}
+
+func (s *Server) handleNetworkList() (any, *RPCError) {
+	nets, err := s.netStore.List()
+	if err != nil {
+		return nil, &RPCError{Code: -32000, Message: err.Error()}
+	}
+	infos := make([]NetworkInfo, len(nets))
+	for i, n := range nets {
+		infos[i] = networkToInfo(n)
+	}
+	return infos, nil
+}
+
+func (s *Server) handleNetworkGet(params json.RawMessage) (any, *RPCError) {
+	var p struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+	}
+	n, err := s.netStore.Get(p.Name)
+	if err != nil {
+		return nil, &RPCError{Code: -32000, Message: err.Error()}
+	}
+	return networkToInfo(n), nil
+}
+
+func (s *Server) handleNetworkRemove(params json.RawMessage) (any, *RPCError) {
+	var p struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+	}
+	if err := s.netStore.Remove(p.Name); err != nil {
+		return nil, &RPCError{Code: -32000, Message: err.Error()}
+	}
+	return map[string]string{"status": "ok"}, nil
+}
+
+func (s *Server) handleNetworkAllocateIP(params json.RawMessage) (any, *RPCError) {
+	var p struct {
+		Network string `json:"network"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+	}
+	ip, err := s.netStore.AllocateIP(p.Network)
+	if err != nil {
+		return nil, &RPCError{Code: -32000, Message: err.Error()}
+	}
+	return map[string]string{"ip": ip.String()}, nil
+}
+
+func (s *Server) handleNetworkReleaseIP(params json.RawMessage) (any, *RPCError) {
+	var p struct {
+		Network string `json:"network"`
+		IP      string `json:"ip"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+	}
+	if err := s.netStore.ReleaseIP(p.Network, p.IP); err != nil {
+		return nil, &RPCError{Code: -32000, Message: err.Error()}
+	}
+	return map[string]string{"status": "ok"}, nil
+}
+
+func networkToInfo(n *network.Network) NetworkInfo {
+	return NetworkInfo{
+		Name:      n.Name,
+		Driver:    n.Driver,
+		Subnet:    n.Subnet,
+		Gateway:   n.Gateway,
+		Bridge:    n.Bridge,
+		CreatedAt: n.CreatedAt.Format(time.RFC3339),
 	}
 }
 
