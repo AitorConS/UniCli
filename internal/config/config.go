@@ -79,6 +79,15 @@ func DefaultPath() string {
 	return filepath.Join(home, ".jerboa", "config.toml")
 }
 
+// DaemonFilePath returns the client-owned daemon rendezvous file.
+func DaemonFilePath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(".jerboa", "daemon.json")
+	}
+	return filepath.Join(home, ".jerboa", "daemon.json")
+}
+
 // Load reads the config file at path. Returns defaults if the file does not exist.
 func Load(path string) (*Config, error) {
 	cfg := &Config{Hypervisor: "qemu"}
