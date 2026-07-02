@@ -192,6 +192,26 @@ default):
 `entrypoint`, `args`, and `copy_from` (`stage`, `src`, `dst`) directives; the
 final stage's output becomes the image binary.
 
+Build driver behavior to know:
+
+- Go builds add `-trimpath` and `-ldflags "-s -w"` by default to reduce guest
+  binary and image size. If custom build args include `-ldflags`, those args are
+  appended after the defaults and take precedence.
+- Node builds install production dependencies only when `node_modules` is
+  missing. If `package-lock.json` exists, the driver uses
+  `npm ci --omit=dev --no-audit --no-fund`; otherwise it uses
+  `npm install --omit=dev --no-audit --no-fund`.
+- Python builds cache dependency installs. `pip install` runs only when
+  `requirements.txt` or the Python version changes, tracked by
+  `packages/.jerboa-deps-stamp`. Delete `packages/` or that stamp file to force
+  a dependency reinstall. In the Flask example project, this reduces unchanged
+  rebuilds from about 22s to about 9s.
+
+Newly built images reserve a 4 MiB embedded boot filesystem partition instead
+of the previous 12 MiB layout, so they are about 8 MiB smaller (for example,
+`hello` drops from about 16.6 MiB to about 8.1 MiB). Older images are unchanged;
+rebuild an image to get the smaller layout.
+
 ### `jerboa images`
 
 List images stored by the daemon.
@@ -366,6 +386,11 @@ The config file supports more fields than the CLI subcommand currently edits. Th
 - `[daemon] token`
 
 Those are read by the codepath even though `jerboa config set` does not edit them yet.
+
+With `hypervisor = "qemu"`, the daemon automatically enables KVM when
+`/dev/kvm` is accessible by adding `-enable-kvm -cpu host`. If KVM is not
+available, QEMU falls back to TCG emulation and the daemon logs a warning.
+Firecracker still requires KVM.
 
 ---
 

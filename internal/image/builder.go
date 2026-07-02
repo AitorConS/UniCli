@@ -137,10 +137,6 @@ func (b *Builder) Build(ctx context.Context, cfg BuildConfig) (Manifest, error) 
 	if err != nil {
 		return Manifest{}, fmt.Errorf("build: stat image: %w", err)
 	}
-	digest, err := fileSHA256(tmpPath)
-	if err != nil {
-		return Manifest{}, fmt.Errorf("build: %w", err)
-	}
 
 	m := Manifest{
 		SchemaVersion: SchemaVersion,
@@ -152,11 +148,13 @@ func (b *Builder) Build(ctx context.Context, cfg BuildConfig) (Manifest, error) 
 			CPUs:   cfg.CPUs,
 			Ports:  cfg.Ports,
 		},
-		DiskDigest: digest,
-		DiskSize:   stat.Size(),
+		DiskSize: stat.Size(),
 	}
 
-	if err := b.store.Put(cfg.Name, cfg.Tag, m, tmpPath); err != nil {
+	// PutMove hashes the image once and renames it into the store instead of
+	// copying — the deferred os.Remove above becomes a no-op on success.
+	m, err = b.store.PutMove(cfg.Name, cfg.Tag, m, tmpPath)
+	if err != nil {
 		return Manifest{}, fmt.Errorf("build: store: %w", err)
 	}
 	return m, nil

@@ -35,34 +35,51 @@ func NewStore(root string) (*Store, error) {
 }
 
 // Put stores the disk image at diskPath and its manifest under name:tag.
+// The file at diskPath is copied and left untouched.
 func (s *Store) Put(name, tag string, m Manifest, diskPath string) error {
+	_, err := s.put(name, tag, m, diskPath, false)
+	return err
+}
+
+// PutMove stores like Put but moves diskPath into the store (rename, falling
+// back to copy across filesystems), avoiding a full rewrite of the disk image.
+// The file at diskPath is consumed on success. Returns the stored manifest
+// with DiskDigest populated.
+func (s *Store) PutMove(name, tag string, m Manifest, diskPath string) (Manifest, error) {
+	return s.put(name, tag, m, diskPath, true)
+}
+
+func (s *Store) put(name, tag string, m Manifest, diskPath string, move bool) (Manifest, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	digest, err := fileSHA256(diskPath)
 	if err != nil {
-		return fmt.Errorf("image store put: %w", err)
+		return Manifest{}, fmt.Errorf("image store put: %w", err)
 	}
 	m.DiskDigest = digest
 
 	imgDir := filepath.Join(s.root, stripPrefix(digest))
 	if err := os.MkdirAll(imgDir, 0o755); err != nil {
-		return fmt.Errorf("image store put mkdir: %w", err)
+		return Manifest{}, fmt.Errorf("image store put mkdir: %w", err)
 	}
-	if err := copyFile(diskPath, filepath.Join(imgDir, "disk.img")); err != nil {
-		return fmt.Errorf("image store put disk: %w", err)
+	dst := filepath.Join(imgDir, "disk.img")
+	if !move || os.Rename(diskPath, dst) != nil {
+		if err := copyFile(diskPath, dst); err != nil {
+			return Manifest{}, fmt.Errorf("image store put disk: %w", err)
+		}
 	}
 	data, err := Marshal(m)
 	if err != nil {
-		return fmt.Errorf("image store put manifest: %w", err)
+		return Manifest{}, fmt.Errorf("image store put manifest: %w", err)
 	}
 	if err := os.WriteFile(filepath.Join(imgDir, "manifest.json"), data, 0o644); err != nil {
-		return fmt.Errorf("image store put write manifest: %w", err)
+		return Manifest{}, fmt.Errorf("image store put write manifest: %w", err)
 	}
 	if err := s.addRef(name+":"+tag, stripPrefix(digest)); err != nil {
-		return fmt.Errorf("image store put ref: %w", err)
+		return Manifest{}, fmt.Errorf("image store put ref: %w", err)
 	}
-	return nil
+	return m, nil
 }
 
 // Get returns the manifest and disk image path for ref (name:tag or sha256:<hex>).

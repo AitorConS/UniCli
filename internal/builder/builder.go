@@ -2,6 +2,8 @@ package builder
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -221,7 +223,14 @@ func (n *NodeDriver) Build(ctx context.Context, dir string, opts Options) (Build
 	}
 
 	if _, err := os.Stat(filepath.Join(dir, "node_modules")); os.IsNotExist(err) {
-		installCmd := exec.CommandContext(ctx, "npm", "install", "--production")
+		// npm ci is faster and reproducible when a lockfile exists; --omit=dev
+		// replaces the deprecated --production. --no-audit/--no-fund skip
+		// network round-trips that only produce advisory output.
+		sub := "install"
+		if _, err := os.Stat(filepath.Join(dir, "package-lock.json")); err == nil {
+			sub = "ci"
+		}
+		installCmd := exec.CommandContext(ctx, "npm", sub, "--omit=dev", "--no-audit", "--no-fund")
 		installCmd.Dir = dir
 		w := opts.buildOutput()
 		installCmd.Stdout = w
@@ -330,29 +339,41 @@ func (p *PythonDriver) Build(ctx context.Context, dir string, opts Options) (Bui
 	}
 
 	var env map[string]string
-	if _, err := os.Stat(filepath.Join(dir, "requirements.txt")); err == nil {
-		// Download Linux x86_64 wheels regardless of the host OS.
-		// The unikernel runs on Linux/x86_64, so we need manylinux wheels, not
-		// Windows or macOS ones. --only-binary :all: prevents pip from falling
-		// back to source distributions that would compile for the host.
-		// ABI tag: "3.12" → "cp312", "3.9" → "cp39", etc.
-		abiTag := "cp" + strings.ReplaceAll(pythonVersion, ".", "")
-		pipCmd := exec.CommandContext(ctx, "pip", "install",
-			"-r", "requirements.txt",
-			"--target", "packages",
-			"--upgrade",
-			"--platform", "manylinux_2_17_x86_64",
-			"--python-version", pythonVersion,
-			"--implementation", "cp",
-			"--abi", abiTag,
-			"--only-binary", ":all:",
-		)
-		pipCmd.Dir = dir
-		w := opts.buildOutput()
-		pipCmd.Stdout = w
-		pipCmd.Stderr = w
-		if err := pipCmd.Run(); err != nil {
-			return BuildResult{}, fmt.Errorf("python driver: pip install: %w", err)
+	if reqData, err := os.ReadFile(filepath.Join(dir, "requirements.txt")); err == nil {
+		// Skip pip entirely when packages/ was already populated for the same
+		// requirements.txt and python version — pip resolution dominates
+		// rebuild time for unchanged projects. The stamp records a hash of
+		// both; any change invalidates it and triggers a full reinstall.
+		stampPath := filepath.Join(dir, "packages", ".jerboa-deps-stamp")
+		sum := sha256.Sum256(append([]byte(pythonVersion+"\n"), reqData...))
+		stamp := hex.EncodeToString(sum[:])
+		if prev, err := os.ReadFile(stampPath); err != nil || strings.TrimSpace(string(prev)) != stamp {
+			// Download Linux x86_64 wheels regardless of the host OS.
+			// The unikernel runs on Linux/x86_64, so we need manylinux wheels, not
+			// Windows or macOS ones. --only-binary :all: prevents pip from falling
+			// back to source distributions that would compile for the host.
+			// ABI tag: "3.12" → "cp312", "3.9" → "cp39", etc.
+			abiTag := "cp" + strings.ReplaceAll(pythonVersion, ".", "")
+			pipCmd := exec.CommandContext(ctx, "pip", "install",
+				"-r", "requirements.txt",
+				"--target", "packages",
+				"--upgrade",
+				"--platform", "manylinux_2_17_x86_64",
+				"--python-version", pythonVersion,
+				"--implementation", "cp",
+				"--abi", abiTag,
+				"--only-binary", ":all:",
+			)
+			pipCmd.Dir = dir
+			w := opts.buildOutput()
+			pipCmd.Stdout = w
+			pipCmd.Stderr = w
+			if err := pipCmd.Run(); err != nil {
+				return BuildResult{}, fmt.Errorf("python driver: pip install: %w", err)
+			}
+			if err := os.WriteFile(stampPath, []byte(stamp+"\n"), 0o644); err != nil {
+				return BuildResult{}, fmt.Errorf("python driver: write deps stamp: %w", err)
+			}
 		}
 		// pip installs to packages/; Python's default sys.path doesn't include it
 		env = map[string]string{"PYTHONPATH": "/packages"}
@@ -577,7 +598,11 @@ func (g *GoDriver) Build(ctx context.Context, dir string, opts Options) (BuildRe
 		output += ".exe"
 	}
 
-	args := []string{"build", "-o", output}
+	// Strip symbol tables and DWARF (-s -w) and trim host paths (-trimpath):
+	// guest binaries are never debugged in-image, and smaller binaries mean
+	// smaller unikernel images and faster mkfs/uploads. User BuildArgs are
+	// appended after these, so an explicit -ldflags there takes precedence.
+	args := []string{"build", "-trimpath", "-ldflags=-s -w", "-o", output}
 	if len(opts.BuildArgs) > 0 {
 		args = append(args, opts.BuildArgs...)
 	}

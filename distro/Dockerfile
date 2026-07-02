@@ -9,13 +9,19 @@ ARG FC_ARCH=x86_64
 
 # Runtime deps: qemu, networking for the firecracker tap device, e2fsprogs for
 # the image build toolchain, and certs/curl for runtime downloads.
+# Docs, man pages and locales are stripped: this rootfs is a headless daemon
+# distro, and `wsl --import` ships the flattened filesystem, so every file
+# removed here shrinks the tarball users download.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         qemu-system-x86 qemu-utils \
         iproute2 iptables \
         e2fsprogs \
         kmod \
         ca-certificates curl \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt \
+        /usr/share/doc /usr/share/man /usr/share/info /usr/share/lintian \
+        /usr/share/locale
 
 # Firecracker binary.
 RUN curl -fsSL "https://github.com/firecracker-microvm/firecracker/releases/download/${FIRECRACKER_VERSION}/firecracker-${FIRECRACKER_VERSION}-${FC_ARCH}.tgz" \

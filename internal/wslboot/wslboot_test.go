@@ -58,11 +58,15 @@ func TestEnsureDaemon_AlreadyHealthy(t *testing.T) {
 }
 
 func TestOpenLaunchLog(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	// os.UserHomeDir reads USERPROFILE on Windows and HOME elsewhere; set both
+	// so the test isolates the home dir on every platform.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	f, err := openLaunchLog()
 	require.NoError(t, err)
 	require.NoError(t, f.Close())
-	require.FileExists(t, filepath.Join(os.Getenv("HOME"), ".jerboa", "jerboad-wsl.log"))
+	require.FileExists(t, filepath.Join(home, ".jerboa", "jerboad-wsl.log"))
 }
 
 func TestWaitHealthy_Timeout(t *testing.T) {

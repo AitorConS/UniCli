@@ -15,7 +15,10 @@ enum partition {
 
 #define SECTOR_OFFSET 9ULL
 #define SECTOR_SIZE (1ULL << SECTOR_OFFSET)
-#define BOOTFS_SIZE (12 * MB)
+/* Boot filesystem partition size. Upstream Nanos reserves 12MB to leave room
+ * for klibs in the bootfs; jerboa images carry only kernel.img (~1.5MB), so
+ * 4MB keeps ample headroom while cutting 8MB of dead space from every image. */
+#define BOOTFS_SIZE (4 * MB)
 #define SEC_PER_TRACK 63
 #define HEADS 255
 #define MAX_CYL 1023

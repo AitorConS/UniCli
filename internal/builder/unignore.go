@@ -14,6 +14,7 @@ const UnignoreFile = ".unignore"
 var DefaultIgnorePatterns = []string{
 	".git",
 	".jerboa-build",
+	".jerboa-deps-stamp",
 	"node_modules",
 	"__pycache__",
 	".tox",
