@@ -67,13 +67,20 @@ jerboa build examples/hello --name hello --lang go
 jerboa run hello:latest --attach
 ```
 
+New to unikernels? `jerboa init` scaffolds a commented `unikernel.toml`,
+builds run preflight checks that catch boot failures before they happen, and
+`jerboa build --smoke` boot-tests the image as part of the build. Start with
+[Build Concepts](docs/build-concepts.md).
+
 ## Documentation
 
 - [Getting Started](docs/getting-started.md)
+- [Build Concepts](docs/build-concepts.md) — what a unikernel build actually does, explained from zero
 - [CLI Reference](docs/cli-reference.md)
 - [Compose](docs/compose.md)
 - [Architecture](docs/architecture.md)
 - [Observability](docs/observability.md)
+- [Troubleshooting](docs/troubleshooting.md) — common errors, decoded
 
 The short version:
 

@@ -93,7 +93,7 @@ func newPkgListCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&outputJSON, "output-json", false, "output as JSON")
-	cmd.Flags().StringVar(&source, "source", "jerboa", "package source: \"jerboa\" (default) or \"ops\"")
+	cmd.Flags().StringVar(&source, "source", "ops", "package source: \"ops\" (default) or \"jerboa\"")
 	return cmd
 }
 
@@ -160,7 +160,7 @@ func newPkgSearchCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&outputJSON, "output-json", false, "output as JSON")
-	cmd.Flags().StringVar(&source, "source", "jerboa", "package source: \"jerboa\" (default) or \"ops\"")
+	cmd.Flags().StringVar(&source, "source", "ops", "package source: \"ops\" (default) or \"jerboa\"")
 	return cmd
 }
 
@@ -250,7 +250,7 @@ func newPkgGetCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&source, "source", "jerboa", "package source: \"jerboa\" (default) or \"ops\"")
+	cmd.Flags().StringVar(&source, "source", "ops", "package source: \"ops\" (default) or \"jerboa\"")
 	return cmd
 }
 
@@ -323,7 +323,7 @@ func newPkgRemoveCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&source, "source", "jerboa", "package source: \"jerboa\" (default) or \"ops\"")
+	cmd.Flags().StringVar(&source, "source", "ops", "package source: \"ops\" (default) or \"jerboa\"")
 	return cmd
 }
 
@@ -489,11 +489,18 @@ func newPkgFromDockerCmd() *cobra.Command {
 		Use:   "from-docker <name>[:<version>] <image>",
 		Short: "Create a package from a binary inside a Docker image",
 		Long: `Extract a binary and its shared library dependencies from a Docker image
-and create a local package. Uses 'docker create' + 'docker cp' to extract
-the binary, then runs 'ldd' inside the container to discover shared libraries.
+and create a local package. Runs 'ldd' inside a temporary container to discover
+the shared libraries the binary needs.
 
-Example:
-  jerboa pkg from-docker node:20 node:20 --file /usr/local/bin/node --runtime node`,
+Without --file, the binary is derived from the image's own Entrypoint/Cmd and
+resolved on the container's PATH. Images whose entrypoint is a shell script
+(the common docker-entrypoint.sh pattern) cannot be imported automatically —
+a unikernel runs exactly one program with no shell — so those need an explicit
+--file pointing at the real binary the script eventually launches.
+
+Examples:
+  jerboa pkg from-docker node:20 node:20 --runtime node
+  jerboa pkg from-docker redis:7.2 redis:7.2 --file /usr/local/bin/redis-server`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, version := parsePkgRef(args[0])
@@ -504,7 +511,11 @@ Example:
 
 			filePath, _ := cmd.Flags().GetString("file")
 			if filePath == "" {
-				return fmt.Errorf("pkg from-docker: --file is required")
+				resolved, err := deriveDockerProgram(cmd, dockerImage)
+				if err != nil {
+					return fmt.Errorf("pkg from-docker: %w", err)
+				}
+				filePath = resolved
 			}
 
 			store, err := pkg.NewStore(pkgStorePath())
@@ -537,11 +548,51 @@ Example:
 			return nil
 		},
 	}
-	cmd.Flags().String("file", "", "Path to the binary inside the Docker image (required)")
+	cmd.Flags().String("file", "", "Path to the binary inside the Docker image (default: derived from the image's Entrypoint/Cmd)")
 	cmd.Flags().StringArrayVar(&libs, "libs", nil, "Additional library paths inside the container to include (repeatable)")
 	cmd.Flags().StringVar(&description, "description", "", "Package description")
 	cmd.Flags().StringVar(&runtimeName, "runtime", "", "Runtime family (e.g. node, python)")
 	return cmd
+}
+
+// deriveDockerProgram determines the binary to extract from a Docker image when
+// --file is not given: it reads the image's Entrypoint/Cmd, rejects shell
+// launchers (a unikernel cannot run them), and resolves bare names on the
+// container's PATH. It also surfaces the image's declared environment so the
+// user can bake relevant variables into unikernel.toml [env].
+func deriveDockerProgram(cmd *cobra.Command, dockerImage string) (string, error) {
+	cfg, err := pkg.InspectDockerImage(dockerImage)
+	if err != nil {
+		return "", err
+	}
+	candidate := cfg.ProgramCandidate()
+	if candidate == "" {
+		return "", fmt.Errorf("image %s declares no Entrypoint or Cmd; pass --file with the binary to extract", dockerImage)
+	}
+	if pkg.IsShellLauncher(candidate) {
+		return "", fmt.Errorf(
+			"image %s starts through a shell launcher (%s), which cannot run in a single-process unikernel;\n"+
+				"pass --file with the real binary the script launches (e.g. --file /usr/local/bin/redis-server)",
+			dockerImage, candidate)
+	}
+	resolved, err := pkg.ResolveDockerProgramPath(dockerImage, candidate)
+	if err != nil {
+		return "", err
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(), "Derived program from image config: %s", resolved)
+	if args := cfg.ProgramArgs(); len(args) > 0 {
+		fmt.Fprintf(cmd.ErrOrStderr(), " (image args: %v — pass them via [program] args at build time)", args)
+	}
+	fmt.Fprintln(cmd.ErrOrStderr())
+	// The image env is not stored in the package (jerboa package meta has no
+	// env field yet); print it so the user can carry over what matters.
+	if len(cfg.Env) > 0 {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Image declares environment variables (bake needed ones into unikernel.toml [env]):\n")
+		for _, e := range cfg.Env {
+			fmt.Fprintf(cmd.ErrOrStderr(), "  %s\n", e)
+		}
+	}
+	return resolved, nil
 }
 
 func newPkgPushCmd() *cobra.Command {
@@ -666,7 +717,7 @@ Examples:
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&source, "source", "jerboa", "package source: \"jerboa\" (default) or \"ops\"")
+	cmd.Flags().StringVar(&source, "source", "ops", "package source: \"ops\" (default) or \"jerboa\"")
 	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "build only, don't print run instructions")
 	return cmd
 }

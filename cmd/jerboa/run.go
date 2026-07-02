@@ -208,9 +208,13 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 			startElapsed := time.Since(startTime)
 
 			if attach {
-				if err := client.Attach(cmd.Context(), info.ID, cmd.OutOrStdout()); err != nil {
+				// Collect the serial stream so known Nanos failure signatures can
+				// be explained once the VM stops (see hints.go).
+				collector := newHintCollector(cmd.OutOrStdout())
+				if err := client.Attach(cmd.Context(), info.ID, collector); err != nil {
 					return fmt.Errorf("run: attach: %w", err)
 				}
+				collector.PrintHints(cmd.ErrOrStderr())
 				return nil
 			}
 

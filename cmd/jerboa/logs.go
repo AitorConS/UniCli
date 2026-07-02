@@ -28,7 +28,10 @@ func newLogsCmd(socketPath *string) *cobra.Command {
 			}()
 
 			if follow {
-				return followLogs(cmd.Context(), client, args[0], cmd.OutOrStdout())
+				collector := newHintCollector(cmd.OutOrStdout())
+				err := followLogs(cmd.Context(), client, args[0], collector)
+				collector.PrintHints(cmd.ErrOrStderr())
+				return err
 			}
 
 			resp, err := client.Logs(cmd.Context(), args[0])
@@ -36,6 +39,9 @@ func newLogsCmd(socketPath *string) *cobra.Command {
 				return fmt.Errorf("logs: %w", err)
 			}
 			fmt.Fprint(cmd.OutOrStdout(), resp.Logs)
+			// Explain known Nanos failure signatures (fork/exec attempts, missing
+			// shared libraries...) so the user does not have to decode them.
+			printNanosHints(cmd.ErrOrStderr(), resp.Logs)
 			return nil
 		},
 	}

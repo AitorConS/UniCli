@@ -133,7 +133,19 @@ The Windows client auto-starts the daemon for daemon-backed commands when needed
 
 ## Build An Image
 
-`jerboa build` requires a reachable daemon.
+`jerboa build` requires a reachable daemon. If unikernels are new to you, read
+[Build Concepts]({% link build-concepts.md %}) first — it explains the
+one-process model, packages, and everything `unikernel.toml` can do.
+
+### Scaffold a project
+
+```bash
+jerboa init
+```
+
+`jerboa init` detects the project language and writes a fully commented
+`unikernel.toml` documenting every field and its pitfalls. Use `--lang raw`
+for package-driven builds (databases, prebuilt binaries).
 
 ### From a Go project
 
@@ -147,8 +159,8 @@ flags) unless later custom build args override them.
 ### From a source directory with auto-detection
 
 ```bash
-jerboa build examples/flaskapp --name flaskapp --pkg-source ops --port 8080
-jerboa build examples/nextapp --name nextapp --pkg-source ops --port 3000
+jerboa build examples/flaskapp --name flaskapp --port 8080
+jerboa build examples/nextapp --name nextapp --port 3000
 ```
 
 Supported build modes:
@@ -159,11 +171,20 @@ Supported build modes:
 - `rust`
 - `raw`
 
-`--pkg-source ops` uses the ops ecosystem for runtime packages. `unikernel.toml` can override build/run defaults and declare pre-build steps.
+Runtime packages (the Node/Python runtimes, database servers, shared
+libraries) come from the **ops ecosystem by default** (`--pkg-source ops`);
+`unikernel.toml` can override build/run defaults, declare packages
+(`pkgs = [...]`), and run pre-build steps.
 
-The `jerboa` package index is cached locally after successful fetches, so builds
-can continue resolving packages from the cached index when the remote source is
-temporarily unavailable.
+Before assembling the image, the build runs **preflight checks** (is the
+program a bootable Linux ELF? are all its shared libraries in the image?) and
+aborts with an explanation and a fix hint when something would fail at boot.
+Add `--smoke` to also boot the image once right after building and scan its
+output for known failure signatures:
+
+```bash
+jerboa build examples/flaskapp --name flaskapp --port 8080 --smoke
+```
 
 ### From a prebuilt static ELF
 
@@ -171,6 +192,9 @@ temporarily unavailable.
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o hello ./examples/hello
 jerboa build ./hello --name hello
 ```
+
+If a build or a boot fails, check [Troubleshooting]({% link troubleshooting.md %})
+— it decodes every common error message.
 
 ---
 
@@ -261,6 +285,17 @@ jerboa run myapp:latest -v data:/var/data
 jerboa volume inspect data
 ```
 
+A fresh volume is empty — mounting it over a path that has baked data (e.g. a
+pre-initialized database) shadows that data. Create and seed in one step:
+
+```bash
+jerboa volume create pgdata --size 1G --seed-pkg eyberg/postgresql:11.3.0 --src /db
+jerboa run postgresql -v pgdata:/db --network pgnet -p 5432:5432
+```
+
+See [Build Concepts → Volumes And Seeding]({% link build-concepts.md %}) for
+why seeding is needed.
+
 ---
 
 ## Compose
@@ -297,7 +332,9 @@ jerboa kernel use v0.1.2
 
 ## Next
 
+- [Build Concepts]({% link build-concepts.md %})
 - [CLI Reference]({% link cli-reference.md %})
 - [Compose]({% link compose.md %})
 - [Architecture]({% link architecture.md %})
 - [Observability]({% link observability.md %})
+- [Troubleshooting]({% link troubleshooting.md %})

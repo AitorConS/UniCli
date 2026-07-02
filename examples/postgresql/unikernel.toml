@@ -1,19 +1,28 @@
 # unikernel.toml — full build + run spec for a PostgreSQL unikernel.
 #
 # A single file describes how the image is assembled (like a Dockerfile) and the
-# defaults used when it runs (like a compose service). Build it with:
+# defaults used when it runs (like a compose service). The package is declared
+# in [build] pkgs below, so building needs no extra flags:
 #
-#   jerboa build . --name postgresql --pkg eyberg/postgresql:11.3.0 --pkg-source ops
+#   jerboa build . --name postgresql
 #
 # Select a different file with -f/--file:
 #
-#   jerboa build . -f ./unikernel.toml --pkg eyberg/postgresql:11.3.0 --pkg-source ops
+#   jerboa build . -f ./unikernel.toml --name postgresql
 
 [build]
 # Build driver: go | node | python | rust | raw.
-# "raw" performs no compilation — the binary comes from a --pkg package and is
+# "raw" performs no compilation — the binary comes from a package and is
 # named by [program] below. Use it for prebuilt runtimes (databases, the JVM…).
 lang = "raw"
+
+# Packages merged into the image. Declared here so `jerboa build .` needs no
+# --pkg flags; any command-line --pkg refs append to this list.
+pkgs = ["eyberg/postgresql:11.3.0"]
+
+# Where packages come from: "ops" (the default — repo.ops.city ecosystem) or
+# "jerboa" (first-party index / locally created packages).
+pkg_source = "ops"
 
 # Minimum image size passed to mkfs. Reserves scratch space *inside the root
 # image* (lost on stop) for runtime writes — temp tablespaces, logs, sockets,
@@ -26,7 +35,7 @@ disk_size = "1G"
 # run = ["echo build step"]
 
 [program]
-# raw-only: the runtime binary, resolved from the --pkg files by exact guest
+# raw-only: the runtime binary, resolved from the package files by exact guest
 # path, path suffix, or basename. Give the FULL in-image path so it resolves to
 # the real install tree, not a same-named launcher stub at the image root: the
 # eyberg/postgresql package ships both /postgres (root) and the real binary under
@@ -65,10 +74,9 @@ ports = ["5432:5432"]    # host:guest publish maps; applied when the VM joins a
 
 # Persistence: /db in the root image is ephemeral. For data that survives
 # recreating the VM, seed a TFS volume with the initialized cluster once and
-# mount it at /db (the volume shadows the baked copy):
+# mount it at /db (the volume shadows the baked copy). Create + seed in one step:
 #
-#   jerboa volume create pgdata --size 1G
-#   jerboa volume seed   pgdata --pkg eyberg/postgresql:11.3.0 --pkg-source ops --src /db
+#   jerboa volume create pgdata --size 1G --seed-pkg eyberg/postgresql:11.3.0 --src /db
 #   jerboa run postgresql -v pgdata:/db --network pgnet -p 5432:5432
 #
 # Always stop the VM with `jerboa stop` (graceful) so postgres checkpoints and
