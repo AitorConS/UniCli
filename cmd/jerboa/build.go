@@ -34,15 +34,15 @@ func absPath(p string) string {
 
 func newBuildCmd(endpoint *string, verbose *bool) *cobra.Command {
 	var (
-		name       string
-		tag        string
-		memory     string
-		cpus       int
-		port       int
-		pkgs       []string
-		pkgSource  string
-		lang       string
-		platform   string
+		name        string
+		tag         string
+		memory      string
+		cpus        int
+		port        int
+		pkgs        []string
+		pkgSource   string
+		lang        string
+		platform    string
 		entrypoint  string
 		configFile  string
 		noPreflight bool

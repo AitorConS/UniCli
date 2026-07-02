@@ -23,7 +23,7 @@ func writeMinimalELF(t *testing.T, dir, name string, machine elf.Machine, class 
 	buf[elf.EI_VERSION] = 1
 	binary.LittleEndian.PutUint16(buf[16:], uint16(elf.ET_EXEC))
 	binary.LittleEndian.PutUint16(buf[18:], uint16(machine))
-	binary.LittleEndian.PutUint32(buf[20:], 1) // e_version
+	binary.LittleEndian.PutUint32(buf[20:], 1)  // e_version
 	binary.LittleEndian.PutUint16(buf[52:], 64) // e_ehsize
 	p := filepath.Join(dir, name)
 	if err := os.WriteFile(p, buf, 0o755); err != nil {
