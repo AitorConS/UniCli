@@ -6,7 +6,9 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -47,6 +49,71 @@ func TestCreateEmptyName(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestCreateRejectsPathTraversal(t *testing.T) {
+	root := t.TempDir()
+	s, err := NewStore(filepath.Join(root, "store"))
+	require.NoError(t, err)
+
+	// A traversal name must be rejected and must not create anything outside
+	// the store root.
+	sentinel := filepath.Join(root, "escape")
+	_, err = s.Create("../escape", "", "bridge")
+	require.Error(t, err)
+	_, statErr := os.Stat(sentinel)
+	require.True(t, os.IsNotExist(statErr), "traversal name created a dir outside the store")
+
+	// Remove must reject it too (guards the RemoveAll path).
+	require.Error(t, s.Remove("../escape"))
+	require.Error(t, s.Remove("a/b"))
+}
+
+func TestDeriveBridgeNameFitsIfaceLimit(t *testing.T) {
+	// A short name is used verbatim; a long but valid name must still yield a
+	// bridge that fits Linux's 15-char interface limit (was silently broken).
+	require.Equal(t, "jerboa-br-app", deriveBridgeName("app"))
+
+	long := deriveBridgeName("app-backend-service")
+	require.LessOrEqual(t, len(long), maxIfaceNameLen)
+	require.True(t, networkNameFits(long))
+
+	dir := t.TempDir()
+	s, err := NewStore(dir)
+	require.NoError(t, err)
+	n, err := s.Create("app-backend-service", "", "bridge")
+	require.NoError(t, err)
+	require.LessOrEqual(t, len(n.Bridge), maxIfaceNameLen)
+}
+
+func TestCreateRejectsBridgeNameCollision(t *testing.T) {
+	dir := t.TempDir()
+	s, err := NewStore(dir)
+	require.NoError(t, err)
+
+	collidingName := "app-backend-service"
+	existingDir := filepath.Join(dir, "existing")
+	require.NoError(t, os.MkdirAll(existingDir, 0o700))
+	require.NoError(t, writeNetworkMeta(existingDir, &Network{
+		ID:        "existing",
+		Name:      "existing",
+		Subnet:    "10.100.0.0/24",
+		Gateway:   "10.100.0.1",
+		Bridge:    deriveBridgeName(collidingName),
+		Driver:    "bridge",
+		CreatedAt: time.Now().UTC(),
+	}))
+	require.NoError(t, writeNetworkState(existingDir, &networkState{AllocatedIPs: []string{"10.100.0.1"}, NextIndex: 2}))
+
+	_, err = s.Create(collidingName, "", "bridge")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "bridge name")
+	require.Contains(t, err.Error(), "collides")
+}
+
+// networkNameFits mirrors the vm package's interface-name length constraint.
+func networkNameFits(name string) bool {
+	return len(name) >= 1 && len(name) <= maxIfaceNameLen
+}
+
 func TestCreateWithSubnet(t *testing.T) {
 	dir := t.TempDir()
 	s, err := NewStore(dir)
@@ -56,7 +123,10 @@ func TestCreateWithSubnet(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "172.20.0.0/24", n.Subnet)
 	require.Equal(t, "172.20.0.1", n.Gateway)
-	require.Equal(t, "jerboa-br-my-net", n.Bridge)
+	// "my-net" + the 10-char prefix is 16 chars, over the 15-char interface
+	// limit, so the bridge name falls back to a short hash that fits.
+	require.LessOrEqual(t, len(n.Bridge), maxIfaceNameLen)
+	require.True(t, strings.HasPrefix(n.Bridge, bridgePrefix))
 }
 
 func TestCreateDefaultDriver(t *testing.T) {

@@ -100,15 +100,23 @@ func Load(path string) (*Config, error) {
 
 // Save writes cfg to path, creating parent directories as needed.
 func Save(path string, cfg *Config) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	// The config may hold a daemon auth token, so keep it owner-only.
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("config: create dir: %w", err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return fmt.Errorf("config: chmod dir: %w", err)
 	}
 	data, err := toml.Marshal(cfg)
 	if err != nil {
 		return fmt.Errorf("config: marshal: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("config: write %s: %w", path, err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		return fmt.Errorf("config: chmod %s: %w", path, err)
 	}
 	return nil
 }

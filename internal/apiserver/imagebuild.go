@@ -376,9 +376,17 @@ func (s *Server) handleBuild(ctx context.Context, params json.RawMessage, stream
 // extractBuildContext untars stream into dir and returns the extracted files as
 // pkg.File entries (HostPath = on-disk location, GuestPath = tar path). It
 // rejects entries that escape dir.
+// maxBuildContextBytes caps the total size of an extracted build/seed context
+// written to the daemon's temp directory. The per-frame limit in the framing
+// layer bounds a single chunk, but not the cumulative stream, so without this an
+// authenticated or local client could exhaust the daemon's disk. It is a var so
+// tests can lower it and a future flag can raise it.
+var maxBuildContextBytes int64 = 4 << 30 // 4 GiB
+
 func extractBuildContext(stream io.Reader, dir string) ([]pkg.File, error) {
 	tr := tar.NewReader(stream)
 	var files []pkg.File
+	remaining := maxBuildContextBytes
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -407,9 +415,11 @@ func extractBuildContext(stream io.Reader, dir string) ([]pkg.File, error) {
 				return nil, fmt.Errorf("mkdir for %s: %w", hdr.Name, err)
 			}
 			mode := os.FileMode(hdr.Mode).Perm() //nolint:gosec // tar mode bits are bounded by Perm()
-			if err := writeFileFromTar(dest, tr, mode); err != nil {
+			n, err := writeFileFromTar(dest, tr, mode, remaining)
+			if err != nil {
 				return nil, err
 			}
+			remaining -= n
 			files = append(files, pkg.File{HostPath: dest, GuestPath: strings.TrimPrefix(guestPath, "/")})
 		default:
 			continue
@@ -418,16 +428,28 @@ func extractBuildContext(stream io.Reader, dir string) ([]pkg.File, error) {
 	return files, nil
 }
 
-func writeFileFromTar(dest string, tr io.Reader, mode os.FileMode) error {
+// writeFileFromTar copies the current tar entry to dest, writing at most budget
+// bytes. It returns the number of bytes written and an error if the cumulative
+// build context would exceed maxBuildContextBytes.
+func writeFileFromTar(dest string, tr io.Reader, mode os.FileMode, budget int64) (int64, error) {
+	if budget <= 0 {
+		return 0, fmt.Errorf("build context exceeds the %d byte limit", maxBuildContextBytes)
+	}
 	f, err := os.OpenFile(dest, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
 	if err != nil {
-		return fmt.Errorf("create %s: %w", dest, err)
+		return 0, fmt.Errorf("create %s: %w", dest, err)
 	}
 	defer func() { _ = f.Close() }()
-	if _, err := io.Copy(f, tr); err != nil { //nolint:gosec // size bounded by frameReader cap and tar header
-		return fmt.Errorf("write %s: %w", dest, err)
+	// Copy one byte past the budget so an over-budget file is detected rather
+	// than silently truncated.
+	n, err := io.Copy(f, io.LimitReader(tr, budget+1))
+	if err != nil {
+		return n, fmt.Errorf("write %s: %w", dest, err)
 	}
-	return nil
+	if n > budget {
+		return n, fmt.Errorf("build context exceeds the %d byte limit", maxBuildContextBytes)
+	}
+	return n, nil
 }
 
 // safeJoin joins a cleaned, rooted guest path onto base, guaranteeing the

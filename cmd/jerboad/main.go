@@ -62,6 +62,7 @@ func newRootCmd() *cobra.Command {
 		fcKernelPath  string
 		toolsDir      string
 		vmLogMaxBytes int64
+		allowInsecure bool
 	)
 	root := &cobra.Command{
 		Use:     "jerboad",
@@ -79,6 +80,14 @@ func newRootCmd() *cobra.Command {
 			if authToken == "" {
 				authToken = os.Getenv("JERBOA_AUTH_TOKEN")
 			}
+			// Fail closed: a TCP endpoint with no token is reachable by any local
+			// process (and, depending on bind address, the LAN). A daemon that can
+			// create VMs, delete resources, and build images must not serve one
+			// unauthenticated unless the operator explicitly opts in.
+			if authToken == "" && strings.HasPrefix(endpoint, "tcp://") && !allowInsecure {
+				return fmt.Errorf("jerboad: refusing to serve TCP endpoint %q without authentication; "+
+					"set --auth-token or JERBOA_AUTH_TOKEN, or pass --insecure to override", endpoint)
+			}
 			vm.SetVMLogMaxBytes(vmLogMaxBytes)
 			return serve(cmd.Context(), endpoint, authToken, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs, hypervisor, fcBin, fcKernelPath, toolsDir)
 		},
@@ -90,6 +99,8 @@ func newRootCmd() *cobra.Command {
 	_ = root.Flags().MarkDeprecated("socket", "use --host instead")
 	root.Flags().StringVar(&authTokenFlag, "auth-token", "",
 		"shared secret required from clients via Auth.Hello (env: JERBOA_AUTH_TOKEN); empty disables auth")
+	root.Flags().BoolVar(&allowInsecure, "insecure", false,
+		"allow serving a TCP endpoint without an auth token (unsafe; a Unix socket needs no token)")
 	root.Flags().StringVar(&qemuBin, "qemu", "qemu-system-x86_64",
 		"QEMU binary to use")
 	root.Flags().StringVar(&hypervisor, "hypervisor", "",

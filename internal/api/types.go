@@ -29,6 +29,9 @@ type PortMapSpec struct {
 	HostPort  uint16 `json:"host_port"`
 	GuestPort uint16 `json:"guest_port"`
 	Protocol  string `json:"protocol"`
+	// BindAddr is the host address the published port listens on. Empty means
+	// all interfaces (0.0.0.0); set it to "127.0.0.1" to restrict to localhost.
+	BindAddr string `json:"bind_addr,omitempty"`
 }
 
 // VolumeMountSpec is the wire representation of a volume mount.

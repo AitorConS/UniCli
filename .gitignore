@@ -21,6 +21,10 @@ examples/flaskapp/__pycache__/
 *.bak
 *agents/*
 *claude/*
+.claude/
+.gocache/
+testbin/
+.testbin/
 skills-lock.json
 docs/guia-jerboa.html
 examples/**/packages/

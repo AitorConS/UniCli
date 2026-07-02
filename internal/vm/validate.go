@@ -7,6 +7,7 @@ import (
 	"net"
 	"regexp"
 	"strconv"
+	"strings"
 )
 
 // networkNameRe matches valid Linux network interface names: 1–15 characters
@@ -16,6 +17,18 @@ var networkNameRe = regexp.MustCompile(`^[a-zA-Z0-9_.:-]{1,15}$`)
 // memoryRe matches QEMU memory strings: a positive integer with an optional
 // binary unit suffix (e.g. "512", "256M", "1G", "2GiB").
 var memoryRe = regexp.MustCompile(`^[1-9][0-9]*([KkMmGgTt]i?[Bb]?)?$`)
+
+// envKeyRe matches a valid environment variable name.
+var envKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// hasBootArgUnsafe reports whether s contains whitespace or control characters
+// that would break or inject into the space-separated kernel boot-args line the
+// Firecracker backend builds (env and mounts are delivered as boot args, not
+// fw_cfg). QEMU uses fw_cfg, but the same values feed both backends, so the
+// constraint is applied uniformly.
+func hasBootArgUnsafe(s string) bool {
+	return strings.ContainsAny(s, " \t\r\n\v\f\x00")
+}
 
 // validateVMConfig checks user-supplied VM configuration before it is turned
 // into a QEMU command line. It validates the syntactic shape of network, memory
@@ -69,9 +82,29 @@ func validateVMConfig(cfg Config) error {
 		}
 	}
 
+	for i, kv := range cfg.Env {
+		key, val, ok := strings.Cut(kv, "=")
+		if !ok {
+			return fmt.Errorf("validate config: Env[%d] %q must be KEY=VALUE", i, kv)
+		}
+		if !envKeyRe.MatchString(key) {
+			return fmt.Errorf("validate config: Env[%d] key %q is invalid (want [A-Za-z_][A-Za-z0-9_]*)", i, key)
+		}
+		if hasBootArgUnsafe(val) {
+			return fmt.Errorf("validate config: Env[%d] value for %q contains whitespace or control characters, "+
+				"which cannot be delivered safely via kernel boot args", i, key)
+		}
+	}
+
 	for i, vol := range cfg.Volumes {
 		if vol.DiskPath == "" {
 			return fmt.Errorf("validate config: Volumes[%d] DiskPath is required", i)
+		}
+		if hasBootArgUnsafe(vol.Label) || strings.ContainsAny(vol.Label, "=:.") {
+			return fmt.Errorf("validate config: Volumes[%d] Label %q must not contain whitespace, control characters, '=', ':', or '.'", i, vol.Label)
+		}
+		if vol.GuestPath != "" && (!strings.HasPrefix(vol.GuestPath, "/") || hasBootArgUnsafe(vol.GuestPath)) {
+			return fmt.Errorf("validate config: Volumes[%d] GuestPath %q must be an absolute path without whitespace or control characters", i, vol.GuestPath)
 		}
 	}
 

@@ -41,6 +41,19 @@ func TestServe_StartsAndShutsDown(t *testing.T) {
 	cancel()
 }
 
+func TestFailClosedTCPWithoutToken(t *testing.T) {
+	t.Setenv("JERBOA_AUTH_TOKEN", "")
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{"--host", "tcp://127.0.0.1:0"})
+	err := cmd.Execute()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "refusing to serve")
+}
+
+func TestNewRootCmd_HasInsecureFlag(t *testing.T) {
+	require.NotNil(t, newRootCmd().Flag("insecure"))
+}
+
 func TestDefaultEndpoint(t *testing.T) {
 	ep := config.DefaultEndpoint()
 	require.Equal(t, "unix:///var/run/jerboad.sock", ep)

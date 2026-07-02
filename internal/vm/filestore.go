@@ -165,8 +165,13 @@ func (s *FileStore) writeState(v *VM) error {
 	v.mu.RUnlock()
 
 	dir := filepath.Join(s.root, v.ID)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	// state.json persists the VM's full config, including any environment
+	// passed with -e (which may hold secrets), so keep it owner-only.
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create vm dir: %w", err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return fmt.Errorf("chmod vm dir: %w", err)
 	}
 
 	data, err := json.MarshalIndent(st, "", "  ")
@@ -176,7 +181,7 @@ func (s *FileStore) writeState(v *VM) error {
 
 	path := filepath.Join(dir, "state.json")
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return fmt.Errorf("write vm state: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {

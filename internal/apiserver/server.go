@@ -618,6 +618,7 @@ func portMapsFromSpec(specs []api.PortMapSpec) []vm.PortMap {
 			HostPort:  s.HostPort,
 			GuestPort: s.GuestPort,
 			Protocol:  vm.PortProtocol(s.Protocol),
+			BindAddr:  s.BindAddr,
 		}
 	}
 	return out
@@ -706,6 +707,7 @@ func portMapsToSpec(pms []vm.PortMap) []api.PortMapSpec {
 			HostPort:  pm.HostPort,
 			GuestPort: pm.GuestPort,
 			Protocol:  string(pm.Protocol),
+			BindAddr:  pm.BindAddr,
 		}
 	}
 	return out

@@ -114,6 +114,25 @@ func TestSaveLoad_RoundTrip(t *testing.T) {
 	require.Equal(t, want.Daemon, got.Daemon)
 }
 
+func TestSaveTightensExistingPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission bits are not portable on Windows")
+	}
+	dir := filepath.Join(t.TempDir(), "sub")
+	path := filepath.Join(dir, "config.toml")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(path, []byte("hypervisor = \"qemu\"\n"), 0o644))
+
+	require.NoError(t, Save(path, &Config{Daemon: DaemonConfig{Token: "secret"}}))
+
+	dirInfo, err := os.Stat(dir)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o700), dirInfo.Mode().Perm())
+	fileInfo, err := os.Stat(path)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o600), fileInfo.Mode().Perm())
+}
+
 func TestLoad_EmptyHypervisorDefaultsToQEMU(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	require.NoError(t, os.WriteFile(path, []byte("hypervisor = \"\"\n"), 0o600))

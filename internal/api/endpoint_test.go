@@ -1,6 +1,12 @@
 package api
 
-import "testing"
+import (
+	"net"
+	"os"
+	"path/filepath"
+	"runtime"
+	"testing"
+)
 
 func TestParseEndpoint(t *testing.T) {
 	tests := []struct {
@@ -36,4 +42,30 @@ func TestParseEndpoint(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestListenUnixSocketOwnerOnly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix sockets are not supported on Windows")
+	}
+	socketPath := filepath.Join(t.TempDir(), "jerboad.sock")
+	l, err := Listen("unix://" + socketPath)
+	if err != nil {
+		t.Fatalf("Listen() error = %v", err)
+	}
+	defer l.Close()
+
+	info, err := os.Stat(socketPath)
+	if err != nil {
+		t.Fatalf("stat socket: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("socket mode = %o, want 600", got)
+	}
+
+	conn, err := net.Dial("unix", socketPath)
+	if err != nil {
+		t.Fatalf("dial unix socket: %v", err)
+	}
+	_ = conn.Close()
 }

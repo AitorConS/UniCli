@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 )
@@ -21,8 +22,10 @@ func ParsePortMaps(specs []string) ([]PortMapSpec, error) {
 	return out, nil
 }
 
-// ParsePortMap parses a single "host:guest[/tcp|udp]" port spec. The protocol
-// defaults to tcp.
+// ParsePortMap parses a single "[bindaddr:]host:guest[/tcp|udp]" port spec. The
+// protocol defaults to tcp. An optional leading IPv4 bind address restricts the
+// published port to that host address (e.g. "127.0.0.1:8080:80"); without it the
+// port is published on all interfaces.
 func ParsePortMap(s string) (PortMapSpec, error) {
 	proto := "tcp"
 	if idx := strings.LastIndex(s, "/"); idx >= 0 {
@@ -33,19 +36,36 @@ func ParsePortMap(s string) (PortMapSpec, error) {
 		proto = p
 		s = s[:idx]
 	}
-	parts := strings.SplitN(s, ":", 2)
-	if len(parts) != 2 {
-		return PortMapSpec{}, fmt.Errorf("port map %q: expected host:guest format", s)
+	bindAddr, hostSpec, guestSpec, err := splitPortFields(s)
+	if err != nil {
+		return PortMapSpec{}, err
 	}
-	host, err := parsePortNum(parts[0])
+	host, err := parsePortNum(hostSpec)
 	if err != nil {
 		return PortMapSpec{}, fmt.Errorf("port map %q: host port: %w", s, err)
 	}
-	guest, err := parsePortNum(parts[1])
+	guest, err := parsePortNum(guestSpec)
 	if err != nil {
 		return PortMapSpec{}, fmt.Errorf("port map %q: guest port: %w", s, err)
 	}
-	return PortMapSpec{HostPort: host, GuestPort: guest, Protocol: proto}, nil
+	return PortMapSpec{HostPort: host, GuestPort: guest, Protocol: proto, BindAddr: bindAddr}, nil
+}
+
+// splitPortFields splits a "host:guest" or "bindaddr:host:guest" spec (protocol
+// already stripped) into its parts, validating a present bind address as an IP.
+func splitPortFields(s string) (bindAddr, host, guest string, err error) {
+	parts := strings.Split(s, ":")
+	switch len(parts) {
+	case 2:
+		return "", parts[0], parts[1], nil
+	case 3:
+		if net.ParseIP(parts[0]) == nil {
+			return "", "", "", fmt.Errorf("port map %q: bind address %q is not a valid IP", s, parts[0])
+		}
+		return parts[0], parts[1], parts[2], nil
+	default:
+		return "", "", "", fmt.Errorf("port map %q: expected [bindaddr:]host:guest format", s)
+	}
 }
 
 func parsePortNum(s string) (uint16, error) {

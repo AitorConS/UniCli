@@ -105,6 +105,22 @@ func TestFileStore_Save_RestartCount(t *testing.T) {
 	require.Equal(t, 5, got.RestartCount)
 }
 
+func TestFileStoreSaveTightensExistingVMDir(t *testing.T) {
+	dir := t.TempDir()
+	s := NewFileStore(dir)
+	require.NoError(t, s.Restore())
+	v, err := s.Create(Config{ImagePath: "test.img", Memory: "256M"})
+	require.NoError(t, err)
+
+	vmDir := filepath.Join(dir, v.ID)
+	require.NoError(t, os.Chmod(vmDir, 0o755))
+	require.NoError(t, s.Save(v))
+
+	info, err := os.Stat(vmDir)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o700), info.Mode().Perm())
+}
+
 func TestFileStore_Restore_DoneChannelOpen(t *testing.T) {
 	dir := t.TempDir()
 	s1 := NewFileStore(dir)

@@ -26,6 +26,9 @@ type PortMap struct {
 	GuestPort uint16
 	// Protocol is "tcp" or "udp"; defaults to "tcp".
 	Protocol PortProtocol
+	// BindAddr is the host address the published port listens on. Empty means
+	// all interfaces; "127.0.0.1" restricts it to localhost.
+	BindAddr string
 }
 
 // String returns the canonical "host:guest/proto" representation.

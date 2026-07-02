@@ -634,6 +634,7 @@ func toNetworkPortForwards(pms []PortMap) []network.PortForward {
 			HostPort:  pm.HostPort,
 			GuestPort: pm.GuestPort,
 			Protocol:  string(pm.Protocol),
+			BindAddr:  pm.BindAddr,
 		}
 	}
 	return out

@@ -3,6 +3,8 @@
 package network
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -10,6 +12,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/AitorConS/jerboa/internal/naming"
 )
 
 const (
@@ -18,7 +22,23 @@ const (
 	defaultSubnetCIDR = "10.100.0.0/16"
 	bridgePrefix      = "jerboa-br-"
 	tapPrefix         = "jerboa-tap-"
+	// maxIfaceNameLen is the Linux interface name limit (IFNAMSIZ - 1). A bridge
+	// name derived from a network name must fit within it.
+	maxIfaceNameLen = 15
 )
+
+// deriveBridgeName returns a Linux bridge name for a network that always fits
+// within maxIfaceNameLen. Short names are used verbatim (readable, e.g.
+// "jerboa-br-app"); longer names fall back to a short hash so that a valid
+// network name can never produce an over-long, unusable bridge name.
+func deriveBridgeName(name string) string {
+	candidate := bridgePrefix + name
+	if len(candidate) <= maxIfaceNameLen {
+		return candidate
+	}
+	sum := sha256.Sum256([]byte(name))
+	return bridgePrefix + hex.EncodeToString(sum[:])[:maxIfaceNameLen-len(bridgePrefix)]
+}
 
 type Network struct {
 	ID        string    `json:"id"`
@@ -48,14 +68,17 @@ func NewStore(dir string) (*Store, error) {
 }
 
 func (s *Store) Create(name, subnet, driver string) (*Network, error) {
-	if name == "" {
-		return nil, fmt.Errorf("network name must not be empty")
+	if err := naming.ValidateResourceName("network", name); err != nil {
+		return nil, err
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	dir := s.networkDir(name)
+	dir, err := s.networkDir(name)
+	if err != nil {
+		return nil, err
+	}
 	if _, err := os.Stat(dir); err == nil {
 		return nil, fmt.Errorf("network %q already exists", name)
 	}
@@ -90,9 +113,12 @@ func (s *Store) Create(name, subnet, driver string) (*Network, error) {
 		Name:      name,
 		Subnet:    ipNet.String(),
 		Gateway:   gatewayIP.String(),
-		Bridge:    bridgePrefix + name,
+		Bridge:    deriveBridgeName(name),
 		Driver:    driver,
 		CreatedAt: time.Now().UTC(),
+	}
+	if err := s.ensureBridgeAvailableLocked(name, n.Bridge); err != nil {
+		return nil, err
 	}
 
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -147,8 +173,11 @@ func (s *Store) Remove(name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	dir := s.networkDir(name)
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
+	dir, err := s.networkDir(name)
+	if err != nil {
+		return err
+	}
+	if _, statErr := os.Stat(dir); os.IsNotExist(statErr) {
 		return fmt.Errorf("network %q not found", name)
 	}
 	if err := os.RemoveAll(dir); err != nil {
@@ -184,7 +213,11 @@ func (s *Store) AllocateIP(name string) (net.IP, error) {
 	st.AllocatedIPs = append(st.AllocatedIPs, ip.String())
 	st.NextIndex++
 
-	if err := writeNetworkState(s.networkDir(name), st); err != nil {
+	dir, err := s.networkDir(name)
+	if err != nil {
+		return nil, err
+	}
+	if err := writeNetworkState(dir, st); err != nil {
 		return nil, fmt.Errorf("allocate ip write state: %w", err)
 	}
 
@@ -195,8 +228,11 @@ func (s *Store) ReleaseIP(name string, ip string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	dir := s.networkDir(name)
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
+	dir, err := s.networkDir(name)
+	if err != nil {
+		return err
+	}
+	if _, statErr := os.Stat(dir); os.IsNotExist(statErr) {
 		return fmt.Errorf("network %q not found", name)
 	}
 
@@ -223,12 +259,19 @@ func (s *Store) ReleaseIP(name string, ip string) error {
 	return nil
 }
 
-func (s *Store) networkDir(name string) string {
-	return filepath.Join(s.root, name)
+func (s *Store) networkDir(name string) (string, error) {
+	if err := naming.ValidateResourceName("network", name); err != nil {
+		return "", err
+	}
+	return naming.SafeJoin(s.root, name)
 }
 
 func (s *Store) readMeta(name string) (*Network, error) {
-	path := filepath.Join(s.networkDir(name), metaFile)
+	dir, err := s.networkDir(name)
+	if err != nil {
+		return nil, err
+	}
+	path := filepath.Join(dir, metaFile)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("network %q not found: %w", name, err)
@@ -241,7 +284,11 @@ func (s *Store) readMeta(name string) (*Network, error) {
 }
 
 func (s *Store) readState(name string) (*networkState, error) {
-	path := filepath.Join(s.networkDir(name), stateFile)
+	dir, err := s.networkDir(name)
+	if err != nil {
+		return nil, err
+	}
+	path := filepath.Join(dir, stateFile)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("network %q read state: %w", name, err)
@@ -270,6 +317,26 @@ func (s *Store) allocatedSubnetsLocked() (map[string]bool, error) {
 		result[n.Subnet] = true
 	}
 	return result, nil
+}
+
+func (s *Store) ensureBridgeAvailableLocked(name, bridge string) error {
+	entries, err := os.ReadDir(s.root)
+	if err != nil {
+		return fmt.Errorf("read network dirs: %w", err)
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		n, err := s.readMeta(e.Name())
+		if err != nil {
+			continue
+		}
+		if n.Name != name && n.Bridge == bridge {
+			return fmt.Errorf("network %q bridge name %q collides with existing network %q", name, bridge, n.Name)
+		}
+	}
+	return nil
 }
 
 func writeNetworkMeta(dir string, n *Network) error {

@@ -15,6 +15,10 @@ func TestParsePortMap(t *testing.T) {
 	}{
 		{"tcp default", "8080:80", PortMapSpec{HostPort: 8080, GuestPort: 80, Protocol: "tcp"}, false},
 		{"explicit tcp", "8080:80/tcp", PortMapSpec{HostPort: 8080, GuestPort: 80, Protocol: "tcp"}, false},
+		{"bind addr", "127.0.0.1:8080:80", PortMapSpec{HostPort: 8080, GuestPort: 80, Protocol: "tcp", BindAddr: "127.0.0.1"}, false},
+		{"bind addr udp", "127.0.0.1:53:53/udp", PortMapSpec{HostPort: 53, GuestPort: 53, Protocol: "udp", BindAddr: "127.0.0.1"}, false},
+		{"invalid bind addr", "notanip:8080:80", PortMapSpec{}, true},
+		{"too many fields", "1:2:3:4", PortMapSpec{}, true},
 		{"udp", "53:53/udp", PortMapSpec{HostPort: 53, GuestPort: 53, Protocol: "udp"}, false},
 		{"uppercase proto", "9000:90/UDP", PortMapSpec{HostPort: 9000, GuestPort: 90, Protocol: "udp"}, false},
 		{"max port", "65535:65535", PortMapSpec{HostPort: 65535, GuestPort: 65535, Protocol: "tcp"}, false},

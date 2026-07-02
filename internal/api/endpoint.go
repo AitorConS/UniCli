@@ -52,9 +52,24 @@ func Listen(endpoint string) (net.Listener, error) {
 			return nil, fmt.Errorf("api server remove stale socket: %w", err)
 		}
 	}
+	restoreUmask := func() {}
+	if network == "unix" {
+		// syscall.Umask is process-global; this narrowly scopes it around the
+		// startup bind so the socket is never created with wider permissions.
+		restoreUmask = restrictUnixSocketUmask()
+	}
 	l, err := net.Listen(network, address) //nolint:noctx // server setup; lifecycle managed by Serve's ctx
+	restoreUmask()
 	if err != nil {
 		return nil, fmt.Errorf("api server listen %s: %w", endpoint, err)
+	}
+	if network == "unix" {
+		// Restrict the socket to the owning user: the daemon is unauthenticated
+		// over Unix sockets, so filesystem permissions are the access control.
+		if err := os.Chmod(address, 0o600); err != nil {
+			_ = l.Close()
+			return nil, fmt.Errorf("api server chmod socket %s: %w", address, err)
+		}
 	}
 	return l, nil
 }
