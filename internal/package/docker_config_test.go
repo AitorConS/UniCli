@@ -53,6 +53,17 @@ func TestParseDockerConfigInvalid(t *testing.T) {
 	}
 }
 
+func TestResolveDockerProgramPathAbsolute(t *testing.T) {
+	// Absolute paths are returned as-is without touching docker.
+	got, err := ResolveDockerProgramPath("ignored:latest", "/usr/local/bin/redis-server")
+	if err != nil {
+		t.Fatalf("resolve absolute: %v", err)
+	}
+	if got != "/usr/local/bin/redis-server" {
+		t.Fatalf("resolved = %q", got)
+	}
+}
+
 func TestIsShellLauncher(t *testing.T) {
 	shell := []string{
 		"/usr/local/bin/docker-entrypoint.sh",

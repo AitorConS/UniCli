@@ -118,3 +118,38 @@ func TestFormatIncludesHint(t *testing.T) {
 		t.Fatalf("unexpected format output: %q", out)
 	}
 }
+
+func TestSeverityString(t *testing.T) {
+	if got := Error.String(); got != "error" {
+		t.Fatalf("Error.String() = %q", got)
+	}
+	if got := Warning.String(); got != "warning" {
+		t.Fatalf("Warning.String() = %q", got)
+	}
+}
+
+func TestHasErrors(t *testing.T) {
+	if HasErrors(nil) {
+		t.Fatal("no findings must not report errors")
+	}
+	if HasErrors([]Finding{{Severity: Warning}}) {
+		t.Fatal("warnings alone must not report errors")
+	}
+	if !HasErrors([]Finding{{Severity: Warning}, {Severity: Error}}) {
+		t.Fatal("an Error finding must report errors")
+	}
+}
+
+func TestCleanGuestPath(t *testing.T) {
+	cases := map[string]string{
+		"./index.js":     "index.js",
+		"/lib/libc.so.6": "lib/libc.so.6",
+		"lib//x.so":      "lib/x.so",
+		"../etc/passwd":  "etc/passwd",
+	}
+	for in, want := range cases {
+		if got := cleanGuestPath(in); got != want {
+			t.Errorf("cleanGuestPath(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

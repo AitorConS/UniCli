@@ -85,3 +85,29 @@ func TestTailLines(t *testing.T) {
 		t.Fatalf("tailLines short input = %q", got)
 	}
 }
+
+func TestIndentLines(t *testing.T) {
+	if got := indentLines("a\nb"); got != "  a\n  b" {
+		t.Fatalf("indentLines = %q", got)
+	}
+	if got := indentLines(""); got != "" {
+		t.Fatalf("indentLines empty = %q", got)
+	}
+}
+
+func TestPrintNanosHintsFormat(t *testing.T) {
+	var out bytes.Buffer
+	printNanosHints(&out, "error loading shared library libssl.so.3")
+	s := out.String()
+	if !strings.Contains(s, `hint: matched "error loading shared library"`) {
+		t.Fatalf("missing hint header: %q", s)
+	}
+	if !strings.Contains(s, "statically linked") {
+		t.Fatalf("missing hint body: %q", s)
+	}
+	out.Reset()
+	printNanosHints(&out, "all good")
+	if out.Len() != 0 {
+		t.Fatalf("expected no output for clean logs, got %q", out.String())
+	}
+}

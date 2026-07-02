@@ -756,3 +756,53 @@ func TestPkgGetOps_NotFound(t *testing.T) {
 	msg := execRootExpectError(t, socketPath, vmStorePath, "pkg", "get", "eyberg/nonexistent:v1", "--source", "ops")
 	require.Contains(t, msg, "not found")
 }
+
+func TestLoadOpsProgramDefaultsAndEnvs(t *testing.T) {
+	// The ops package.manifest declares Program/Args (Args[0] is the program's
+	// own in-image path) and Env; raw builds without a [program] section and
+	// the env merge both read them through these helpers.
+	manifest := `{"Program":"postgresql_11.3.0/postgres",` +
+		`"Args":["/usr/local/pgsql/bin/postgres","-D","db"],` +
+		`"Version":"11.3.0","Env":{"HOME":"/","LANG":"C"}}`
+	archiveData := createOpsTestArchive(t, map[string]string{
+		"postgres":         "fake elf binary",
+		"package.manifest": manifest,
+	})
+
+	_, configure := setupOpsServer(t)
+
+	h := sha256.Sum256(archiveData)
+	sha := hex.EncodeToString(h[:])
+
+	configure(pkg.OpsPackageList{
+		Version: 1,
+		Packages: []pkg.OpsPackage{
+			{Name: "postgresql", Version: "11.3.0", Namespace: "eyberg", Language: "c", SHA256: sha},
+		},
+	}, map[string][]byte{
+		"/eyberg/postgresql/11.3.0.tar.gz": archiveData,
+	})
+
+	withOpsStoreDir(t)
+
+	// Install the package straight through the store: the helpers under test
+	// only need the extracted package and the cached index, not a daemon.
+	store, err := openOpsStore()
+	require.NoError(t, err)
+	require.NoError(t, store.Download("eyberg", "postgresql", "11.3.0", sha))
+	require.NoError(t, store.Extract("eyberg", "postgresql", "11.3.0"))
+
+	path, args := loadOpsProgramDefaults([]string{"eyberg/postgresql:11.3.0"})
+	require.Equal(t, "/usr/local/pgsql/bin/postgres", path)
+	require.Equal(t, []string{"-D", "db"}, args)
+
+	// Unparseable and unknown refs are skipped without failing.
+	path, args = loadOpsProgramDefaults([]string{"no-namespace", "eyberg/missing:1.0"})
+	require.Empty(t, path)
+	require.Empty(t, args)
+
+	env := loadOpsPackageEnvs([]string{"eyberg/postgresql:11.3.0"})
+	require.Equal(t, "/", env["HOME"])
+	require.Equal(t, "C", env["LANG"])
+	require.Nil(t, loadOpsPackageEnvs([]string{"eyberg/missing:1.0"}))
+}
