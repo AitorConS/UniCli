@@ -40,6 +40,28 @@ func TestValidateVMConfig(t *testing.T) {
 		{"empty volume path", func(c *Config) {
 			c.Volumes = []VolumeMount{{DiskPath: ""}}
 		}, true},
+		{"valid env", func(c *Config) { c.Env = []string{"FOO=bar", "PORT=8080"} }, false},
+		{"env missing equals", func(c *Config) { c.Env = []string{"FOO"} }, true},
+		{"env bad key", func(c *Config) { c.Env = []string{"1BAD=x"} }, true},
+		{"env value with space (boot-arg injection)", func(c *Config) {
+			c.Env = []string{"X=val en1.gateway=10.0.0.66"}
+		}, true},
+		{"env value with newline", func(c *Config) { c.Env = []string{"X=a\nb"} }, true},
+		{"valid volume label and path", func(c *Config) {
+			c.Volumes = []VolumeMount{{DiskPath: "d.img", Label: "pgdata", GuestPath: "/db"}}
+		}, false},
+		{"volume label with equals", func(c *Config) {
+			c.Volumes = []VolumeMount{{DiskPath: "d.img", Label: "a=b", GuestPath: "/db"}}
+		}, true},
+		{"volume label with space", func(c *Config) {
+			c.Volumes = []VolumeMount{{DiskPath: "d.img", Label: "a b", GuestPath: "/db"}}
+		}, true},
+		{"volume guest path relative", func(c *Config) {
+			c.Volumes = []VolumeMount{{DiskPath: "d.img", Label: "l", GuestPath: "db"}}
+		}, true},
+		{"volume guest path with space", func(c *Config) {
+			c.Volumes = []VolumeMount{{DiskPath: "d.img", Label: "l", GuestPath: "/d b"}}
+		}, true},
 	}
 
 	for _, tt := range tests {

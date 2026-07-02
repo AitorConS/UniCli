@@ -242,6 +242,18 @@ Important:
 - TCP forwarding works today
 - UDP port mappings are accepted syntactically but are currently skipped by the forwarder with a warning
 
+### Publish bind address
+
+By default a published port listens on **all interfaces** (`0.0.0.0`), so it is
+reachable from the LAN — and, on Windows, mirrored to the host by WSL2. To
+restrict a port to the local host, prefix the mapping with a bind address,
+Docker-style:
+
+```bash
+jerboa run myapp:latest --network app -p 127.0.0.1:8080:80   # localhost only
+jerboa run myapp:latest --network app -p 8080:80             # all interfaces
+```
+
 ---
 
 ## Service Discovery (Guest DNS)

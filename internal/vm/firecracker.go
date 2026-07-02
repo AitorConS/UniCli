@@ -98,6 +98,9 @@ func (m *FirecrackerManager) Store() Store { return m.store }
 
 // Create registers a new VM with the given config.
 func (m *FirecrackerManager) Create(_ context.Context, cfg Config) (*VM, error) {
+	if err := validateVMConfig(cfg); err != nil {
+		return nil, fmt.Errorf("firecracker create: %w", err)
+	}
 	v, err := m.store.Create(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("firecracker create: %w", err)

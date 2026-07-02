@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +16,10 @@ type PortForward struct {
 	HostPort  uint16
 	GuestPort uint16
 	Protocol  string
+	// BindAddr is the host address to listen on. Empty publishes on all
+	// interfaces (reachable from the LAN, and mirrored to the Windows host by
+	// WSL2); set it to "127.0.0.1" to restrict a port to the local host.
+	BindAddr string
 }
 
 // Forwarder publishes guest ports on the host by proxying real listening
@@ -48,10 +53,11 @@ func StartForwarder(guestIP string, ports []PortForward) (*Forwarder, error) {
 			slog.Warn("port forward: UDP is not supported yet, skipping", "host_port", pm.HostPort)
 			continue
 		}
-		ln, err := net.Listen("tcp", fmt.Sprintf(":%d", pm.HostPort))
+		listenAddr := net.JoinHostPort(pm.BindAddr, strconv.Itoa(int(pm.HostPort)))
+		ln, err := net.Listen("tcp", listenAddr)
 		if err != nil {
 			f.Close()
-			return nil, fmt.Errorf("listen on :%d: %w", pm.HostPort, err)
+			return nil, fmt.Errorf("listen on %s: %w", listenAddr, err)
 		}
 		target := net.JoinHostPort(guestIP, fmt.Sprintf("%d", pm.GuestPort))
 		f.mu.Lock()
@@ -59,7 +65,7 @@ func StartForwarder(guestIP string, ports []PortForward) (*Forwarder, error) {
 		f.mu.Unlock()
 		f.wg.Add(1)
 		go f.serve(ln, target)
-		slog.Info("port forward started", "host_port", pm.HostPort, "target", target)
+		slog.Info("port forward started", "listen", listenAddr, "target", target)
 	}
 	return f, nil
 }

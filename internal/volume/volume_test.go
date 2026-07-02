@@ -2,10 +2,28 @@ package volume
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestStore_Create_rejects_traversal(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewStore(filepath.Join(root, "store"))
+	require.NoError(t, err)
+
+	sentinel := filepath.Join(root, "escape")
+	_, err = store.Create("../escape", 1<<20)
+	require.Error(t, err)
+	_, statErr := os.Stat(sentinel)
+	require.True(t, os.IsNotExist(statErr), "traversal name created a file outside the store")
+
+	require.Error(t, store.Remove("../escape"))
+	require.Error(t, store.Remove("a/b"))
+	_, err = store.Get("../escape")
+	require.Error(t, err)
+}
 
 func TestStore_CreateAndGet(t *testing.T) {
 	dir := t.TempDir()

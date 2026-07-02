@@ -62,7 +62,7 @@ Key flags:
 |---|---|
 | `--memory` | VM memory, default `256M` |
 | `--cpus` | vCPU count, default `1` |
-| `-p, --port` | Port mapping `host:guest[/tcp|udp]` |
+| `-p, --port` | Port mapping `[bindaddr:]host:guest[/tcp|udp]`; without a bind address the port publishes on all interfaces, `127.0.0.1:host:guest` restricts it to localhost |
 | `-e, --env` | Repeatable environment variable |
 | `--env-file` | Read env vars from file |
 | `--name` | Human-readable VM name |
@@ -500,6 +500,7 @@ The daemon runs as `root` inside the dedicated distro. The client persists rende
 |---|---|
 | `-H, --host` | Listen endpoint |
 | `--auth-token` | Shared secret for `Auth.Hello` (env: `JERBOA_AUTH_TOKEN`); empty disables auth |
+| `--insecure` | Allow serving a TCP endpoint without an auth token (unsafe). A TCP endpoint with no token is rejected at startup otherwise; a Unix socket needs no token (it is restricted to the owning user with `0600` permissions) |
 | `--qemu` | QEMU binary path (default `qemu-system-x86_64`) |
 | `--hypervisor` | `qemu` or `firecracker` (overrides `~/.jerboa/config.toml`) |
 | `--fc-bin` | Firecracker binary path (only with `--hypervisor=firecracker`) |

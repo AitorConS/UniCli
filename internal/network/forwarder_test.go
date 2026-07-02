@@ -94,6 +94,29 @@ func TestForwarderCloseStopsListener(t *testing.T) {
 	fwd.Close() // idempotent
 }
 
+func TestForwarderBindAddrRestrictsToLoopback(t *testing.T) {
+	guestHost, guestPort, stopEcho := startEchoServer(t)
+	defer stopEcho()
+
+	hostPort := freeTCPPort(t)
+	fwd, err := StartForwarder(guestHost, []PortForward{
+		{HostPort: hostPort, GuestPort: guestPort, Protocol: "tcp", BindAddr: "127.0.0.1"},
+	})
+	if err != nil {
+		t.Fatalf("StartForwarder: %v", err)
+	}
+	defer fwd.Close()
+
+	// The listener must be bound to 127.0.0.1 specifically, not 0.0.0.0.
+	if len(fwd.listeners) != 1 {
+		t.Fatalf("expected 1 listener, got %d", len(fwd.listeners))
+	}
+	got := fwd.listeners[0].Addr().(*net.TCPAddr).IP.String()
+	if got != "127.0.0.1" {
+		t.Fatalf("listener bound to %s, want 127.0.0.1", got)
+	}
+}
+
 func TestForwarderSkipsUDP(t *testing.T) {
 	// UDP is not supported yet: it is skipped, so no listener is opened and
 	// Start succeeds without error.

@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/AitorConS/jerboa/internal/naming"
 )
 
 const (
@@ -87,8 +89,8 @@ func NewStore(dir string) (*Store, error) {
 // Create allocates a new volume named name with the given size in bytes.
 // If sizeBytes is 0 the default (1 GiB) is used.
 func (s *Store) Create(name string, sizeBytes int64) (*Volume, error) {
-	if name == "" {
-		return nil, fmt.Errorf("volume name must not be empty")
+	if err := naming.ValidateResourceName("volume", name); err != nil {
+		return nil, err
 	}
 	if sizeBytes <= 0 {
 		sizeBytes = defaultSizeBytes
@@ -97,8 +99,11 @@ func (s *Store) Create(name string, sizeBytes int64) (*Volume, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	dir := s.volumeDir(name)
-	if _, err := os.Stat(dir); err == nil {
+	dir, err := s.volumeDir(name)
+	if err != nil {
+		return nil, err
+	}
+	if _, statErr := os.Stat(dir); statErr == nil {
 		return nil, fmt.Errorf("volume %q already exists", name)
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -160,8 +165,11 @@ func (s *Store) Remove(name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	dir := s.volumeDir(name)
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
+	dir, err := s.volumeDir(name)
+	if err != nil {
+		return err
+	}
+	if _, statErr := os.Stat(dir); os.IsNotExist(statErr) {
 		return fmt.Errorf("volume %q not found", name)
 	}
 	if err := os.RemoveAll(dir); err != nil {
@@ -170,12 +178,19 @@ func (s *Store) Remove(name string) error {
 	return nil
 }
 
-func (s *Store) volumeDir(name string) string {
-	return filepath.Join(s.root, name)
+func (s *Store) volumeDir(name string) (string, error) {
+	if err := naming.ValidateResourceName("volume", name); err != nil {
+		return "", err
+	}
+	return naming.SafeJoin(s.root, name)
 }
 
 func (s *Store) readMeta(name string) (*Volume, error) {
-	path := filepath.Join(s.volumeDir(name), metaFile)
+	dir, err := s.volumeDir(name)
+	if err != nil {
+		return nil, err
+	}
+	path := filepath.Join(dir, metaFile)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("volume %q not found: %w", name, err)

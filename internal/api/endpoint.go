@@ -56,6 +56,14 @@ func Listen(endpoint string) (net.Listener, error) {
 	if err != nil {
 		return nil, fmt.Errorf("api server listen %s: %w", endpoint, err)
 	}
+	if network == "unix" {
+		// Restrict the socket to the owning user: the daemon is unauthenticated
+		// over Unix sockets, so filesystem permissions are the access control.
+		if err := os.Chmod(address, 0o600); err != nil {
+			_ = l.Close()
+			return nil, fmt.Errorf("api server chmod socket %s: %w", address, err)
+		}
+	}
 	return l, nil
 }
 
