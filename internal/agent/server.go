@@ -296,6 +296,9 @@ func (s *Server) wslConfig(token string) wslboot.Config {
 		JerboadPath:    s.cfg.JerboadPath,
 		Hypervisor:     s.cfg.Hypervisor,
 		Sudo:           s.cfg.Sudo,
+		// Cold WSL2 boots regularly exceed the 20s wslboot default; the
+		// desktop app shows progress, so waiting longer beats a false failure.
+		HealthTimeout: 60 * time.Second,
 	}
 }
 
