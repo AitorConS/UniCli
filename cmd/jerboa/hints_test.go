@@ -68,11 +68,32 @@ func TestHintCollectorBounded(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if c.buf.Len() > hintCollectorMax {
-		t.Fatalf("retained %d bytes, cap is %d", c.buf.Len(), hintCollectorMax)
+	if len(c.buf) > hintCollectorMax {
+		t.Fatalf("retained %d bytes, cap is %d", len(c.buf), hintCollectorMax)
 	}
 	if inner.Len() != 10*64<<10 {
 		t.Fatalf("inner writer received %d bytes, want all %d", inner.Len(), 10*64<<10)
+	}
+}
+
+func TestHintCollectorRetainsTail(t *testing.T) {
+	// Failure signatures appear at the END of a long log; the collector must
+	// keep the most recent bytes, not the first ones.
+	var inner bytes.Buffer
+	c := newHintCollector(&inner)
+	chunk := bytes.Repeat([]byte("startup chatter\n"), 4<<10) // 64 KiB per write
+	for i := 0; i < 8; i++ {                                  // 512 KiB, twice the cap
+		if _, err := c.Write(chunk); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := c.Write([]byte("write failed: No space left on device\n")); err != nil {
+		t.Fatal(err)
+	}
+	var hintOut bytes.Buffer
+	c.PrintHints(&hintOut)
+	if !strings.Contains(hintOut.String(), "no space left on device") {
+		t.Fatalf("failure signature past the retention cap was lost: %q", hintOut.String())
 	}
 }
 

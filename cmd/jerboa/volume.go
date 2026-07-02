@@ -8,6 +8,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/AitorConS/jerboa/internal/api"
+	"github.com/AitorConS/jerboa/internal/builder"
 	pkg "github.com/AitorConS/jerboa/internal/package"
 	"github.com/AitorConS/jerboa/internal/volume"
 	"github.com/spf13/cobra"
@@ -70,6 +71,9 @@ survives recreating the VM.
 // the result into the named volume via the daemon's mkfs. Shared by
 // `volume seed` and `volume create --seed-pkg`.
 func seedVolumeFromPkgs(cmd *cobra.Command, endpoint *string, storePath *string, verbose *bool, name string, pkgs []string, pkgSource, src string) error {
+	if err := builder.ValidatePkgSource(pkgSource); err != nil {
+		return fmt.Errorf("volume seed: %w", err)
+	}
 	sp := newSpinner(cmd.ErrOrStderr(), *verbose)
 
 	store, err := volume.NewStore(volumeStorePath(*storePath))

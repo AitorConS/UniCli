@@ -107,12 +107,13 @@ func printNanosHints(w io.Writer, logs string) {
 }
 
 // hintCollector is an io.Writer that tees the stream to an inner writer while
-// retaining a bounded copy for hint scanning once the stream ends. Retention is
-// capped so a chatty guest cannot grow memory unboundedly; the daemon's own log
-// ring buffer is similarly bounded.
+// retaining a bounded copy for hint scanning once the stream ends. It keeps the
+// tail of the stream — failure signatures appear near the end of a boot/run
+// log, after the startup chatter — capped so a chatty guest cannot grow memory
+// unboundedly; the daemon's own log ring buffer is similarly bounded.
 type hintCollector struct {
 	inner io.Writer
-	buf   strings.Builder
+	buf   []byte
 }
 
 const hintCollectorMax = 256 << 10 // 256 KiB of retained serial output
@@ -122,17 +123,16 @@ func newHintCollector(inner io.Writer) *hintCollector {
 }
 
 func (h *hintCollector) Write(p []byte) (int, error) {
-	if h.buf.Len() < hintCollectorMax {
-		room := hintCollectorMax - h.buf.Len()
-		if len(p) < room {
-			room = len(p)
-		}
-		h.buf.Write(p[:room])
+	h.buf = append(h.buf, p...)
+	if len(h.buf) > hintCollectorMax {
+		// Slide the window: keep only the most recent hintCollectorMax bytes.
+		n := copy(h.buf, h.buf[len(h.buf)-hintCollectorMax:])
+		h.buf = h.buf[:n]
 	}
 	return h.inner.Write(p) //nolint:wrapcheck // io.Writer pass-through: callers need the inner writer's error as-is
 }
 
 // PrintHints scans the retained output and prints matched hints to w.
 func (h *hintCollector) PrintHints(w io.Writer) {
-	printNanosHints(w, h.buf.String())
+	printNanosHints(w, string(h.buf))
 }
