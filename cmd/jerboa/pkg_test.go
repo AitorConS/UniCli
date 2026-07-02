@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -89,7 +90,7 @@ func TestPkg_Search(t *testing.T) {
 	_, socketPath := startDaemon(t)
 	storePath := t.TempDir()
 
-	out := execRoot(t, socketPath, storePath, "pkg", "search", "hello")
+	out := execRoot(t, socketPath, storePath, "pkg", "search", "hello", "--source", "jerboa")
 	require.Contains(t, out, "hellopkg")
 }
 
@@ -107,7 +108,7 @@ func TestPkg_Search_JSON(t *testing.T) {
 	_, socketPath := startDaemon(t)
 	storePath := t.TempDir()
 
-	out := execRoot(t, socketPath, storePath, "--output", "json", "pkg", "search", "hello")
+	out := execRoot(t, socketPath, storePath, "--output", "json", "pkg", "search", "hello", "--source", "jerboa")
 	require.Contains(t, out, "hellopkg")
 }
 
@@ -119,7 +120,7 @@ func TestPkg_Search_NoResults(t *testing.T) {
 	_, socketPath := startDaemon(t)
 	storePath := t.TempDir()
 
-	out := execRoot(t, socketPath, storePath, "pkg", "search", "nonexistent")
+	out := execRoot(t, socketPath, storePath, "pkg", "search", "nonexistent", "--source", "jerboa")
 	require.Contains(t, out, "No packages found")
 }
 
@@ -151,13 +152,13 @@ func TestPkg_GetAndListAndRemove(t *testing.T) {
 	_, socketPath := startDaemon(t)
 	storePath := t.TempDir()
 
-	out := execRoot(t, socketPath, storePath, "pkg", "get", "hellopkg")
+	out := execRoot(t, socketPath, storePath, "pkg", "get", "hellopkg", "--source", "jerboa")
 	require.Contains(t, out, "hellopkg")
 
-	out = execRoot(t, socketPath, storePath, "pkg", "list")
+	out = execRoot(t, socketPath, storePath, "pkg", "list", "--source", "jerboa")
 	require.Contains(t, out, "hellopkg")
 
-	out = execRoot(t, socketPath, storePath, "pkg", "remove", "hellopkg")
+	out = execRoot(t, socketPath, storePath, "pkg", "remove", "hellopkg", "--source", "jerboa")
 	require.Contains(t, out, "Removed all versions")
 }
 
@@ -197,10 +198,10 @@ func TestPkg_Get_SpecificVersion(t *testing.T) {
 	_, socketPath := startDaemon(t)
 	storePath := t.TempDir()
 
-	out := execRoot(t, socketPath, storePath, "pkg", "get", "verpkg:1.0.0")
+	out := execRoot(t, socketPath, storePath, "pkg", "get", "verpkg:1.0.0", "--source", "jerboa")
 	require.Contains(t, out, "1.0.0")
 
-	out = execRoot(t, socketPath, storePath, "pkg", "remove", "verpkg:1.0.0")
+	out = execRoot(t, socketPath, storePath, "pkg", "remove", "verpkg:1.0.0", "--source", "jerboa")
 	require.Contains(t, out, "1.0.0")
 }
 
@@ -230,13 +231,13 @@ func TestPkg_RemoveAllVersions(t *testing.T) {
 	_, socketPath := startDaemon(t)
 	storePath := t.TempDir()
 
-	execRoot(t, socketPath, storePath, "pkg", "get", "multiver:3.0.0")
-	execRoot(t, socketPath, storePath, "pkg", "get", "multiver:2.0.0")
+	execRoot(t, socketPath, storePath, "pkg", "get", "multiver:3.0.0", "--source", "jerboa")
+	execRoot(t, socketPath, storePath, "pkg", "get", "multiver:2.0.0", "--source", "jerboa")
 
-	out := execRoot(t, socketPath, storePath, "pkg", "list")
+	out := execRoot(t, socketPath, storePath, "pkg", "list", "--source", "jerboa")
 	require.Contains(t, out, "multiver")
 
-	out = execRoot(t, socketPath, storePath, "pkg", "remove", "multiver")
+	out = execRoot(t, socketPath, storePath, "pkg", "remove", "multiver", "--source", "jerboa")
 	require.Contains(t, out, "Removed all versions")
 }
 
@@ -248,7 +249,7 @@ func TestPkg_Get_NotFound(t *testing.T) {
 	_, socketPath := startDaemon(t)
 	storePath := t.TempDir()
 
-	msg := execRootExpectError(t, socketPath, storePath, "pkg", "get", "nonexistent")
+	msg := execRootExpectError(t, socketPath, storePath, "pkg", "get", "nonexistent", "--source", "jerboa")
 	require.Contains(t, msg, "not found")
 }
 
@@ -260,7 +261,7 @@ func TestPkg_List_Empty(t *testing.T) {
 	_, socketPath := startDaemon(t)
 	storePath := t.TempDir()
 
-	out := execRoot(t, socketPath, storePath, "pkg", "list")
+	out := execRoot(t, socketPath, storePath, "pkg", "list", "--source", "jerboa")
 	require.Contains(t, out, "No packages installed")
 }
 
@@ -297,7 +298,7 @@ func TestPkgCreateCmd(t *testing.T) {
 	require.Contains(t, out, "myapp:1.0.0")
 	require.Contains(t, out, "created")
 
-	out = execRoot(t, socketPath, storePath, "pkg", "list")
+	out = execRoot(t, socketPath, storePath, "pkg", "list", "--source", "jerboa")
 	require.Contains(t, out, "myapp")
 }
 
@@ -328,7 +329,12 @@ func TestPkgCreateCmd_NotFound(t *testing.T) {
 	require.Contains(t, msg, "binary not found")
 }
 
-func TestPkgFromDockerCmd_NoFile(t *testing.T) {
+func TestPkgFromDockerCmd_ShellLauncher(t *testing.T) {
+	// Without --file, from-docker derives the program from the image's
+	// Entrypoint/Cmd, which needs a working Docker daemon.
+	if err := exec.Command("docker", "info").Run(); err != nil {
+		t.Skip("docker daemon not available")
+	}
 	origStoreDir := pkgStoreDir
 	pkgStoreDir = t.TempDir()
 	t.Cleanup(func() { pkgStoreDir = origStoreDir })
@@ -336,8 +342,10 @@ func TestPkgFromDockerCmd_NoFile(t *testing.T) {
 	_, socketPath := startDaemon(t)
 	storePath := t.TempDir()
 
-	msg := execRootExpectError(t, socketPath, storePath, "pkg", "from-docker", "testpkg:1.0.0", "node:20")
-	require.Contains(t, msg, "--file is required")
+	// busybox's Cmd is ["sh"]: a shell launcher, which must be rejected with
+	// an explanation instead of packaging the shell itself.
+	msg := execRootExpectError(t, socketPath, storePath, "pkg", "from-docker", "testpkg:1.0.0", "busybox:latest")
+	require.Contains(t, msg, "shell launcher")
 }
 
 func TestPkgPushCmd_NoVersion(t *testing.T) {
@@ -389,10 +397,10 @@ func TestPkg_Get_AlreadyDownloaded(t *testing.T) {
 	_, socketPath := startDaemon(t)
 	storePath := t.TempDir()
 
-	out := execRoot(t, socketPath, storePath, "pkg", "get", "cachedpkg")
+	out := execRoot(t, socketPath, storePath, "pkg", "get", "cachedpkg", "--source", "jerboa")
 	require.Contains(t, out, "cachedpkg")
 
-	out = execRoot(t, socketPath, storePath, "pkg", "get", "cachedpkg")
+	out = execRoot(t, socketPath, storePath, "pkg", "get", "cachedpkg", "--source", "jerboa")
 	require.Contains(t, out, "already downloaded")
 }
 
@@ -416,7 +424,7 @@ func TestPkg_Get_LatestVersion(t *testing.T) {
 	_, socketPath := startDaemon(t)
 	storePath := t.TempDir()
 
-	out := execRoot(t, socketPath, storePath, "pkg", "get", "latestpkg")
+	out := execRoot(t, socketPath, storePath, "pkg", "get", "latestpkg", "--source", "jerboa")
 	require.Contains(t, out, "2.0.0")
 }
 
@@ -432,7 +440,7 @@ func TestPkg_Get_VersionNotFound(t *testing.T) {
 	_, socketPath := startDaemon(t)
 	storePath := t.TempDir()
 
-	msg := execRootExpectError(t, socketPath, storePath, "pkg", "get", "node:99.0.0")
+	msg := execRootExpectError(t, socketPath, storePath, "pkg", "get", "node:99.0.0", "--source", "jerboa")
 	require.Contains(t, msg, "not found")
 }
 
@@ -456,16 +464,16 @@ func TestPkg_Remove_SpecificVersion(t *testing.T) {
 	_, socketPath := startDaemon(t)
 	storePath := t.TempDir()
 
-	execRoot(t, socketPath, storePath, "pkg", "get", "rmver:2.0.0")
-	execRoot(t, socketPath, storePath, "pkg", "get", "rmver:1.0.0")
+	execRoot(t, socketPath, storePath, "pkg", "get", "rmver:2.0.0", "--source", "jerboa")
+	execRoot(t, socketPath, storePath, "pkg", "get", "rmver:1.0.0", "--source", "jerboa")
 
-	out := execRoot(t, socketPath, storePath, "pkg", "list")
+	out := execRoot(t, socketPath, storePath, "pkg", "list", "--source", "jerboa")
 	require.Contains(t, out, "rmver")
 
-	out = execRoot(t, socketPath, storePath, "pkg", "remove", "rmver:1.0.0")
+	out = execRoot(t, socketPath, storePath, "pkg", "remove", "rmver:1.0.0", "--source", "jerboa")
 	require.Contains(t, out, "1.0.0")
 
-	out = execRoot(t, socketPath, storePath, "pkg", "list")
+	out = execRoot(t, socketPath, storePath, "pkg", "list", "--source", "jerboa")
 	require.Contains(t, out, "2.0.0")
 }
 
@@ -487,7 +495,7 @@ func TestPkgCreateCmd_WithLibs(t *testing.T) {
 	require.Contains(t, out, "libpkg:1.0.0")
 	require.Contains(t, out, "created")
 
-	out = execRoot(t, socketPath, storePath, "pkg", "list")
+	out = execRoot(t, socketPath, storePath, "pkg", "list", "--source", "jerboa")
 	require.Contains(t, out, "libpkg")
 }
 
@@ -520,7 +528,7 @@ func TestPkgListCmd_JSON(t *testing.T) {
 	_, socketPath := startDaemon(t)
 	storePath := t.TempDir()
 
-	out := execRoot(t, socketPath, storePath, "pkg", "list", "--output-json")
+	out := execRoot(t, socketPath, storePath, "pkg", "list", "--output-json", "--source", "jerboa")
 	require.Contains(t, out, "jsonpkg")
 	require.Contains(t, out, "3.0.0")
 }
@@ -747,4 +755,54 @@ func TestPkgGetOps_NotFound(t *testing.T) {
 
 	msg := execRootExpectError(t, socketPath, vmStorePath, "pkg", "get", "eyberg/nonexistent:v1", "--source", "ops")
 	require.Contains(t, msg, "not found")
+}
+
+func TestLoadOpsProgramDefaultsAndEnvs(t *testing.T) {
+	// The ops package.manifest declares Program/Args (Args[0] is the program's
+	// own in-image path) and Env; raw builds without a [program] section and
+	// the env merge both read them through these helpers.
+	manifest := `{"Program":"postgresql_11.3.0/postgres",` +
+		`"Args":["/usr/local/pgsql/bin/postgres","-D","db"],` +
+		`"Version":"11.3.0","Env":{"HOME":"/","LANG":"C"}}`
+	archiveData := createOpsTestArchive(t, map[string]string{
+		"postgres":         "fake elf binary",
+		"package.manifest": manifest,
+	})
+
+	_, configure := setupOpsServer(t)
+
+	h := sha256.Sum256(archiveData)
+	sha := hex.EncodeToString(h[:])
+
+	configure(pkg.OpsPackageList{
+		Version: 1,
+		Packages: []pkg.OpsPackage{
+			{Name: "postgresql", Version: "11.3.0", Namespace: "eyberg", Language: "c", SHA256: sha},
+		},
+	}, map[string][]byte{
+		"/eyberg/postgresql/11.3.0.tar.gz": archiveData,
+	})
+
+	withOpsStoreDir(t)
+
+	// Install the package straight through the store: the helpers under test
+	// only need the extracted package and the cached index, not a daemon.
+	store, err := openOpsStore()
+	require.NoError(t, err)
+	require.NoError(t, store.Download("eyberg", "postgresql", "11.3.0", sha))
+	require.NoError(t, store.Extract("eyberg", "postgresql", "11.3.0"))
+
+	path, args := loadOpsProgramDefaults([]string{"eyberg/postgresql:11.3.0"})
+	require.Equal(t, "/usr/local/pgsql/bin/postgres", path)
+	require.Equal(t, []string{"-D", "db"}, args)
+
+	// Unparseable and unknown refs are skipped without failing.
+	path, args = loadOpsProgramDefaults([]string{"no-namespace", "eyberg/missing:1.0"})
+	require.Empty(t, path)
+	require.Empty(t, args)
+
+	env := loadOpsPackageEnvs([]string{"eyberg/postgresql:11.3.0"})
+	require.Equal(t, "/", env["HOME"])
+	require.Equal(t, "C", env["LANG"])
+	require.Nil(t, loadOpsPackageEnvs([]string{"eyberg/missing:1.0"}))
 }

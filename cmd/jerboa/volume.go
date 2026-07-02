@@ -8,6 +8,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/AitorConS/jerboa/internal/api"
+	"github.com/AitorConS/jerboa/internal/builder"
 	pkg "github.com/AitorConS/jerboa/internal/package"
 	"github.com/AitorConS/jerboa/internal/volume"
 	"github.com/spf13/cobra"
@@ -19,7 +20,7 @@ func newVolumeCmd(endpoint *string, storePath *string, outputFmt *string, verbos
 		Short: "Manage persistent volumes",
 	}
 	cmd.AddCommand(
-		newVolumeCreateCmd(storePath),
+		newVolumeCreateCmd(endpoint, storePath, verbose),
 		newVolumeLsCmd(storePath, outputFmt),
 		newVolumeRmCmd(storePath),
 		newVolumeInspectCmd(storePath),
@@ -54,75 +55,83 @@ survives recreating the VM.
   jerboa run postgresql -v pgdata:/db --network pgnet -p 5432:5432`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name := args[0]
 			if len(pkgs) == 0 {
 				return fmt.Errorf("volume seed: at least one --pkg is required")
 			}
-
-			sp := newSpinner(cmd.ErrOrStderr(), *verbose)
-
-			store, err := volume.NewStore(volumeStorePath(*storePath))
-			if err != nil {
-				return fmt.Errorf("volume seed: %w", err)
-			}
-			vol, err := store.Get(name)
-			if err != nil {
-				return fmt.Errorf("volume seed: volume %q not found (create it with 'jerboa volume create %s'): %w", name, name, err)
-			}
-
-			sp.Start("Resolving packages")
-			var files []pkg.File
-			if pkgSource == "ops" {
-				files, err = resolveOpsPackages(cmd.Context(), pkgs)
-			} else {
-				files, err = resolvePackages(cmd.Context(), pkgs)
-			}
-			if err != nil {
-				sp.Fail("Package resolution failed")
-				return fmt.Errorf("volume seed: %w", err)
-			}
-			sp.Done(fmt.Sprintf("Resolved %s", strings.Join(pkgs, ", ")))
-
-			seedFiles, err := remapSeedFiles(files, src)
-			if err != nil {
-				return fmt.Errorf("volume seed: %w", err)
-			}
-
-			label := vol.Label
-			if label == "" {
-				label = volume.SanitizeLabel(vol.ID)
-			}
-
-			sp.Start("Seeding volume on daemon")
-			client, err := api.Dial(*endpoint)
-			if err != nil {
-				sp.Fail("Volume seeding failed")
-				return fmt.Errorf("volume seed: connect to daemon: %w", err)
-			}
-			defer func() { _ = client.Close() }()
-
-			pr := seedContextReader(seedFiles)
-			defer func() { _ = pr.Close() }()
-			res, err := client.VolumeSeed(cmd.Context(), api.VolumeSeedParams{
-				VolumeName: name,
-				DiskPath:   hostPathForDaemon(vol.DiskPath),
-				Label:      label,
-				SizeBytes:  vol.SizeBytes,
-			}, pr)
-			if err != nil {
-				sp.Fail("Volume seeding failed")
-				return fmt.Errorf("volume seed: %w", err)
-			}
-			sp.Done(fmt.Sprintf("Seeded %s  ·  %s", name, formatSize(res.SizeBytes)))
-
-			fmt.Fprintf(cmd.OutOrStdout(), "%s seeded from %s (%s)\n", name, strings.Join(pkgs, ", "), formatSize(res.SizeBytes))
-			return nil
+			return seedVolumeFromPkgs(cmd, endpoint, storePath, verbose, args[0], pkgs, pkgSource, src)
 		},
 	}
 	cmd.Flags().StringArrayVar(&pkgs, "pkg", nil, "package providing the seed files (repeatable)")
-	cmd.Flags().StringVar(&pkgSource, "pkg-source", "jerboa", "package source: \"jerboa\" (default) or \"ops\"")
+	cmd.Flags().StringVar(&pkgSource, "pkg-source", "ops", "package source: \"ops\" (default) or \"jerboa\"")
 	cmd.Flags().StringVar(&src, "src", "/", "in-package subtree whose contents become the volume root (e.g. /db)")
 	return cmd
+}
+
+// seedVolumeFromPkgs resolves pkgs, narrows them to the src subtree, and writes
+// the result into the named volume via the daemon's mkfs. Shared by
+// `volume seed` and `volume create --seed-pkg`.
+func seedVolumeFromPkgs(cmd *cobra.Command, endpoint *string, storePath *string, verbose *bool, name string, pkgs []string, pkgSource, src string) error {
+	if err := builder.ValidatePkgSource(pkgSource); err != nil {
+		return fmt.Errorf("volume seed: %w", err)
+	}
+	sp := newSpinner(cmd.ErrOrStderr(), *verbose)
+
+	store, err := volume.NewStore(volumeStorePath(*storePath))
+	if err != nil {
+		return fmt.Errorf("volume seed: %w", err)
+	}
+	vol, err := store.Get(name)
+	if err != nil {
+		return fmt.Errorf("volume seed: volume %q not found (create it with 'jerboa volume create %s'): %w", name, name, err)
+	}
+
+	sp.Start("Resolving packages")
+	var files []pkg.File
+	if pkgSource == "ops" {
+		files, err = resolveOpsPackages(cmd.Context(), pkgs)
+	} else {
+		files, err = resolvePackages(cmd.Context(), pkgs)
+	}
+	if err != nil {
+		sp.Fail("Package resolution failed")
+		return fmt.Errorf("volume seed: %w", err)
+	}
+	sp.Done(fmt.Sprintf("Resolved %s", strings.Join(pkgs, ", ")))
+
+	seedFiles, err := remapSeedFiles(files, src)
+	if err != nil {
+		return fmt.Errorf("volume seed: %w", err)
+	}
+
+	label := vol.Label
+	if label == "" {
+		label = volume.SanitizeLabel(vol.ID)
+	}
+
+	sp.Start("Seeding volume on daemon")
+	client, err := api.Dial(*endpoint)
+	if err != nil {
+		sp.Fail("Volume seeding failed")
+		return fmt.Errorf("volume seed: connect to daemon: %w", err)
+	}
+	defer func() { _ = client.Close() }()
+
+	pr := seedContextReader(seedFiles)
+	defer func() { _ = pr.Close() }()
+	res, err := client.VolumeSeed(cmd.Context(), api.VolumeSeedParams{
+		VolumeName: name,
+		DiskPath:   hostPathForDaemon(vol.DiskPath),
+		Label:      label,
+		SizeBytes:  vol.SizeBytes,
+	}, pr)
+	if err != nil {
+		sp.Fail("Volume seeding failed")
+		return fmt.Errorf("volume seed: %w", err)
+	}
+	sp.Done(fmt.Sprintf("Seeded %s  ·  %s", name, formatSize(res.SizeBytes)))
+
+	fmt.Fprintf(cmd.OutOrStdout(), "%s seeded from %s (%s)\n", name, strings.Join(pkgs, ", "), formatSize(res.SizeBytes))
+	return nil
 }
 
 // remapSeedFiles narrows resolved package files to those under src and rebases
@@ -157,12 +166,24 @@ func remapSeedFiles(files []pkg.File, src string) ([]pkg.File, error) {
 	return out, nil
 }
 
-func newVolumeCreateCmd(storePath *string) *cobra.Command {
-	var size string
+func newVolumeCreateCmd(endpoint *string, storePath *string, verbose *bool) *cobra.Command {
+	var (
+		size      string
+		seedPkgs  []string
+		pkgSource string
+		src       string
+	)
 	cmd := &cobra.Command{
 		Use:   "create <name>",
-		Short: "Create a new named volume",
-		Args:  cobra.ExactArgs(1),
+		Short: "Create a new named volume (optionally seeded from a package)",
+		Long: `Create a new named volume.
+
+With --seed-pkg, the volume is immediately seeded with initialized data from
+the package (create + seed in one step). Use --src to pick the in-package
+subtree whose contents become the volume root:
+
+  jerboa volume create pgdata --size 1G --seed-pkg eyberg/postgresql:11.3.0 --src /db`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			sizeBytes, err := volume.ParseSize(size)
@@ -177,11 +198,19 @@ func newVolumeCreateCmd(storePath *string) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("volume create: %w", err)
 			}
+			if len(seedPkgs) > 0 {
+				if err := seedVolumeFromPkgs(cmd, endpoint, storePath, verbose, name, seedPkgs, pkgSource, src); err != nil {
+					return err
+				}
+			}
 			fmt.Fprintln(cmd.OutOrStdout(), v.ID)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&size, "size", "1G", "volume size (e.g. 512M, 1G, 2G)")
+	cmd.Flags().StringArrayVar(&seedPkgs, "seed-pkg", nil, "seed the new volume with data from this package (repeatable)")
+	cmd.Flags().StringVar(&pkgSource, "pkg-source", "ops", "package source for --seed-pkg: \"ops\" (default) or \"jerboa\"")
+	cmd.Flags().StringVar(&src, "src", "/", "in-package subtree whose contents become the volume root (e.g. /db)")
 	return cmd
 }
 

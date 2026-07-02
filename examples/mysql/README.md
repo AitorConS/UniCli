@@ -17,10 +17,14 @@ package already ships the result, there's no reason to.
 
 ```sh
 jerboa network create mynet
-jerboa build . --name mysql --pkg eyberg/mysql:5.7.29 --pkg-source ops
+jerboa build . --name mysql
 jerboa run mysql --network mynet -p 3306:3306
 jerboa logs <id>     # → "mysqld: ready for connections"
 ```
+
+The package (`eyberg/mysql:5.7.29`) and its source (`ops`) are declared in
+`unikernel.toml` under `[build] pkgs` / `pkg_source`, so the build needs no
+`--pkg` flags. Add `--smoke` to boot-test the image right after building.
 
 `memory` (`512M`) and the published port (`3306:3306`) come from `[run]` in
 `unikernel.toml` and are inherited automatically; the port publishes because
@@ -29,7 +33,10 @@ the baked default.
 
 ## How the `unikernel.toml` works
 
-- `lang = "raw"` — no compilation; the binaries come from the `--pkg` package.
+- `lang = "raw"` — no compilation; the binaries come from the declared package.
+- `pkgs = ["eyberg/mysql:5.7.29"]` / `pkg_source = "ops"` — the package and
+  where it comes from, baked into the config so builds are reproducible without
+  flags.
 - `[program] path = "mysqld"` — the package ships a single `mysqld` binary at
   the image root, so the bare basename resolves unambiguously (no same-named
   stub to disambiguate from, unlike `postgres`).
@@ -49,16 +56,18 @@ it is mounted. `jerboa volume seed` does this: it writes a package subtree
 into the volume's filesystem with `mkfs`.
 
 ```sh
-# 1. Create the volume
-jerboa volume create mysqldata --size 512M
+# 1. Create the volume and seed it with the package's pre-initialized data
+#    directory in one step (/var/lib/mysql → volume root)
+jerboa volume create mysqldata --size 512M \
+  --seed-pkg eyberg/mysql:5.7.29 --src /var/lib/mysql
 
-# 2. Seed it with the package's pre-initialized data directory (/var/lib/mysql → volume root)
-jerboa volume seed mysqldata --pkg eyberg/mysql:5.7.29 --pkg-source ops --src /var/lib/mysql
-
-# 3. Run with the volume mounted at /var/lib/mysql (it shadows the baked copy)
+# 2. Run with the volume mounted at /var/lib/mysql (it shadows the baked copy)
 jerboa network create mynet
 jerboa run mysql -v mysqldata:/var/lib/mysql --network mynet -p 3306:3306
 ```
+
+(`jerboa volume seed` still exists for re-seeding an existing volume — it
+reformats and resets it to the seed state.)
 
 Now the data survives recreating the VM:
 

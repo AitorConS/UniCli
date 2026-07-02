@@ -23,6 +23,14 @@ type BuildConfig struct {
 	Lang       string   `toml:"lang"`
 	Entrypoint string   `toml:"entrypoint"`
 	Args       []string `toml:"args"`
+	// Pkgs lists packages to include in the image (e.g. "eyberg/postgresql:11.3.0"
+	// for ops packages, "node:20" for jerboa packages). Declaring them here makes
+	// `jerboa build .` self-contained; the --pkg flag appends to this list.
+	Pkgs []string `toml:"pkgs"`
+	// PkgSource selects where Pkgs are resolved from: "ops" (the nanovms/ops
+	// ecosystem, the current default) or "jerboa" (the first-party index).
+	// An explicit --pkg-source flag overrides this value.
+	PkgSource string `toml:"pkg_source"`
 	// Run lists shell commands to execute before the language driver packages the project.
 	// Equivalent to RUN instructions in a Dockerfile — use for build steps like
 	// "npm run build", "nuxt build", "python manage.py collectstatic", etc.
@@ -123,12 +131,18 @@ func validateConfig(cfg *Config) error {
 		}
 	}
 
-	isRaw := strings.EqualFold(cfg.Build.Lang, "raw")
-	switch {
-	case isRaw && cfg.Program.Path == "":
-		return fmt.Errorf(`program.path is required when build.lang = "raw"`)
-	case !isRaw && cfg.Program.Path != "":
+	// [program] is only meaningful for raw builds. The inverse (raw with no
+	// [program]) is allowed here: the build falls back to the Program/Args
+	// declared by the ops package's own package.manifest, and only errors at
+	// build time if no package provides one.
+	if !strings.EqualFold(cfg.Build.Lang, "raw") && cfg.Program.Path != "" {
 		return fmt.Errorf(`program: only valid when build.lang = "raw"`)
+	}
+
+	if cfg.Build.PkgSource != "" {
+		if err := ValidatePkgSource(cfg.Build.PkgSource); err != nil {
+			return fmt.Errorf("build.pkg_source: %w", err)
+		}
 	}
 
 	if cfg.Run.Memory != "" {
@@ -254,6 +268,16 @@ func validatePortSpec(p string) error {
 		}
 	}
 	return nil
+}
+
+// ValidatePkgSource checks that s names a known package source.
+func ValidatePkgSource(s string) error {
+	switch s {
+	case "ops", "jerboa":
+		return nil
+	default:
+		return fmt.Errorf("unknown package source %q: use \"ops\" or \"jerboa\"", s)
+	}
 }
 
 func (c *Config) LangHint() Lang {

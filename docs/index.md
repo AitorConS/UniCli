@@ -78,7 +78,9 @@ At the time of this documentation update:
 ## Next
 
 - [Getting Started]({% link getting-started.md %})
+- [Build Concepts]({% link build-concepts.md %})
 - [CLI Reference]({% link cli-reference.md %})
 - [Compose]({% link compose.md %})
 - [Architecture]({% link architecture.md %})
 - [Observability]({% link observability.md %})
+- [Troubleshooting]({% link troubleshooting.md %})

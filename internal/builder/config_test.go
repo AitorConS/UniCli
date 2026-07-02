@@ -162,15 +162,53 @@ args = ["-jar", "/app.jar"]
 }
 
 func TestLoadConfigRawWithoutProgram(t *testing.T) {
+	// raw with no [program] is valid: the build falls back to the Program/Args
+	// declared by the ops package's own package.manifest.
 	dir := t.TempDir()
 	content := `[build]
 lang = "raw"
 `
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ConfigFileName), []byte(content), 0o644))
 
+	cfg, err := LoadConfig(dir)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	require.Empty(t, cfg.Program.Path)
+}
+
+func TestLoadConfigPkgs(t *testing.T) {
+	dir := t.TempDir()
+	content := `[build]
+lang = "raw"
+pkgs = ["eyberg/postgresql:11.3.0"]
+pkg_source = "ops"
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ConfigFileName), []byte(content), 0o644))
+
+	cfg, err := LoadConfig(dir)
+	require.NoError(t, err)
+	require.Equal(t, []string{"eyberg/postgresql:11.3.0"}, cfg.Build.Pkgs)
+	require.Equal(t, "ops", cfg.Build.PkgSource)
+}
+
+func TestLoadConfigInvalidPkgSource(t *testing.T) {
+	dir := t.TempDir()
+	content := `[build]
+lang = "raw"
+pkg_source = "dockerhub"
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ConfigFileName), []byte(content), 0o644))
+
 	_, err := LoadConfig(dir)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), `program.path is required when build.lang = "raw"`)
+	require.Contains(t, err.Error(), "build.pkg_source")
+}
+
+func TestValidatePkgSource(t *testing.T) {
+	require.NoError(t, ValidatePkgSource("ops"))
+	require.NoError(t, ValidatePkgSource("jerboa"))
+	require.Error(t, ValidatePkgSource("docker"))
+	require.Error(t, ValidatePkgSource(""))
 }
 
 func TestLoadConfigProgramWithoutRaw(t *testing.T) {

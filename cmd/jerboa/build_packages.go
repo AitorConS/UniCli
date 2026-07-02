@@ -47,6 +47,64 @@ func loadOpsPackageEnvs(pkgRefs []string) map[string]string {
 	return env
 }
 
+// mergePkgRefs concatenates package refs from unikernel.toml and --pkg flags,
+// dropping exact duplicates while preserving order (toml refs first).
+func mergePkgRefs(fromConfig, fromFlags []string) []string {
+	seen := make(map[string]bool, len(fromConfig)+len(fromFlags))
+	var out []string
+	for _, ref := range append(append([]string{}, fromConfig...), fromFlags...) {
+		if ref == "" || seen[ref] {
+			continue
+		}
+		seen[ref] = true
+		out = append(out, ref)
+	}
+	return out
+}
+
+// loadOpsProgramDefaults reads Program/Args from each ops package's
+// package.manifest and returns the first declared program with its arguments.
+// In ops manifests Args[0] is the program's own in-image path (argv[0]) and the
+// remaining elements are the real arguments — e.g. eyberg/postgresql ships
+// Args: ["/usr/local/pgsql/bin/postgres", "-D", "db"]. This lets a raw build
+// run an ops package with no [program] section in unikernel.toml: the package
+// already declares how it is meant to be started.
+// Errors are silently skipped — a missing or malformed manifest simply yields
+// no default, and the caller reports the actionable error.
+func loadOpsProgramDefaults(pkgRefs []string) (path string, args []string) {
+	opsStore, err := openOpsStore()
+	if err != nil {
+		return "", nil
+	}
+	manifest, err := opsStore.FetchManifestCached()
+	if err != nil {
+		return "", nil
+	}
+	for _, ref := range pkgRefs {
+		id, parseErr := pkg.ParseOpsIdentifier(ref)
+		if parseErr != nil {
+			continue
+		}
+		target := manifest.Lookup(id.Namespace, id.Name, id.Version)
+		if target == nil {
+			continue
+		}
+		cfg, loadErr := opsStore.LoadPackageManifest(target.Namespace, target.Name, target.Version)
+		if loadErr != nil {
+			continue
+		}
+		switch {
+		case len(cfg.Args) > 0:
+			return cfg.Args[0], cfg.Args[1:]
+		case cfg.Program != "":
+			// Program may be "pkg_version/binary" (relative to the ops packages
+			// root); the basename resolves through findProgramBinary.
+			return filepath.Base(cfg.Program), nil
+		}
+	}
+	return "", nil
+}
+
 // resolvePackages downloads and extracts packages, returning the list of
 // package files that should be included in the manifest.
 func resolvePackages(ctx context.Context, pkgRefs []string) ([]pkg.File, error) { //nolint:unparam // ctx reserved for future cancellation

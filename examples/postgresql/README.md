@@ -22,10 +22,14 @@ against it directly — exactly what the upstream ops package manifest does
 
 ```sh
 jerboa network create pgnet
-jerboa build . --name postgresql --pkg eyberg/postgresql:11.3.0 --pkg-source ops
+jerboa build . --name postgresql
 jerboa run postgresql --network pgnet -p 5432:5432
 jerboa logs <id>     # → "database system is ready to accept connections"
 ```
+
+The package (`eyberg/postgresql:11.3.0`) and its source (`ops`) are declared in
+`unikernel.toml` under `[build] pkgs` / `pkg_source`, so the build needs no
+`--pkg` flags. Add `--smoke` to boot-test the image right after building.
 
 `memory` (`512M`), `cpus`, and the published port (`5432:5432`) come from
 `[run]` in `unikernel.toml` and are inherited automatically; the port publishes
@@ -34,7 +38,10 @@ still overrides the baked default.
 
 ## How the `unikernel.toml` works
 
-- `lang = "raw"` — no compilation; the binaries come from the `--pkg` package.
+- `lang = "raw"` — no compilation; the binaries come from the declared package.
+- `pkgs = ["eyberg/postgresql:11.3.0"]` / `pkg_source = "ops"` — the package and
+  where it comes from, baked into the config so builds are reproducible without
+  flags.
 - `[program] path = "/usr/local/pgsql/bin/postgres"` — the full in-image path,
   so the binary runs from its real install location and can locate its prefix
   (`../share`, `../lib`) via `/proc/self/exe` and resolve `$ORIGIN`-relative
@@ -55,16 +62,18 @@ with the initialized cluster before it is mounted. `jerboa volume seed` does
 this: it writes a package subtree into the volume's filesystem with `mkfs`.
 
 ```sh
-# 1. Create the volume
-jerboa volume create pgdata --size 1G
+# 1. Create the volume and seed it with the package's pre-initialized
+#    cluster in one step (/db → volume root)
+jerboa volume create pgdata --size 1G \
+  --seed-pkg eyberg/postgresql:11.3.0 --src /db
 
-# 2. Seed it with the package's pre-initialized cluster (/db → volume root)
-jerboa volume seed pgdata --pkg eyberg/postgresql:11.3.0 --pkg-source ops --src /db
-
-# 3. Run with the volume mounted at /db (it shadows the baked copy)
+# 2. Run with the volume mounted at /db (it shadows the baked copy)
 jerboa network create pgnet
 jerboa run postgresql -v pgdata:/db --network pgnet -p 5432:5432
 ```
+
+(`jerboa volume seed` still exists for re-seeding an existing volume — it
+reformats and resets it to the seed state.)
 
 Now the data survives recreating the VM:
 

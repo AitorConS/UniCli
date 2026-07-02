@@ -14,6 +14,7 @@ import (
 	"github.com/AitorConS/jerboa/internal/api"
 	"github.com/AitorConS/jerboa/internal/builder"
 	pkg "github.com/AitorConS/jerboa/internal/package"
+	"github.com/AitorConS/jerboa/internal/preflight"
 	"github.com/spf13/cobra"
 )
 
@@ -33,17 +34,19 @@ func absPath(p string) string {
 
 func newBuildCmd(endpoint *string, verbose *bool) *cobra.Command {
 	var (
-		name       string
-		tag        string
-		memory     string
-		cpus       int
-		port       int
-		pkgs       []string
-		pkgSource  string
-		lang       string
-		platform   string
-		entrypoint string
-		configFile string
+		name        string
+		tag         string
+		memory      string
+		cpus        int
+		port        int
+		pkgs        []string
+		pkgSource   string
+		lang        string
+		platform    string
+		entrypoint  string
+		configFile  string
+		noPreflight bool
+		smoke       bool
 	)
 	cmd := &cobra.Command{
 		Use:   "build <path>",
@@ -59,6 +62,54 @@ project markers (go.mod, package.json, etc.).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			buildStart := time.Now()
 			sp := newSpinner(cmd.ErrOrStderr(), *verbose)
+
+			srcPath := absPath(args[0])
+
+			var binaryPath string
+			var programPath string
+			var programArgs []string
+			var cfg *builder.Config
+			info, err := os.Stat(srcPath)
+			if err != nil {
+				return fmt.Errorf("build: stat %s: %w", srcPath, err)
+			}
+
+			// Writers for build output: info messages and subprocess output.
+			infoW := io.Writer(io.Discard)
+			if *verbose {
+				infoW = cmd.ErrOrStderr()
+			}
+			subW := sp.SubWriter()
+
+			if configFile != "" && !info.IsDir() {
+				return fmt.Errorf("build: -f/--file only applies when building from a source directory")
+			}
+
+			// Load unikernel.toml first: it can declare packages ([build] pkgs)
+			// and the package source, so the build is reproducible without flags.
+			if info.IsDir() {
+				if configFile != "" {
+					cfg, err = builder.LoadConfigFile(absPath(configFile))
+				} else {
+					cfg, err = builder.LoadConfig(srcPath)
+				}
+				if err != nil {
+					return fmt.Errorf("build: %w", err)
+				}
+			}
+
+			// Effective package list: [build] pkgs from unikernel.toml first, then
+			// --pkg flags appended (deduplicated). Package source precedence:
+			// explicit --pkg-source flag > [build] pkg_source > "ops" default.
+			if cfg != nil {
+				pkgs = mergePkgRefs(cfg.Build.Pkgs, pkgs)
+				if !cmd.Flags().Changed("pkg-source") && cfg.Build.PkgSource != "" {
+					pkgSource = cfg.Build.PkgSource
+				}
+			}
+			if err := builder.ValidatePkgSource(pkgSource); err != nil {
+				return fmt.Errorf("build: --pkg-source: %w", err)
+			}
 
 			var pkgFiles []pkg.File
 			if len(pkgs) > 0 {
@@ -86,38 +137,7 @@ project markers (go.mod, package.json, etc.).`,
 				}
 			}
 
-			srcPath := absPath(args[0])
-
-			var binaryPath string
-			var programPath string
-			var programArgs []string
-			var cfg *builder.Config
-			info, err := os.Stat(srcPath)
-			if err != nil {
-				return fmt.Errorf("build: stat %s: %w", srcPath, err)
-			}
-
-			// Writers for build output: info messages and subprocess output.
-			infoW := io.Writer(io.Discard)
-			if *verbose {
-				infoW = cmd.ErrOrStderr()
-			}
-			subW := sp.SubWriter()
-
-			if configFile != "" && !info.IsDir() {
-				return fmt.Errorf("build: -f/--file only applies when building from a source directory")
-			}
-
 			if info.IsDir() {
-				if configFile != "" {
-					cfg, err = builder.LoadConfigFile(absPath(configFile))
-				} else {
-					cfg, err = builder.LoadConfig(srcPath)
-				}
-				if err != nil {
-					return fmt.Errorf("build: %w", err)
-				}
-
 				if cfg != nil && cfg.HasStages() {
 					sp.Start("Building project")
 					var cleanupBinary bool
@@ -191,6 +211,19 @@ project markers (go.mod, package.json, etc.).`,
 				runPorts = cfg.Run.Ports
 			}
 
+			// Preflight: catch at build time what would otherwise be a cryptic
+			// boot failure inside the guest (dynamic binary without its loader,
+			// missing shared libraries, absent entrypoint script...).
+			if !noPreflight {
+				findings := preflight.CheckImage(binaryPath, pkgFiles, entrypoint)
+				if len(findings) > 0 {
+					fmt.Fprintf(cmd.ErrOrStderr(), "Preflight found problems with the image contents:\n%s", preflight.Format(findings))
+				}
+				if preflight.HasErrors(findings) {
+					return fmt.Errorf("build: preflight failed (the image would not boot); fix the findings above or rerun with --no-preflight to skip the check")
+				}
+			}
+
 			sp.Start("Assembling image on daemon")
 			client, err := api.Dial(*endpoint)
 			if err != nil {
@@ -226,6 +259,15 @@ project markers (go.mod, package.json, etc.).`,
 
 			fmt.Fprintf(cmd.OutOrStdout(), "%s  %s:%s  ·  %s  ·  built in %s\n",
 				res.DiskDigest, res.Name, res.Tag, sizeStr, formatDuration(elapsed))
+
+			// --smoke: boot the image once against the daemon to prove it starts,
+			// then tear the test VM down. Catches what static preflight cannot
+			// (runtime config errors, fork/exec attempts, OOM at startup).
+			if smoke {
+				if err := runSmokeTest(cmd, client, res.Name+":"+res.Tag); err != nil {
+					return err
+				}
+			}
 			return nil
 		},
 	}
@@ -233,12 +275,14 @@ project markers (go.mod, package.json, etc.).`,
 	cmd.Flags().StringVar(&tag, "tag", "latest", "image tag")
 	cmd.Flags().StringVar(&memory, "memory", "256M", "default VM memory")
 	cmd.Flags().IntVar(&cpus, "cpus", 1, "default VM CPU count")
-	cmd.Flags().StringArrayVar(&pkgs, "pkg", nil, "include package in image (e.g. node:20, python:3.12) (repeatable)")
-	cmd.Flags().StringVar(&pkgSource, "pkg-source", "jerboa", "package source: \"jerboa\" (default) or \"ops\" (nanovms/ops ecosystem)")
+	cmd.Flags().StringArrayVar(&pkgs, "pkg", nil, "include package in image (e.g. eyberg/postgresql:11.3.0, node:20) (repeatable; appended to [build] pkgs from unikernel.toml)")
+	cmd.Flags().StringVar(&pkgSource, "pkg-source", "ops", "package source: \"ops\" (nanovms/ops ecosystem, default) or \"jerboa\" (first-party index)")
 	cmd.Flags().StringVar(&lang, "lang", "", "build from source directory with language driver (go, node, python, rust, raw)")
 	cmd.Flags().StringVar(&platform, "platform", "", "target platform for cross-compilation (e.g. linux/amd64, linux/arm64)")
 	cmd.Flags().IntVar(&port, "port", 0, "declared service port; enables network in the image manifest (required for HTTP servers)")
 	cmd.Flags().StringVarP(&configFile, "file", "f", "", "path to the unikernel.toml to use (default: <path>/unikernel.toml)")
+	cmd.Flags().BoolVar(&noPreflight, "no-preflight", false, "skip the pre-build image checks (ELF architecture, shared library closure, entrypoint presence)")
+	cmd.Flags().BoolVar(&smoke, "smoke", false, "boot the image once after building to verify it starts (stops and removes the test VM afterwards)")
 	return cmd
 }
 
@@ -341,14 +385,31 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 		env := make(map[string]string)
 
 		if detected == builder.LangRaw {
-			if cfg == nil || cfg.Program.Path == "" {
-				return "", "", "", nil, nil, false, fmt.Errorf("build: lang %q requires %s with [program] path = \"...\"", "raw", builder.ConfigFileName)
+			progPath := ""
+			var progArgs []string
+			if cfg != nil {
+				progPath = cfg.Program.Path
+				progArgs = cfg.Program.Args
 			}
-			runtimeBinary, programPath, err = findProgramBinary(*pkgFiles, cfg.Program.Path)
+			// No [program] in unikernel.toml: fall back to the Program/Args the
+			// ops package itself declares in its package.manifest, so e.g.
+			// `jerboa build . --lang raw --pkg eyberg/mysql` works with zero config.
+			if progPath == "" && pkgSource == "ops" && len(userPkgs) > 0 {
+				progPath, progArgs = loadOpsProgramDefaults(userPkgs)
+				if progPath != "" {
+					fmt.Fprintf(infoW, "using program from ops package manifest: %s %s\n", progPath, strings.Join(progArgs, " "))
+				}
+			}
+			if progPath == "" {
+				return "", "", "", nil, nil, false, fmt.Errorf(
+					"build: raw build needs a program: add [program] path = \"...\" to %s, or use an ops --pkg whose package.manifest declares one",
+					builder.ConfigFileName)
+			}
+			runtimeBinary, programPath, err = findProgramBinary(*pkgFiles, progPath)
 			if err != nil {
 				return "", "", "", nil, nil, false, fmt.Errorf("build: %w", err)
 			}
-			programArgs = cfg.Program.Args
+			programArgs = progArgs
 		} else {
 			autoPkgs := filterCoveredAutoPkgs(result.Packages, userPkgs)
 			resolvedPkgs, err := resolveAutoPackages(cmd.Context(), autoPkgs, pkgSource)

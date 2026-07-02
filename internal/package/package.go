@@ -650,6 +650,113 @@ func FromDocker(image, containerPath string, extraLibs []string) ([]string, erro
 	return allFiles, nil
 }
 
+// DockerImageConfig is the subset of an OCI image config used to derive a
+// package's program automatically: what the container would run (Entrypoint +
+// Cmd) and the environment it expects.
+type DockerImageConfig struct {
+	Entrypoint []string `json:"Entrypoint"`
+	Cmd        []string `json:"Cmd"`
+	Env        []string `json:"Env"`
+}
+
+// InspectDockerImage reads an image's OCI config via `docker image inspect`,
+// pulling the image first when it is not available locally.
+func InspectDockerImage(image string) (*DockerImageConfig, error) {
+	out, err := dockerInspectConfig(image)
+	if err != nil {
+		// The image may simply not be pulled yet; docker inspect does not pull.
+		if pullErr := exec.Command("docker", "pull", image).Run(); pullErr != nil { //nolint:noctx // interactive CLI call
+			return nil, fmt.Errorf("docker inspect %s: %w (docker pull also failed: %w)", image, err, pullErr)
+		}
+		out, err = dockerInspectConfig(image)
+		if err != nil {
+			return nil, fmt.Errorf("docker inspect %s: %w", image, err)
+		}
+	}
+	return ParseDockerConfig(out)
+}
+
+func dockerInspectConfig(image string) ([]byte, error) {
+	out, err := exec.Command("docker", "image", "inspect", "-f", "{{json .Config}}", image).Output() //nolint:noctx // interactive CLI call
+	if err != nil {
+		return nil, fmt.Errorf("docker image inspect %s: %w", image, err)
+	}
+	return out, nil
+}
+
+// ParseDockerConfig parses the JSON printed by
+// `docker image inspect -f '{{json .Config}}'`.
+func ParseDockerConfig(data []byte) (*DockerImageConfig, error) {
+	var cfg DockerImageConfig
+	if err := json.Unmarshal(bytes.TrimSpace(data), &cfg); err != nil {
+		return nil, fmt.Errorf("parse docker image config: %w", err)
+	}
+	return &cfg, nil
+}
+
+// ProgramCandidate returns the path of the program the image would run:
+// the first Entrypoint element, or the first Cmd element when there is no
+// entrypoint. Empty when the image declares neither.
+func (c *DockerImageConfig) ProgramCandidate() string {
+	if len(c.Entrypoint) > 0 {
+		return c.Entrypoint[0]
+	}
+	if len(c.Cmd) > 0 {
+		return c.Cmd[0]
+	}
+	return ""
+}
+
+// ProgramArgs returns the argv[1..] that accompany ProgramCandidate:
+// the rest of Entrypoint plus all of Cmd (Docker's ENTRYPOINT+CMD semantics),
+// or the rest of Cmd when there is no entrypoint.
+func (c *DockerImageConfig) ProgramArgs() []string {
+	if len(c.Entrypoint) > 0 {
+		return append(append([]string{}, c.Entrypoint[1:]...), c.Cmd...)
+	}
+	if len(c.Cmd) > 0 {
+		return append([]string{}, c.Cmd[1:]...)
+	}
+	return nil
+}
+
+// IsShellLauncher reports whether the program path looks like a shell or a
+// shell script — the standard Docker entrypoint pattern that cannot work in a
+// single-process unikernel (there is no shell to run it and no exec to hand
+// off to the real program).
+func IsShellLauncher(program string) bool {
+	base := strings.ToLower(filepath.Base(strings.TrimSpace(program)))
+	if strings.HasSuffix(base, ".sh") {
+		return true
+	}
+	switch base {
+	case "sh", "bash", "dash", "ash", "tini", "dumb-init", "docker-entrypoint":
+		return true
+	}
+	return false
+}
+
+// ResolveDockerProgramPath resolves a program name from an image's config to an
+// absolute path inside the container (e.g. "node" → "/usr/local/bin/node"),
+// using the container's own PATH via `command -v`. Absolute inputs are returned
+// as-is.
+func ResolveDockerProgramPath(image, program string) (string, error) {
+	if strings.HasPrefix(program, "/") {
+		return program, nil
+	}
+	cmd := exec.Command("docker", "run", "--rm", "--entrypoint", "sh", image, //nolint:noctx // interactive CLI call
+		"-c", "command -v -- "+shellescape(program))
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("resolve %q in %s: %w", program, image, err)
+	}
+	resolved := strings.TrimSpace(string(out))
+	if resolved == "" {
+		return "", fmt.Errorf("program %q not found on PATH inside %s", program, image)
+	}
+	return resolved, nil
+}
+
 // Ldd analyses a binary with ldd and returns its shared library dependencies as
 // resolved against the host filesystem. A non-zero exit (e.g. "not a dynamic
 // executable") is returned as an error; symbol-version mismatches do not fail

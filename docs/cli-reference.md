@@ -1,7 +1,7 @@
 ---
 layout: default
 title: CLI Reference
-nav_order: 3
+nav_order: 4
 ---
 
 # CLI Reference
@@ -102,6 +102,12 @@ Flag:
 
 - `-f, --follow`: poll and stream appended output until the VM stops
 
+When the output contains a known Nanos failure signature (`popen failure`,
+`error loading shared library`, `no space left on device`, …), an explanation
+of the cause and the fix is printed after the logs. The same detection runs on
+`jerboa run --attach` output. See
+[Troubleshooting]({% link troubleshooting.md %}) for the full catalogue.
+
 ### `jerboa inspect <id>`
 
 Return full VM detail as JSON.
@@ -151,12 +157,14 @@ Key flags:
 | `--tag` | Image tag, default `latest` |
 | `--memory` | Default memory baked into the image |
 | `--cpus` | Default CPU count baked into the image |
-| `--pkg` | Include runtime package(s) |
-| `--pkg-source` | `jerboa` or `ops` |
+| `--pkg` | Include runtime package(s); appends to `[build] pkgs` from `unikernel.toml` |
+| `--pkg-source` | `ops` (default) or `jerboa`; an explicit flag overrides `[build] pkg_source` |
 | `--lang` | `go`, `node`, `python`, `rust`, `raw` |
 | `--platform` | Cross-build target |
 | `--port` | Declared service port; emits the guest network section in the build manifest |
 | `-f, --file` | Path to the `unikernel.toml` to use (default: `<path>/unikernel.toml`) |
+| `--no-preflight` | Skip the pre-build binary checks (ELF class/arch, shared-library closure, entrypoint presence) |
+| `--smoke` | Boot the image once after building, scan serial output for known failure signatures, then stop and remove the test VM |
 
 `unikernel.toml` is read automatically when present, or selected explicitly with
 `-f/--file`. Relevant `[build]` keys:
@@ -166,14 +174,26 @@ Key flags:
 | `lang` | Build driver: `go`, `node`, `python`, `rust`, `raw` |
 | `entrypoint` | Override the default entrypoint |
 | `run` | Shell commands to run before packaging (like a Dockerfile `RUN`) |
+| `pkgs` | Packages to include (e.g. `["eyberg/postgresql:11.3.0"]`); `--pkg` flags append to this list |
+| `pkg_source` | Package source: `ops` (default) or `jerboa`; an explicit `--pkg-source` flag wins |
 | `disk_size` | Minimum image size (e.g. `512M`, `1G`) for runtime scratch space |
 | `dirs` | Absolute directories to create empty in the image — volume mount points (a volume can only mount onto a directory that already exists in the image) and runtime scratch paths |
 
 For `lang = "raw"`, `[program] path` names the runtime binary resolved from
-`--pkg` files; the program is executed from its real in-image path, so binaries
+package files; the program is executed from its real in-image path, so binaries
 that locate their installation prefix relative to their own executable (e.g.
 `postgres`, `mysqld`) and binaries with `$ORIGIN`-relative library paths resolve
-correctly.
+correctly. When `[program]` is omitted entirely, the program and its arguments
+are inherited from the ops package's own `package.manifest` (`Program`/`Args`),
+so well-formed ops packages build with just `pkgs = [...]`.
+
+Before assembling the image the build runs **preflight checks**: the program
+must be a 64-bit Linux ELF for a supported architecture; if dynamically
+linked, its interpreter and the full recursive `DT_NEEDED` shared-library
+closure must resolve against the image contents; node/python entrypoints must
+be among the packed files. Errors abort the build with a fix hint;
+`--no-preflight` skips the checks. See
+[Build Concepts]({% link build-concepts.md %}) for the background.
 
 `[env]` keys are baked into the image environment (highest priority — they
 override env supplied by packages or the language driver).
@@ -212,6 +232,23 @@ of the previous 12 MiB layout, so they are about 8 MiB smaller (for example,
 `hello` drops from about 16.6 MiB to about 8.1 MiB). Older images are unchanged;
 rebuild an image to get the smaller layout.
 
+### `jerboa init [path]`
+
+Write a commented `unikernel.toml` scaffold into `path` (default `.`). The
+language is auto-detected from marker files (`go.mod`, `Cargo.toml`,
+`package.json`, `pyproject.toml`/`requirements.txt`); ambiguous or empty
+directories get the generic template. The generated file documents every field
+inline, including the raw-mode program-path pitfalls.
+
+Flags:
+
+| Flag | Description |
+|---|---|
+| `--lang` | Force the template: `go`, `node`, `python`, `rust`, `raw` |
+| `--force` | Overwrite an existing `unikernel.toml` |
+
+`init` is a purely local command — it never contacts the daemon.
+
 ### `jerboa images`
 
 List images stored by the daemon.
@@ -247,10 +284,27 @@ Subcommands:
 | `pkg push <name>:<version> <index-url>` | Push a local package to a remote index |
 | `pkg load <package>` | Download, build, and prepare a runnable image in one step |
 
-Supported package sources:
+Supported package sources (`--source`, default `ops`):
 
-- `jerboa`
-- `ops`
+- `ops` — the [nanovms/ops](https://ops.city) ecosystem at `repo.ops.city`;
+  refs are `<namespace>/<name>:<version>` (e.g. `eyberg/postgresql:11.3.0`)
+- `jerboa` — the first-party index; also where `pkg create` and
+  `pkg from-docker` store their local packages
+
+`pkg from-docker` flags:
+
+- `--file <path>` — the binary inside the image to package. **Optional**: when
+  omitted, the program is derived from the image's `Entrypoint`/`Cmd` and
+  resolved on the container's `PATH`; its shared-library closure is discovered
+  with `ldd` inside a temporary container and bundled automatically. Images
+  whose entrypoint is a shell script (`docker-entrypoint.sh` and friends)
+  cannot be derived — there is no shell in a unikernel — so pass `--file` with
+  the real binary the script eventually launches.
+
+```sh
+jerboa pkg from-docker redis:7.2 redis:7.2
+jerboa build . --lang raw --pkg redis:7.2 --pkg-source jerboa --name redis
+```
 
 `pkg create` flags:
 
@@ -289,9 +343,21 @@ Each DNS command accepts `--network` where relevant.
 
 ### `jerboa volume create <name>`
 
-Flag:
+Flags:
 
-- `--size`, default `1G`
+| Flag | Description |
+|---|---|
+| `--size` | Volume size, default `1G` |
+| `--seed-pkg` | Package to seed the volume from right after creation (repeatable) |
+| `--pkg-source` | Source for `--seed-pkg`: `ops` (default) or `jerboa` |
+| `--src` | In-package subtree whose contents become the volume root (default `/`) |
+
+Create and seed in one step:
+
+```sh
+jerboa volume create pgdata --size 1G \
+  --seed-pkg eyberg/postgresql:11.3.0 --src /db
+```
 
 ### `jerboa volume seed <name>`
 
@@ -309,7 +375,7 @@ support), which is seeded onto a volume and then mounted.
 
 ```sh
 jerboa volume create pgdata --size 1G
-jerboa volume seed pgdata --pkg eyberg/postgresql:11.3.0 --pkg-source ops --src /db
+jerboa volume seed pgdata --pkg eyberg/postgresql:11.3.0 --src /db
 jerboa run postgresql -v pgdata:/db --network pgnet -p 5432:5432
 ```
 
@@ -318,7 +384,7 @@ Flags:
 | Flag | Description |
 |---|---|
 | `--pkg` | Package providing the seed files (repeatable) |
-| `--pkg-source` | `jerboa` (default) or `ops` |
+| `--pkg-source` | `ops` (default) or `jerboa` |
 | `--src` | In-package subtree whose contents become the volume root (default `/`); e.g. `/db` |
 
 Notes:
@@ -452,15 +518,6 @@ The daemon runs as `root` inside the dedicated distro. The client persists rende
 Observability and store flags (`--metrics-addr`, `--ui-addr`, `--trace-addr`,
 `--log-format`, `--vm-log-max-bytes`, `--vm-store`) are covered in more detail in
 [Observability]({% link observability.md %}).
-| `--store` | Image store root |
-| `--vm-store` | `file` or `sqlite` |
-| `--vm-log-max-bytes` | Per-VM in-memory serial log retention; `0` uses the built-in 4 MiB default |
-| `--metrics-addr` | Metrics HTTP bind |
-| `--ui-addr` | Dashboard HTTP bind |
-| `--log-format` | `text` or `json` |
-| `--trace-addr` | OTLP gRPC target |
-| `--cluster-addr` | Cluster gossip bind |
-| `--join` | Comma-separated seed list |
 
 ---
 
@@ -475,6 +532,7 @@ Root commands currently exposed by the built CLI:
 - `dns`
 - `exec`
 - `images`
+- `init`
 - `inspect`
 - `kernel`
 - `logs`
