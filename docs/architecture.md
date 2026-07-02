@@ -62,6 +62,9 @@ Backends:
 - QEMU
 - Firecracker
 
+QEMU enables KVM automatically when `/dev/kvm` is accessible, and otherwise
+falls back to TCG emulation with a warning. Firecracker requires KVM.
+
 Capabilities:
 
 - create/start/stop/remove
@@ -83,6 +86,10 @@ The build path:
 2. client streams it to daemon
 3. daemon resolves `mkfs`
 4. daemon writes the image into its own store
+
+Each newly built image includes a 4 MiB embedded boot filesystem partition for
+the kernel, reducing new image size versus the older 12 MiB layout. Existing
+images keep the layout they were built with.
 
 ### Networking
 
@@ -159,6 +166,7 @@ Client-owned local state:
 - config file
 - WSL daemon rendezvous file
 - package caches
+- cached `jerboa` package index
 - volume store
 - compose state file
 

@@ -339,30 +339,73 @@ func (s *Store) SaveMeta(pkg Package) error {
 
 // FetchIndex downloads and parses the remote package index.
 func FetchIndex() (*Index, error) {
+	idx, _, err := fetchIndexRaw()
+	return idx, err
+}
+
+// fetchIndexRaw downloads the remote package index, returning both the parsed
+// index and the raw JSON bytes (for cache writes).
+func fetchIndexRaw() (*Index, []byte, error) {
 	req, err := http.NewRequest(http.MethodGet, IndexURL, nil) //nolint:noctx // callers don't thread ctx yet
 	if err != nil {
-		return nil, fmt.Errorf("package index request: %w", err)
+		return nil, nil, fmt.Errorf("package index request: %w", err)
 	}
 	resp, err := httpclient.Default.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("package index fetch: %w", err)
+		return nil, nil, fmt.Errorf("package index fetch: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("package index: HTTP %d", resp.StatusCode)
+		return nil, nil, fmt.Errorf("package index: HTTP %d", resp.StatusCode)
 	}
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("package index read: %w", err)
+		return nil, nil, fmt.Errorf("package index read: %w", err)
 	}
 
 	var idx Index
 	if err := json.Unmarshal(data, &idx); err != nil {
-		return nil, fmt.Errorf("package index parse: %w", err)
+		return nil, nil, fmt.Errorf("package index parse: %w", err)
 	}
-	return &idx, nil
+	return &idx, data, nil
+}
+
+// FetchIndexCached returns the package index without making builds depend on
+// the network being reachable: a successful remote fetch is cached on disk at
+// <root>/index.json; when the fetch fails, the cached copy is used, and as a
+// last resort an index is synthesized from locally downloaded package
+// metadata (meta.json written by SaveMeta). Only when all three sources are
+// unavailable does it return the fetch error.
+func (s *Store) FetchIndexCached() (*Index, error) {
+	cachePath := filepath.Join(s.root, "index.json")
+
+	idx, raw, fetchErr := fetchIndexRaw()
+	if fetchErr == nil {
+		// Best-effort cache write: a failure only degrades offline behavior.
+		_ = os.WriteFile(cachePath, raw, 0o644)
+		return idx, nil
+	}
+
+	if data, err := os.ReadFile(cachePath); err == nil {
+		var cached Index
+		if err := json.Unmarshal(data, &cached); err == nil {
+			slog.Warn("package index unreachable; using cached copy", "cache", cachePath, "err", fetchErr)
+			return &cached, nil
+		}
+	}
+
+	local, err := s.List()
+	if err != nil || len(local) == 0 {
+		return nil, fetchErr
+	}
+	synth := &Index{Packages: make(map[string][]Package, len(local))}
+	for _, p := range local {
+		synth.Packages[p.Name] = append(synth.Packages[p.Name], p)
+	}
+	slog.Warn("package index unreachable; resolving from locally downloaded packages", "err", fetchErr)
+	return synth, nil
 }
 
 // Search returns packages matching the given query string.

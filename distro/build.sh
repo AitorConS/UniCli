@@ -23,7 +23,10 @@ trap cleanup EXIT
 cp "${here}/Dockerfile" "${here}/wsl.conf" "${here}/load-kvm.sh" "${ctx}/"
 
 echo "==> building linux jerboad"
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -C "${root}" -o "${ctx}/jerboad" ./cmd/jerboad
+# -trimpath/-s -w match the Makefile: symbols and DWARF are dead weight in the
+# shipped rootfs (~10MB smaller binary).
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -C "${root}" -trimpath -ldflags="-s -w" \
+    -o "${ctx}/jerboad" ./cmd/jerboad
 
 echo "==> staging kernel toolchain"
 mkdir -p "${ctx}/tools"

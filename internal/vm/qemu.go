@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -356,6 +357,7 @@ func (m *QEMUManager) buildCmd(ctx context.Context, cfg Config, qmpAddr string) 
 		"-nographic",
 		"-no-reboot",
 	}
+	args = append(args, kvmAccelArgs()...)
 	if cfg.CPUs > 0 {
 		args = append(args, "-smp", fmt.Sprintf("%d", cfg.CPUs))
 	}
@@ -372,6 +374,30 @@ func (m *QEMUManager) buildCmd(ctx context.Context, cfg Config, qmpAddr string) 
 
 	cmd := m.mkCmd(ctx, m.qemuBin, args...)
 	return cmd
+}
+
+var (
+	kvmProbeOnce sync.Once
+	kvmProbeArgs []string
+)
+
+// kvmAccelArgs returns the QEMU acceleration arguments, probed once per
+// process. Opening /dev/kvm is the authoritative check — the node can exist
+// while being inaccessible to the daemon. With KVM the guest runs with
+// hardware virtualization and the host CPU model; without it QEMU silently
+// falls back to TCG software emulation, which is an order of magnitude slower
+// for guest CPU work.
+func kvmAccelArgs() []string {
+	kvmProbeOnce.Do(func() {
+		f, err := os.OpenFile("/dev/kvm", os.O_RDWR, 0)
+		if err != nil {
+			slog.Warn("KVM unavailable; falling back to TCG emulation", "err", err)
+			return
+		}
+		_ = f.Close()
+		kvmProbeArgs = []string{"-enable-kvm", "-cpu", "host"}
+	})
+	return kvmProbeArgs
 }
 
 // validatePortNetwork rejects port maps without a TAP network. Port publishing

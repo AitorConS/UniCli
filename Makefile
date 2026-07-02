@@ -4,15 +4,22 @@ BINARY_INSTALLER := jerboa-installer.exe
 BUILD_DIR        := dist
 VERSION          ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "dev")
 LDFLAGS          := -ldflags="-s -w -X main.version=$(VERSION)"
+BUILDFLAGS       := -trimpath $(LDFLAGS)
 
-.PHONY: build installer kernel test test-integration test-kernel lint tidy-check e2e smoke coverage clean
+.PHONY: build build-cli build-daemon installer kernel test test-integration test-kernel lint tidy-check e2e smoke coverage clean
 
-build:
-	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_UNI)  ./cmd/jerboa
-	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_UNID) ./cmd/jerboad
+# build-cli and build-daemon are separate targets so `make -j2 build` compiles
+# both binaries in parallel.
+build: build-cli build-daemon
+
+build-cli:
+	go build $(BUILDFLAGS) -o $(BUILD_DIR)/$(BINARY_UNI)  ./cmd/jerboa
+
+build-daemon:
+	go build $(BUILDFLAGS) -o $(BUILD_DIR)/$(BINARY_UNID) ./cmd/jerboad
 
 installer:
-	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build $(LDFLAGS) \
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build $(BUILDFLAGS) \
 		-o $(BUILD_DIR)/$(BINARY_INSTALLER) ./cmd/installer
 
 kernel:

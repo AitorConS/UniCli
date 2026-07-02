@@ -34,12 +34,13 @@ Notes:
 
 Required for native execution:
 
-- Linux with `/dev/kvm`
+- Linux
 - QEMU (`qemu-system-x86_64`)
 - Go `1.25+` only if you build the CLI from source
 
 Optional:
 
+- `/dev/kvm` for accelerated QEMU; without it, QEMU runs with TCG emulation
 - Firecracker if you want `--hypervisor firecracker`
 - kernel build toolchain (`gcc-multilib`, `nasm`, `qemu-utils`) only if you build the kernel/toolchain locally
 
@@ -52,6 +53,7 @@ Required:
 - Go `1.25+` only if you build the CLI from source
 
 The actual daemon and hypervisors run inside the imported `jerboa` WSL2 distro.
+Firecracker still requires KVM.
 
 ---
 
@@ -76,7 +78,11 @@ cd jerboa
 make build
 ```
 
-Artifacts are written to `dist/`.
+Artifacts are written to `dist/`. `make build` builds both binaries; use
+`make build-cli` or `make build-daemon` for one side, or `make -j2 build` to
+build both in parallel. Source builds use `-trimpath`; `distro/build.sh` also
+builds `jerboad` with `-s -w`, making the WSL rootfs artifact about 9 MiB
+smaller.
 
 ### Windows
 
@@ -135,6 +141,9 @@ The Windows client auto-starts the daemon for daemon-backed commands when needed
 jerboa build examples/hello --name hello --lang go
 ```
 
+Go source builds use size-oriented defaults (`-trimpath` and stripped linker
+flags) unless later custom build args override them.
+
 ### From a source directory with auto-detection
 
 ```bash
@@ -151,6 +160,10 @@ Supported build modes:
 - `raw`
 
 `--pkg-source ops` uses the ops ecosystem for runtime packages. `unikernel.toml` can override build/run defaults and declare pre-build steps.
+
+The `jerboa` package index is cached locally after successful fetches, so builds
+can continue resolving packages from the cached index when the remote source is
+temporarily unavailable.
 
 ### From a prebuilt static ELF
 

@@ -135,7 +135,11 @@ func newPkgSearchCmd() *cobra.Command {
 			if source == "ops" {
 				return pkgSearchOps(cmd, args[0], outputJSON)
 			}
-			idx, err := pkg.FetchIndex()
+			pkgStore, err := pkg.NewStore(pkgStorePath())
+			if err != nil {
+				return fmt.Errorf("pkg search: %w", err)
+			}
+			idx, err := pkgStore.FetchIndexCached()
 			if err != nil {
 				return fmt.Errorf("pkg search: %w", err)
 			}
@@ -200,7 +204,11 @@ func newPkgGetCmd() *cobra.Command {
 			}
 			name, version := parsePkgRef(args[0])
 
-			idx, err := pkg.FetchIndex()
+			pkgStore, err := pkg.NewStore(pkgStorePath())
+			if err != nil {
+				return fmt.Errorf("pkg get: %w", err)
+			}
+			idx, err := pkgStore.FetchIndexCached()
 			if err != nil {
 				return fmt.Errorf("pkg get: fetch index: %w", err)
 			}
@@ -227,20 +235,15 @@ func newPkgGetCmd() *cobra.Command {
 				}
 			}
 
-			store, err := pkg.NewStore(pkgStorePath())
-			if err != nil {
-				return fmt.Errorf("pkg get: %w", err)
-			}
-
-			if store.IsDownloaded(target.Name, target.Version) {
+			if pkgStore.IsDownloaded(target.Name, target.Version) {
 				fmt.Fprintf(cmd.OutOrStdout(), "Package %s %s already downloaded.\n", target.Name, target.Version)
 				return nil
 			}
 
-			if err := store.Download(*target); err != nil {
+			if err := pkgStore.Download(*target); err != nil {
 				return fmt.Errorf("pkg get: %w", err)
 			}
-			if err := store.SaveMeta(*target); err != nil {
+			if err := pkgStore.SaveMeta(*target); err != nil {
 				return fmt.Errorf("pkg get: save meta: %w", err)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Package %s %s installed.\n", target.Name, target.Version)

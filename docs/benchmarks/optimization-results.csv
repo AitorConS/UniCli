@@ -1,0 +1,7 @@
+round,cli_build_s,jerboa_mb,jerboad_mb,img_build_s,img_size_mb,boot_s
+baseline,4.26,8.85,20.78,1.45,16.6,0.79
+r1-cli-parallel-trimpath,3.21,8.83,20.73,1.44,16.6,0.81
+r2-godriver-strip,3.19,8.83,20.73,1.4,16.1,0.8
+r3-bootfs-4mb,3.55,8.83,20.73,1.49,8.1,0.81
+r4-drivers,3.00,8.83,20.73,1.4,8.1,0.85
+r5-kvm-putmove,3.14,8.83,20.74,1.68,8.1,0.78

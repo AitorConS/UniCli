@@ -55,7 +55,7 @@ func resolvePackages(ctx context.Context, pkgRefs []string) ([]pkg.File, error) 
 		return nil, fmt.Errorf("open package store: %w", err)
 	}
 
-	idx, err := pkg.FetchIndex()
+	idx, err := pkgStore.FetchIndexCached()
 	if err != nil {
 		return nil, fmt.Errorf("fetch package index: %w", err)
 	}
@@ -227,7 +227,7 @@ func resolveAutoPackages(ctx context.Context, autoPkgs []string, pkgSource strin
 		return nil, fmt.Errorf("open package store: %w", err)
 	}
 
-	idx, err := pkg.FetchIndex()
+	idx, err := pkgStore.FetchIndexCached()
 	if err != nil {
 		return nil, fmt.Errorf("fetch package index: %w", err)
 	}

@@ -1,8 +1,10 @@
 {
-  "enabledPlugins": {},
   "permissions": {
     "allow": [
-      "Bash(*)"
+      "Bash(*)",
+      "PowerShell(Start-Process \"C:\\\\Program Files\\\\Docker\\\\Docker\\\\Docker Desktop.exe\"; echo started)",
+      "PowerShell(*)"
     ]
-  }
+  },
+  "enabledPlugins": {}
 }
