@@ -27,7 +27,7 @@ var envKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 // fw_cfg). QEMU uses fw_cfg, but the same values feed both backends, so the
 // constraint is applied uniformly.
 func hasBootArgUnsafe(s string) bool {
-	return strings.ContainsAny(s, " \t\r\n\x00")
+	return strings.ContainsAny(s, " \t\r\n\v\f\x00")
 }
 
 // validateVMConfig checks user-supplied VM configuration before it is turned
@@ -100,8 +100,8 @@ func validateVMConfig(cfg Config) error {
 		if vol.DiskPath == "" {
 			return fmt.Errorf("validate config: Volumes[%d] DiskPath is required", i)
 		}
-		if hasBootArgUnsafe(vol.Label) || strings.Contains(vol.Label, "=") {
-			return fmt.Errorf("validate config: Volumes[%d] Label %q must not contain whitespace, control characters, or '='", i, vol.Label)
+		if hasBootArgUnsafe(vol.Label) || strings.ContainsAny(vol.Label, "=:.") {
+			return fmt.Errorf("validate config: Volumes[%d] Label %q must not contain whitespace, control characters, '=', ':', or '.'", i, vol.Label)
 		}
 		if vol.GuestPath != "" && (!strings.HasPrefix(vol.GuestPath, "/") || hasBootArgUnsafe(vol.GuestPath)) {
 			return fmt.Errorf("validate config: Volumes[%d] GuestPath %q must be an absolute path without whitespace or control characters", i, vol.GuestPath)

@@ -62,7 +62,7 @@ Key flags:
 |---|---|
 | `--memory` | VM memory, default `256M` |
 | `--cpus` | vCPU count, default `1` |
-| `-p, --port` | Port mapping `[bindaddr:]host:guest[/tcp|udp]`; without a bind address the port publishes on all interfaces, `127.0.0.1:host:guest` restricts it to localhost |
+| `-p, --port` | Port mapping `[bindaddr:]host:guest[/tcp\|udp]`; without a bind address the port publishes on all interfaces, `127.0.0.1:host:guest` restricts it to localhost |
 | `-e, --env` | Repeatable environment variable |
 | `--env-file` | Read env vars from file |
 | `--name` | Human-readable VM name |

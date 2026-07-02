@@ -117,6 +117,9 @@ func (s *Store) Create(name, subnet, driver string) (*Network, error) {
 		Driver:    driver,
 		CreatedAt: time.Now().UTC(),
 	}
+	if err := s.ensureBridgeAvailableLocked(name, n.Bridge); err != nil {
+		return nil, err
+	}
 
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("network create dir %s: %w", dir, err)
@@ -314,6 +317,26 @@ func (s *Store) allocatedSubnetsLocked() (map[string]bool, error) {
 		result[n.Subnet] = true
 	}
 	return result, nil
+}
+
+func (s *Store) ensureBridgeAvailableLocked(name, bridge string) error {
+	entries, err := os.ReadDir(s.root)
+	if err != nil {
+		return fmt.Errorf("read network dirs: %w", err)
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		n, err := s.readMeta(e.Name())
+		if err != nil {
+			continue
+		}
+		if n.Name != name && n.Bridge == bridge {
+			return fmt.Errorf("network %q bridge name %q collides with existing network %q", name, bridge, n.Name)
+		}
+	}
+	return nil
 }
 
 func writeNetworkMeta(dir string, n *Network) error {

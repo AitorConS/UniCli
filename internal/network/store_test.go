@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -81,6 +82,31 @@ func TestDeriveBridgeNameFitsIfaceLimit(t *testing.T) {
 	n, err := s.Create("app-backend-service", "", "bridge")
 	require.NoError(t, err)
 	require.LessOrEqual(t, len(n.Bridge), maxIfaceNameLen)
+}
+
+func TestCreateRejectsBridgeNameCollision(t *testing.T) {
+	dir := t.TempDir()
+	s, err := NewStore(dir)
+	require.NoError(t, err)
+
+	collidingName := "app-backend-service"
+	existingDir := filepath.Join(dir, "existing")
+	require.NoError(t, os.MkdirAll(existingDir, 0o700))
+	require.NoError(t, writeNetworkMeta(existingDir, &Network{
+		ID:        "existing",
+		Name:      "existing",
+		Subnet:    "10.100.0.0/24",
+		Gateway:   "10.100.0.1",
+		Bridge:    deriveBridgeName(collidingName),
+		Driver:    "bridge",
+		CreatedAt: time.Now().UTC(),
+	}))
+	require.NoError(t, writeNetworkState(existingDir, &networkState{AllocatedIPs: []string{"10.100.0.1"}, NextIndex: 2}))
+
+	_, err = s.Create(collidingName, "", "bridge")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "bridge name")
+	require.Contains(t, err.Error(), "collides")
 }
 
 // networkNameFits mirrors the vm package's interface-name length constraint.

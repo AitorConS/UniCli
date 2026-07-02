@@ -170,6 +170,9 @@ func (s *FileStore) writeState(v *VM) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create vm dir: %w", err)
 	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return fmt.Errorf("chmod vm dir: %w", err)
+	}
 
 	data, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
