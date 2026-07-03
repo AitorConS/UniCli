@@ -115,14 +115,17 @@ func (s *Server) daemonToken() string {
 	return ""
 }
 
-func (s *Server) withClient(w http.ResponseWriter, fn func(context.Context, *api.Client) (any, error)) {
+// withClient dials the daemon and runs fn under the inbound request's context,
+// so a hung daemon call is abandoned when the HTTP client disconnects instead
+// of blocking the handler goroutine forever.
+func (s *Server) withClient(w http.ResponseWriter, r *http.Request, fn func(context.Context, *api.Client) (any, error)) {
 	c, err := s.dial()
 	if err != nil {
 		WriteMappedError(w, err)
 		return
 	}
 	defer func() { _ = c.Close() }()
-	out, err := fn(context.Background(), c)
+	out, err := fn(r.Context(), c)
 	if err != nil {
 		WriteMappedError(w, err)
 		return
@@ -161,7 +164,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /v1/events", s.handleEvents)
 }
 
-func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{"agentVersion": s.cfg.Version, "daemonReachable": false, "daemonVersion": ""}
 	c, err := s.dial()
 	if err != nil {
@@ -169,7 +172,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	defer func() { _ = c.Close() }()
-	ver, err := c.DaemonVersion(context.Background())
+	ver, err := c.DaemonVersion(r.Context())
 	if err == nil {
 		resp["daemonReachable"] = true
 		resp["daemonVersion"] = ver
@@ -209,7 +212,7 @@ func (s *Server) handleDaemonStop(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
-func (s *Server) handleDaemonStatus(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleDaemonStatus(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{"reachable": false, "version": ""}
 	c, err := s.dial()
 	if err != nil {
@@ -217,7 +220,7 @@ func (s *Server) handleDaemonStatus(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	defer func() { _ = c.Close() }()
-	ver, err := c.DaemonVersion(context.Background())
+	ver, err := c.DaemonVersion(r.Context())
 	if err == nil {
 		resp["reachable"] = true
 		resp["version"] = ver
@@ -317,8 +320,8 @@ func daemonPort(endpoint string) string {
 	return "7890"
 }
 
-func (s *Server) handleVMList(w http.ResponseWriter, _ *http.Request) {
-	s.withClient(w, func(ctx context.Context, c *api.Client) (any, error) { return c.List(ctx) })
+func (s *Server) handleVMList(w http.ResponseWriter, r *http.Request) {
+	s.withClient(w, r, func(ctx context.Context, c *api.Client) (any, error) { return c.List(ctx) })
 }
 
 func (s *Server) handleVMRun(w http.ResponseWriter, r *http.Request) {
@@ -326,27 +329,27 @@ func (s *Server) handleVMRun(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &p) {
 		return
 	}
-	s.withClient(w, func(ctx context.Context, c *api.Client) (any, error) { return c.Run(ctx, p) })
+	s.withClient(w, r, func(ctx context.Context, c *api.Client) (any, error) { return c.Run(ctx, p) })
 }
 
 func (s *Server) handleVMGet(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	s.withClient(w, func(ctx context.Context, c *api.Client) (any, error) { return c.Get(ctx, id) })
+	s.withClient(w, r, func(ctx context.Context, c *api.Client) (any, error) { return c.Get(ctx, id) })
 }
 
 func (s *Server) handleVMInspect(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	s.withClient(w, func(ctx context.Context, c *api.Client) (any, error) { return c.Inspect(ctx, id) })
+	s.withClient(w, r, func(ctx context.Context, c *api.Client) (any, error) { return c.Inspect(ctx, id) })
 }
 
 func (s *Server) handleVMLogs(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	s.withClient(w, func(ctx context.Context, c *api.Client) (any, error) { return c.Logs(ctx, id) })
+	s.withClient(w, r, func(ctx context.Context, c *api.Client) (any, error) { return c.Logs(ctx, id) })
 }
 
 func (s *Server) handleVMStats(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	s.withClient(w, func(ctx context.Context, c *api.Client) (any, error) { return c.Stats(ctx, id) })
+	s.withClient(w, r, func(ctx context.Context, c *api.Client) (any, error) { return c.Stats(ctx, id) })
 }
 
 func (s *Server) handleVMStop(w http.ResponseWriter, r *http.Request) {
@@ -357,14 +360,14 @@ func (s *Server) handleVMStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	s.withClient(w, func(ctx context.Context, c *api.Client) (any, error) {
+	s.withClient(w, r, func(ctx context.Context, c *api.Client) (any, error) {
 		return map[string]string{"status": "ok"}, c.Stop(ctx, id, p.Force)
 	})
 }
 
 func (s *Server) handleVMKill(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	s.withClient(w, func(ctx context.Context, c *api.Client) (any, error) {
+	s.withClient(w, r, func(ctx context.Context, c *api.Client) (any, error) {
 		return map[string]string{"status": "ok"}, c.Kill(ctx, id)
 	})
 }
@@ -377,14 +380,14 @@ func (s *Server) handleVMSignal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	s.withClient(w, func(ctx context.Context, c *api.Client) (any, error) {
+	s.withClient(w, r, func(ctx context.Context, c *api.Client) (any, error) {
 		return map[string]string{"status": "ok"}, c.Signal(ctx, id, p.Signal)
 	})
 }
 
 func (s *Server) handleVMRemove(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	s.withClient(w, func(ctx context.Context, c *api.Client) (any, error) {
+	s.withClient(w, r, func(ctx context.Context, c *api.Client) (any, error) {
 		return map[string]string{"status": "ok"}, c.Remove(ctx, id)
 	})
 }
@@ -411,7 +414,10 @@ func (s *Server) handleVMAttach(w http.ResponseWriter, r *http.Request) {
 	}()
 	select {
 	case <-r.Context().Done():
+		// Closing the client unblocks the Attach goroutine; wait for it so no
+		// goroutine writes to w (undefined behavior) after this handler returns.
 		_ = c.Close()
+		<-done
 	case err := <-done:
 		if err != nil {
 			_ = WriteSSEJSON(w, "error", ErrorDetail{Message: err.Error(), Kind: KindInternal})
@@ -420,24 +426,24 @@ func (s *Server) handleVMAttach(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) handleImageList(w http.ResponseWriter, _ *http.Request) {
-	s.withClient(w, func(ctx context.Context, c *api.Client) (any, error) { return c.ImageList(ctx) })
+func (s *Server) handleImageList(w http.ResponseWriter, r *http.Request) {
+	s.withClient(w, r, func(ctx context.Context, c *api.Client) (any, error) { return c.ImageList(ctx) })
 }
 
 func (s *Server) handleImageGet(w http.ResponseWriter, r *http.Request) {
 	ref := r.PathValue("ref")
-	s.withClient(w, func(ctx context.Context, c *api.Client) (any, error) { return c.ImageGet(ctx, ref) })
+	s.withClient(w, r, func(ctx context.Context, c *api.Client) (any, error) { return c.ImageGet(ctx, ref) })
 }
 
 func (s *Server) handleImageRemove(w http.ResponseWriter, r *http.Request) {
 	ref := r.PathValue("ref")
-	s.withClient(w, func(ctx context.Context, c *api.Client) (any, error) {
+	s.withClient(w, r, func(ctx context.Context, c *api.Client) (any, error) {
 		return map[string]string{"status": "ok"}, c.ImageRemove(ctx, ref)
 	})
 }
 
-func (s *Server) handleNetworkList(w http.ResponseWriter, _ *http.Request) {
-	s.withClient(w, func(ctx context.Context, c *api.Client) (any, error) { return c.NetworkList(ctx) })
+func (s *Server) handleNetworkList(w http.ResponseWriter, r *http.Request) {
+	s.withClient(w, r, func(ctx context.Context, c *api.Client) (any, error) { return c.NetworkList(ctx) })
 }
 
 func (s *Server) handleNetworkCreate(w http.ResponseWriter, r *http.Request) {
@@ -445,33 +451,33 @@ func (s *Server) handleNetworkCreate(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &p) {
 		return
 	}
-	s.withClient(w, func(ctx context.Context, c *api.Client) (any, error) {
+	s.withClient(w, r, func(ctx context.Context, c *api.Client) (any, error) {
 		return c.NetworkCreate(ctx, p.Name, p.Subnet, p.Driver)
 	})
 }
 
 func (s *Server) handleNetworkGet(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	s.withClient(w, func(ctx context.Context, c *api.Client) (any, error) { return c.NetworkGet(ctx, name) })
+	s.withClient(w, r, func(ctx context.Context, c *api.Client) (any, error) { return c.NetworkGet(ctx, name) })
 }
 
 func (s *Server) handleNetworkRemove(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	s.withClient(w, func(ctx context.Context, c *api.Client) (any, error) {
+	s.withClient(w, r, func(ctx context.Context, c *api.Client) (any, error) {
 		return map[string]string{"status": "ok"}, c.NetworkRemove(ctx, name)
 	})
 }
 
 func (s *Server) handleDNSList(w http.ResponseWriter, r *http.Request) {
 	network := r.URL.Query().Get("network")
-	s.withClient(w, func(ctx context.Context, c *api.Client) (any, error) { return c.DNSList(ctx, network) })
+	s.withClient(w, r, func(ctx context.Context, c *api.Client) (any, error) { return c.DNSList(ctx, network) })
 }
 
 func (s *Server) handleDNSResolve(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
 	network := r.URL.Query().Get("network")
 	all, _ := strconv.ParseBool(r.URL.Query().Get("all"))
-	s.withClient(w, func(ctx context.Context, c *api.Client) (any, error) {
+	s.withClient(w, r, func(ctx context.Context, c *api.Client) (any, error) {
 		if all {
 			return c.DNSResolveAll(ctx, name, network)
 		}
@@ -479,8 +485,8 @@ func (s *Server) handleDNSResolve(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleNodes(w http.ResponseWriter, _ *http.Request) {
-	s.withClient(w, func(ctx context.Context, c *api.Client) (any, error) { return c.NodeList(ctx) })
+func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
+	s.withClient(w, r, func(ctx context.Context, c *api.Client) (any, error) { return c.NodeList(ctx) })
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {

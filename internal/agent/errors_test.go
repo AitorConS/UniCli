@@ -31,6 +31,25 @@ func TestMapError(t *testing.T) {
 	}
 }
 
+func TestWriteMappedError_NilIsNoOp(t *testing.T) {
+	rr := httptestResponse()
+
+	// Regression: a nil error used to reach err.Error() and panic.
+	WriteMappedError(rr, nil)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	require.Empty(t, rr.Body.String())
+}
+
+func TestWriteMappedError_DaemonUnreachable(t *testing.T) {
+	rr := httptestResponse()
+
+	WriteMappedError(rr, fmt.Errorf("%w: dial tcp: refused", errDaemonUnreachable))
+
+	require.Equal(t, http.StatusBadGateway, rr.Code)
+	require.Contains(t, rr.Body.String(), `"kind":"daemon_unreachable"`)
+}
+
 func TestWriteMappedError_NotSupported(t *testing.T) {
 	rr := httptestResponse()
 

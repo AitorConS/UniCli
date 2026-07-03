@@ -58,6 +58,9 @@ func MapError(err error) (int, ErrorKind) {
 var errDaemonUnreachable = errors.New("daemon unreachable")
 
 func WriteMappedError(w http.ResponseWriter, err error) {
+	if err == nil {
+		return
+	}
 	if errors.Is(err, errNotSupported) {
 		WriteError(w, http.StatusBadRequest, KindNotSupported, err.Error())
 		return

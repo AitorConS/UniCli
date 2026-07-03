@@ -79,11 +79,13 @@ func DefaultPath() string {
 	return filepath.Join(home, ".jerboa", "config.toml")
 }
 
-// DaemonFilePath returns the client-owned daemon rendezvous file.
+// DaemonFilePath returns the client-owned daemon rendezvous file. The
+// fallback mirrors DefaultPath (absolute, under the OS temp dir) so the agent
+// and CLI resolve the same file regardless of their working directories.
 func DaemonFilePath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return filepath.Join(".jerboa", "daemon.json")
+		return filepath.Join(os.TempDir(), ".jerboa", "daemon.json")
 	}
 	return filepath.Join(home, ".jerboa", "daemon.json")
 }

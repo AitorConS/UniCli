@@ -67,6 +67,10 @@ type EventPoller struct {
 	stop         context.CancelFunc
 	wasReachable *bool
 	prev         []api.VMInfo
+	// generation invalidates run loops that outlive their cancellation: a
+	// canceled loop blocked in a slow poll would otherwise race the replacement
+	// loop on prev/wasReachable and broadcast stale events to new subscribers.
+	generation uint64
 }
 
 func NewEventPoller(factory func() (VMLister, func(), error)) *EventPoller {
@@ -90,7 +94,8 @@ func (p *EventPoller) Subscribe(ctx context.Context) <-chan SSEEvent {
 		runCtx, cancel := context.WithCancel(context.Background())
 		p.running = true
 		p.stop = cancel
-		go p.run(runCtx)
+		p.generation++
+		go p.run(runCtx, p.generation)
 	}
 	p.mu.Unlock()
 
@@ -112,25 +117,25 @@ func (p *EventPoller) Subscribe(ctx context.Context) <-chan SSEEvent {
 	return ch
 }
 
-func (p *EventPoller) run(ctx context.Context) {
+func (p *EventPoller) run(ctx context.Context, gen uint64) {
 	tick := time.NewTicker(p.interval)
 	beat := time.NewTicker(p.heartbeat)
 	defer tick.Stop()
 	defer beat.Stop()
-	p.poll(ctx)
+	p.poll(ctx, gen)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-			p.poll(ctx)
+			p.poll(ctx, gen)
 		case <-beat.C:
 			p.broadcast(SSEEvent{Data: []byte(": heartbeat")})
 		}
 	}
 }
 
-func (p *EventPoller) poll(ctx context.Context) {
+func (p *EventPoller) poll(ctx context.Context, gen uint64) {
 	lister, closeFn, err := p.listerFactory()
 	reachable := err == nil
 	var cur []api.VMInfo
@@ -142,37 +147,38 @@ func (p *EventPoller) poll(ctx context.Context) {
 		closeFn()
 	}
 
+	// State updates and their broadcasts happen atomically under the lock so a
+	// superseded loop (still draining a slow List call after cancellation) can
+	// neither clobber the replacement's snapshots nor emit stale events.
 	p.mu.Lock()
+	defer p.mu.Unlock()
+	if gen != p.generation {
+		return
+	}
+	var events []SSEEvent
 	if p.wasReachable == nil || *p.wasReachable != reachable {
 		p.wasReachable = &reachable
-		p.mu.Unlock()
-		p.broadcastJSON("daemon-status", map[string]bool{"reachable": reachable})
-		p.mu.Lock()
+		events = appendJSONEvent(events, "daemon-status", map[string]bool{"reachable": reachable})
 	}
 	if reachable {
-		events := DiffVMEvents(p.prev, cur)
+		events = append(events, DiffVMEvents(p.prev, cur)...)
 		p.prev = append([]api.VMInfo(nil), cur...)
-		p.mu.Unlock()
-		for _, ev := range events {
-			p.broadcast(ev)
-		}
-		return
+	} else {
+		p.prev = []api.VMInfo{}
 	}
-	p.prev = []api.VMInfo{}
-	p.mu.Unlock()
-}
-
-func (p *EventPoller) broadcastJSON(name string, v any) {
-	data, err := json.Marshal(v)
-	if err != nil {
-		return
+	for _, ev := range events {
+		p.broadcastLocked(ev)
 	}
-	p.broadcast(SSEEvent{Name: name, Data: data})
 }
 
 func (p *EventPoller) broadcast(ev SSEEvent) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.broadcastLocked(ev)
+}
+
+// broadcastLocked delivers ev to every subscriber. Callers must hold p.mu.
+func (p *EventPoller) broadcastLocked(ev SSEEvent) {
 	for ch := range p.subs {
 		select {
 		case ch <- ev:
