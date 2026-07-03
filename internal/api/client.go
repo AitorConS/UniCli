@@ -94,6 +94,16 @@ func (c *Client) Run(_ context.Context, p RunParams) (VMInfo, error) {
 	return info, nil
 }
 
+// Start boots a stopped VM again. The daemon replaces the stopped entry with
+// a fresh VM built from the same config, so the returned info carries a new ID.
+func (c *Client) Start(_ context.Context, id string) (VMInfo, error) {
+	var info VMInfo
+	if err := c.call("VM.Start", IDParams{ID: id}, &info); err != nil {
+		return VMInfo{}, fmt.Errorf("client start: %w", err)
+	}
+	return info, nil
+}
+
 // Stop sends a graceful stop request. Set force=true for immediate SIGKILL.
 func (c *Client) Stop(_ context.Context, id string, force bool) error {
 	if err := c.call("VM.Stop", StopParams{ID: id, Force: force}, nil); err != nil {

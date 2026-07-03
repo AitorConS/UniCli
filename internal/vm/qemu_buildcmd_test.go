@@ -201,8 +201,11 @@ func TestBuildNetArgs_PortsWithoutNetworkIsNone(t *testing.T) {
 
 func TestValidatePortNetwork(t *testing.T) {
 	require.Error(t, validatePortNetwork(Config{PortMaps: []PortMap{{HostPort: 80, GuestPort: 80}}}))
-	require.NoError(t, validatePortNetwork(Config{NetworkName: "tap0", PortMaps: []PortMap{{HostPort: 80, GuestPort: 80}}}))
+	require.Error(t, validatePortNetwork(Config{NetworkName: "tap0", PortMaps: []PortMap{{HostPort: 80, GuestPort: 80}}}),
+		"ports without a guest IP must be rejected: the forwarder has no dial target")
+	require.NoError(t, validatePortNetwork(Config{NetworkName: "tap0", IPAddress: "10.0.0.2", PortMaps: []PortMap{{HostPort: 80, GuestPort: 80}}}))
 	require.NoError(t, validatePortNetwork(Config{}))
+	require.NoError(t, validatePortNetwork(Config{NetworkName: "tap0"}), "network without ports needs no IP at Start")
 }
 
 func TestBuildNetArgs_None(t *testing.T) {

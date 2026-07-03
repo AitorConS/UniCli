@@ -4,6 +4,7 @@ package apiserver_test
 
 import (
 	"context"
+	"net"
 	"os/exec"
 	"path/filepath"
 	"sync/atomic"
@@ -18,6 +19,17 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 )
+
+// freePort reserves an ephemeral loopback port and returns it for a test to
+// reuse. The listener is closed before returning, so a race with another
+// process is possible but unlikely within a test's lifetime.
+func freePort(t *testing.T) uint16 {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() { _ = ln.Close() }()
+	return uint16(ln.Addr().(*net.TCPAddr).Port)
+}
 
 // fakeQEMUCmd returns a vm.CommandFunc suitable for tests.
 func fakeQEMUCmd(block bool) vm.CommandFunc {
@@ -181,21 +193,59 @@ func TestServer_Stop(t *testing.T) {
 	}, 5*time.Second, 50*time.Millisecond, "VM did not reach stopped state")
 }
 
+func TestServer_Start_StoppedVM(t *testing.T) {
+	client, _ := startTestServer(t)
+
+	info, err := client.Run(context.Background(), api.RunParams{ImagePath: "test.img", Memory: "256M"})
+	require.NoError(t, err)
+	require.NoError(t, client.Stop(context.Background(), info.ID, false))
+	require.Eventually(t, func() bool {
+		got, err := client.Get(context.Background(), info.ID)
+		return err == nil && got.State == "stopped"
+	}, 5*time.Second, 50*time.Millisecond, "VM did not reach stopped state")
+
+	started, err := client.Start(context.Background(), info.ID)
+	require.NoError(t, err)
+	require.Equal(t, "running", started.State)
+	require.NotEqual(t, info.ID, started.ID, "start replaces the stopped VM with a new ID")
+	require.Equal(t, info.Image, started.Image)
+
+	// The stopped predecessor is gone from the registry.
+	_, err = client.Get(context.Background(), info.ID)
+	require.Error(t, err)
+}
+
+func TestServer_Start_RunningVM_Errors(t *testing.T) {
+	client, _ := startTestServer(t)
+
+	info, err := client.Run(context.Background(), api.RunParams{ImagePath: "test.img", Memory: "256M"})
+	require.NoError(t, err)
+
+	_, err = client.Start(context.Background(), info.ID)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "only stopped VMs")
+}
+
 func TestServer_Run_WithPortsAndEnv(t *testing.T) {
 	client, _ := startTestServer(t)
 
+	// Port publishing requires a TAP network with a guest IP. The network is
+	// registered so the daemon can allocate the IP server-side; the forwarder
+	// then binds the host port for real, so use a free ephemeral port on
+	// loopback to keep the test hermetic.
+	_, err := client.NetworkCreate(context.Background(), "testnet", "", "")
+	require.NoError(t, err)
+	hostPort := freePort(t)
+
 	info, err := client.Run(context.Background(), api.RunParams{
-		ImagePath: "test.img",
-		Memory:    "256M",
-		CPUs:      1,
-		Name:      "myvm",
-		// Port publishing requires a TAP network. NetworkName satisfies the
-		// guard; with no IPAddress the forwarder no-ops (binds nothing), so the
-		// test stays hermetic while still exercising port-config plumbing.
+		ImagePath:   "test.img",
+		Memory:      "256M",
+		CPUs:        1,
+		Name:        "myvm",
 		NetworkName: "testnet",
 		Env:         []string{"FOO=bar", "PORT=8080"},
 		PortMaps: []api.PortMapSpec{
-			{HostPort: 8080, GuestPort: 80, Protocol: "tcp"},
+			{HostPort: hostPort, GuestPort: 80, Protocol: "tcp", BindAddr: "127.0.0.1"},
 		},
 	})
 	require.NoError(t, err)
@@ -206,9 +256,47 @@ func TestServer_Run_WithPortsAndEnv(t *testing.T) {
 	require.Equal(t, "myvm", detail.Name)
 	require.Equal(t, []string{"FOO=bar", "PORT=8080"}, detail.Env)
 	require.Len(t, detail.Ports, 1)
-	require.Equal(t, uint16(8080), detail.Ports[0].HostPort)
+	require.Equal(t, hostPort, detail.Ports[0].HostPort)
 	require.Equal(t, uint16(80), detail.Ports[0].GuestPort)
 	require.Equal(t, "tcp", detail.Ports[0].Protocol)
+	require.NotEmpty(t, detail.IPAddress, "daemon must allocate a guest IP when the client omits it")
+}
+
+// TestServer_Run_FillsNetworkFromStore covers clients (e.g. the desktop GUI)
+// that send only the network name: the daemon must allocate a guest IP and
+// derive gateway/bridge from the registered network.
+func TestServer_Run_FillsNetworkFromStore(t *testing.T) {
+	client, _ := startTestServer(t)
+
+	netInfo, err := client.NetworkCreate(context.Background(), "guinet", "10.210.0.0/24", "")
+	require.NoError(t, err)
+
+	info, err := client.Run(context.Background(), api.RunParams{
+		ImagePath:   "test.img",
+		Memory:      "256M",
+		CPUs:        1,
+		NetworkName: "guinet",
+	})
+	require.NoError(t, err)
+
+	detail, err := client.Inspect(context.Background(), info.ID)
+	require.NoError(t, err)
+	require.Equal(t, "10.210.0.2", detail.IPAddress, "first allocation after the gateway")
+	require.Equal(t, netInfo.Gateway, detail.GatewayIP)
+}
+
+// TestServer_Run_UnknownNetwork rejects a run that names a network the daemon
+// cannot resolve when it also needs to fill in the guest IP.
+func TestServer_Run_UnknownNetwork(t *testing.T) {
+	client, _ := startTestServer(t)
+
+	_, err := client.Run(context.Background(), api.RunParams{
+		ImagePath:   "test.img",
+		Memory:      "256M",
+		CPUs:        1,
+		NetworkName: "nosuchnet",
+	})
+	require.ErrorContains(t, err, "not found")
 }
 
 func TestServer_Run_AutoRemove(t *testing.T) {
