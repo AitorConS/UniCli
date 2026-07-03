@@ -112,6 +112,20 @@ Important constraints:
 - `-p` requires `--network`
 - UDP mappings are parsed but not forwarded yet
 
+### Desktop Agent
+
+Paths:
+
+- `cmd/jerboa-agent/`
+- `internal/agent/`
+
+A loopback HTTP/SSE facade over the daemon's JSON-RPC API, used as the backend
+sidecar by the Jerboa Desktop app. Every request requires a bearer token
+(`JERBOA_AGENT_TOKEN`); REST endpoints cover VMs, images, networks, DNS, nodes,
+and daemon lifecycle (start/stop/ensure via WSL on Windows), and SSE endpoints
+stream the serial console and a VM/daemon event feed. It holds no state of its
+own — it dials the same daemon endpoint and rendezvous file as the CLI.
+
 ### Compose
 
 Path: `internal/compose/`
