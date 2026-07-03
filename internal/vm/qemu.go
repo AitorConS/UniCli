@@ -400,12 +400,21 @@ func kvmAccelArgs() []string {
 	return kvmProbeArgs
 }
 
-// validatePortNetwork rejects port maps without a TAP network. Port publishing
-// requires a guest IP on a TAP interface (handled by the userspace forwarder);
-// there is no SLIRP fallback, so PortMaps without a NetworkName cannot work.
+// validatePortNetwork rejects port maps without a TAP network and guest IP.
+// Port publishing requires a guest IP on a TAP interface (handled by the
+// userspace forwarder); there is no SLIRP fallback, so PortMaps without a
+// NetworkName cannot work, and without an IPAddress the forwarder has no
+// dial target. Failing here surfaces the misconfiguration at Start instead
+// of booting a VM whose published ports silently never listen.
 func validatePortNetwork(cfg Config) error {
-	if len(cfg.PortMaps) > 0 && cfg.NetworkName == "" {
+	if len(cfg.PortMaps) == 0 {
+		return nil
+	}
+	if cfg.NetworkName == "" {
 		return fmt.Errorf("--port requires --network <name>: SLIRP user-mode networking is no longer supported")
+	}
+	if cfg.IPAddress == "" {
+		return fmt.Errorf("port publishing requires a guest IP: pass one explicitly or let the daemon allocate it from network %q", cfg.NetworkName)
 	}
 	return nil
 }

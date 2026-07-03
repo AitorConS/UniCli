@@ -64,6 +64,8 @@ type Server struct {
 	volSeedCache volume.Seeder
 	authToken    string
 	collectors   *metrics.Collectors
+	startingMu   sync.Mutex
+	starting     map[string]struct{}
 }
 
 // SetCollectors attaches Prometheus collectors so VM start/stop/kill RPCs
@@ -223,6 +225,8 @@ func (s *Server) dispatch(ctx context.Context, req *api.Request, conn net.Conn, 
 		return s.handleImageRemove(req.Params)
 	case "VM.Run":
 		return s.handleRun(ctx, req.Params)
+	case "VM.Start":
+		return s.handleStart(ctx, req.Params)
 	case "VM.Stop":
 		return s.handleStop(ctx, req.Params)
 	case "VM.Kill":
@@ -300,6 +304,15 @@ func looksLikePath(s string) bool {
 	return strings.ContainsAny(s, "/\\") || (len(s) >= 2 && s[1] == ':')
 }
 
+// maskFromCIDR returns the prefix length of a CIDR subnet ("10.100.0.0/24" →
+// "24"), or "" when the subnet carries no prefix.
+func maskFromCIDR(subnet string) string {
+	if i := strings.LastIndex(subnet, "/"); i >= 0 {
+		return subnet[i+1:]
+	}
+	return ""
+}
+
 func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *api.RPCError) {
 	var p api.RunParams
 	if err := json.Unmarshal(params, &p); err != nil {
@@ -315,6 +328,37 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 	}
 	if rerr := s.ensureVolumesFormatted(ctx, p.Volumes); rerr != nil {
 		return nil, rerr
+	}
+
+	// A networked run without a guest IP can never work: the guest configures
+	// no address, the tap is never bridged, and the port forwarder has no dial
+	// target. The CLI allocates the IP before calling Run, but other clients
+	// (the desktop GUI, direct API users) send only the network name — resolve
+	// the network here and allocate server-side, filling gateway/bridge/mask
+	// from the store when the client left them unset too. Requests that already
+	// carry an IP skip the lookup entirely, so ad-hoc networks not registered
+	// in the store keep working when specified in full.
+	allocatedIP := ""
+	if p.NetworkName != "" && p.IPAddress == "" {
+		n, nerr := s.netStore.Get(p.NetworkName)
+		if nerr != nil {
+			return nil, &api.RPCError{Code: -32000, Message: nerr.Error()}
+		}
+		ip, aerr := s.netStore.AllocateIP(p.NetworkName)
+		if aerr != nil {
+			return nil, &api.RPCError{Code: -32000, Message: "allocate ip: " + aerr.Error()}
+		}
+		p.IPAddress = ip.String()
+		allocatedIP = p.IPAddress
+		if p.GatewayIP == "" {
+			p.GatewayIP = n.Gateway
+		}
+		if p.BridgeName == "" {
+			p.BridgeName = n.Bridge
+		}
+		if p.SubnetMask == "" {
+			p.SubnetMask = maskFromCIDR(n.Subnet)
+		}
 	}
 
 	// Inherit defaults baked into the image manifest ([run] in unikernel.toml)
@@ -386,6 +430,15 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 	}
 	v, err := s.mgr.Create(ctx, cfg)
 	if err != nil {
+		// The VM was never registered, so nothing references the IP the daemon
+		// allocated above; return it to the pool. Client-supplied IPs are left
+		// alone. After Create succeeds the IP stays allocated even if Start
+		// fails: the stopped VM keeps it in its config for a later VM.Start.
+		if allocatedIP != "" {
+			if relErr := s.netStore.ReleaseIP(p.NetworkName, allocatedIP); relErr != nil {
+				slog.Debug("run: release ip after create failure", "network", p.NetworkName, "ip", allocatedIP, "err", relErr)
+			}
+		}
 		s.recordVMError()
 		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}
@@ -414,6 +467,93 @@ func (s *Server) recordVMError() {
 	if s.collectors != nil {
 		s.collectors.VMErrorsTotal.Inc()
 	}
+}
+
+// claimStart marks a VM as having a start in flight. It returns false when
+// another VM.Start already holds the claim, so concurrent starts for the same
+// VM cannot both pass the stopped-state check and create duplicate
+// replacements. Callers must releaseStart the same id when done.
+func (s *Server) claimStart(id string) bool {
+	s.startingMu.Lock()
+	defer s.startingMu.Unlock()
+	if _, busy := s.starting[id]; busy {
+		return false
+	}
+	if s.starting == nil {
+		s.starting = make(map[string]struct{})
+	}
+	s.starting[id] = struct{}{}
+	return true
+}
+
+func (s *Server) releaseStart(id string) {
+	s.startingMu.Lock()
+	delete(s.starting, id)
+	s.startingMu.Unlock()
+}
+
+// handleStart boots a stopped VM again. The original hypervisor process is
+// gone, so — like the restart-policy path in the VM monitor — it creates a
+// replacement VM with the same config, starts it, and removes the stopped
+// registry entry. The response carries the replacement's (new) ID. A VM still
+// in "created" (registered but never started) is started in place.
+func (s *Server) handleStart(ctx context.Context, params json.RawMessage) (any, *api.RPCError) {
+	var p api.IDParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+	}
+	old, err := s.mgr.Get(p.ID)
+	if err != nil {
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
+	}
+	// Serialize on the resolved ID (p.ID may be a name or prefix) across the
+	// whole check→create→start→remove sequence; a second concurrent start
+	// would otherwise also see StateStopped and boot a duplicate replacement
+	// sharing the VM's static IP.
+	if !s.claimStart(old.ID) {
+		return nil, &api.RPCError{Code: -32000, Message: fmt.Sprintf("vm %s: start already in progress", old.ID)}
+	}
+	defer s.releaseStart(old.ID)
+	// Re-resolve under the claim: a start that completed between the lookup
+	// above and the claim has replaced and removed this VM.
+	old, err = s.mgr.Get(old.ID)
+	if err != nil {
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
+	}
+	switch st := old.GetState(); st {
+	case vm.StateCreated:
+		if err := s.mgr.Start(ctx, old.ID); err != nil {
+			s.recordVMError()
+			return nil, &api.RPCError{Code: -32000, Message: err.Error()}
+		}
+		if s.collectors != nil {
+			s.collectors.VMStartsTotal.Inc()
+		}
+		return toInfo(old), nil
+	case vm.StateStopped:
+		// fall through to the replace-and-start path below
+	default:
+		return nil, &api.RPCError{Code: -32000, Message: fmt.Sprintf("vm %s is %s; only stopped VMs can be started", old.ID, st)}
+	}
+	v, err := s.mgr.Create(ctx, old.Cfg)
+	if err != nil {
+		s.recordVMError()
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
+	}
+	if err := s.mgr.Start(ctx, v.ID); err != nil {
+		s.recordVMError()
+		if rerr := s.mgr.Remove(ctx, v.ID); rerr != nil {
+			slog.Warn("vm start: failed to remove unstartable replacement", "vm_id", v.ID, "err", rerr)
+		}
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
+	}
+	if err := s.mgr.Remove(ctx, old.ID); err != nil {
+		slog.Warn("vm start: failed to remove stopped predecessor", "vm_id", old.ID, "err", err)
+	}
+	if s.collectors != nil {
+		s.collectors.VMStartsTotal.Inc()
+	}
+	return toInfo(v), nil
 }
 
 func (s *Server) handleStop(ctx context.Context, params json.RawMessage) (any, *api.RPCError) {

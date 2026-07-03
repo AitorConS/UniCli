@@ -125,6 +125,10 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 				}
 			}()
 
+			// Allocate the guest IP client-side for compatibility with older
+			// daemons. On failure ipAddr stays empty on purpose: the daemon's
+			// VM.Run fills in the IP (and gateway/bridge/mask) from its network
+			// store whenever the request leaves them unset.
 			if network != "" && ipAddr == "" {
 				allocatedIP, allocErr := client.NetworkAllocateIP(cmd.Context(), network)
 				if allocErr == nil {

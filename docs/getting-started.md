@@ -230,7 +230,9 @@ jerboa run myapp:latest --network app -p 8080:80 --name web
 jerboa dns list --network app
 ```
 
-Static IP:
+Joining a network assigns the VM a guest IP automatically: the daemon's IPAM
+hands out the next free address from the network's subnet. Pass `--ip` only
+when you need a fixed address:
 
 ```bash
 jerboa run myapp:latest --network app --ip 10.100.0.10 -p 8080:80
