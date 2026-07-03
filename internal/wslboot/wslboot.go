@@ -174,33 +174,69 @@ func waitHealthy(ctx context.Context, cfg Config) error {
 	}
 }
 
-// launchInWSL starts jerboad inside the configured WSL distro. The launching
-// `wsl` process is detached and not waited on: it runs jerboad in the foreground
-// inside WSL, which keeps the daemon alive after the client exits. (Background
-// jobs started with `&` inside a one-shot `wsl -- ...` invocation are reaped
-// when that invocation returns, so foreground + detach is required.) The auth
-// token is supplied through the environment, never argv.
+// launchInWSL starts jerboad inside the configured WSL distro, daemonised
+// *inside* the distro with `setsid` (mirrored by JerboaDesktop's launchDaemon):
+//   - setsid puts jerboad in a new session with no controlling terminal, so it
+//     survives the one-shot `wsl -- ...` invocation returning (a plain `&` job
+//     would be reaped on session teardown) and the launching wsl.exe exits
+//     within a second instead of living forever.
+//   - That matters on Windows 11 with Windows Terminal as the default terminal:
+//     a long-lived foreground wsl.exe hijacks a terminal tab as its console. A
+//     short, non-interactive invocation (stdin from /dev/null, output redirected
+//     in-distro) leaves no window — the daemon runs silently in the background
+//     like Docker's engine.
+//   - jerboad's stdout/stderr go to ~/.jerboa/jerboad-wsl.log via the distro's
+//     /mnt view of that Windows path; the short-lived wsl.exe's own output
+//     (e.g. "distro not found") is captured into the same log from this side.
+//
+// The auth token is supplied through the environment, never argv.
 func launchInWSL(cfg Config) error {
-	args, env := buildLaunchArgs(cfg)
+	wslLog := "/dev/null"
+	logf, logErr := openLaunchLog()
+	if logErr == nil {
+		wslLog = toWSLPath(logf.Name())
+	}
+	args, env := buildLaunchArgs(cfg, wslLog)
 	cmd := exec.Command("wsl", args...) //nolint:gosec,noctx // fixed program, controlled args; must outlive caller
 	cmd.Env = env
 	cmd.SysProcAttr = detachAttr()
-	if logf, err := openLaunchLog(); err == nil {
+	if logErr == nil {
 		cmd.Stdout = logf
 		cmd.Stderr = logf
 	}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("wsl launch: %w", err)
 	}
-	// Do not Wait: the process must outlive this client invocation. Releasing
-	// the handle lets the OS reap it independently.
+	// Do not Wait: launch failures surface through the health check and the
+	// launch log. Releasing the handle lets the OS reap the short-lived wsl.exe
+	// independently of this client invocation.
 	_ = cmd.Process.Release()
 	return nil
 }
 
+// shQuote wraps a value in single quotes for a POSIX shell, escaping any
+// embedded single quotes — used to build the in-distro launch command.
+func shQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// toWSLPath translates a Windows absolute path to its WSL2 equivalent so the
+// distro can open it via the /mnt/<drive>/... mount point.
+// Example: C:\Users\foo\bar → /mnt/c/Users/foo/bar
+func toWSLPath(p string) string {
+	if len(p) >= 3 && p[1] == ':' && (p[2] == '\\' || p[2] == '/') {
+		drive := strings.ToLower(string(p[0]))
+		rest := strings.ReplaceAll(p[3:], "\\", "/")
+		return "/mnt/" + drive + "/" + rest
+	}
+	return strings.ReplaceAll(p, "\\", "/")
+}
+
 // buildLaunchArgs builds the `wsl` arguments and process environment that start
-// jerboad in the foreground inside the distro. Exposed (unexported) for testing.
-func buildLaunchArgs(cfg Config) (args, env []string) {
+// jerboad as a detached background process inside the distro, logging to
+// wslLog (a path as seen from inside the distro). Exposed (unexported) for
+// testing.
+func buildLaunchArgs(cfg Config, wslLog string) (args, env []string) {
 	jerboad := cfg.JerboadPath
 	if jerboad == "" {
 		jerboad = "jerboad"
@@ -211,23 +247,29 @@ func buildLaunchArgs(cfg Config) (args, env []string) {
 	if cfg.User != "" {
 		args = append(args, "-u", cfg.User)
 	}
-	args = append(args, "--")
-	if cfg.Sudo {
-		// sudo resets the environment, so WSLENV alone would drop the token;
-		// --preserve-env forwards just that one var without putting it on argv.
-		args = append(args, "sudo")
-		if cfg.Token != "" {
-			args = append(args, "--preserve-env=JERBOA_AUTH_TOKEN")
-		}
-	}
+
 	listen := cfg.ListenEndpoint
 	if listen == "" {
 		listen = cfg.Endpoint
 	}
-	args = append(args, jerboad, "--host", listen)
-	if cfg.Hypervisor != "" {
-		args = append(args, "--hypervisor", cfg.Hypervisor)
+	inner := "setsid "
+	if cfg.Sudo {
+		// sudo resets the environment, so WSLENV alone would drop the token;
+		// --preserve-env forwards just that one var without putting it on argv.
+		inner += "sudo "
+		if cfg.Token != "" {
+			inner += "--preserve-env=JERBOA_AUTH_TOKEN "
+		}
 	}
+	inner += shQuote(jerboad) + " --host " + shQuote(listen)
+	if cfg.Hypervisor != "" {
+		inner += " --hypervisor " + shQuote(cfg.Hypervisor)
+	}
+	// The trailing sleep keeps bash alive just long enough for setsid to enter
+	// its new session; when bash exits immediately, WSL's session teardown
+	// still kills the freshly forked child (observed empirically).
+	inner += " < /dev/null >> " + shQuote(wslLog) + " 2>&1 & sleep 0.5"
+	args = append(args, "--", "bash", "-c", inner)
 
 	env = append(env, os.Environ()...)
 	if cfg.Token != "" {
