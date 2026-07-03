@@ -64,6 +64,8 @@ type Server struct {
 	volSeedCache volume.Seeder
 	authToken    string
 	collectors   *metrics.Collectors
+	startingMu   sync.Mutex
+	starting     map[string]struct{}
 }
 
 // SetCollectors attaches Prometheus collectors so VM start/stop/kill RPCs
@@ -467,6 +469,29 @@ func (s *Server) recordVMError() {
 	}
 }
 
+// claimStart marks a VM as having a start in flight. It returns false when
+// another VM.Start already holds the claim, so concurrent starts for the same
+// VM cannot both pass the stopped-state check and create duplicate
+// replacements. Callers must releaseStart the same id when done.
+func (s *Server) claimStart(id string) bool {
+	s.startingMu.Lock()
+	defer s.startingMu.Unlock()
+	if _, busy := s.starting[id]; busy {
+		return false
+	}
+	if s.starting == nil {
+		s.starting = make(map[string]struct{})
+	}
+	s.starting[id] = struct{}{}
+	return true
+}
+
+func (s *Server) releaseStart(id string) {
+	s.startingMu.Lock()
+	delete(s.starting, id)
+	s.startingMu.Unlock()
+}
+
 // handleStart boots a stopped VM again. The original hypervisor process is
 // gone, so — like the restart-policy path in the VM monitor — it creates a
 // replacement VM with the same config, starts it, and removes the stopped
@@ -478,6 +503,20 @@ func (s *Server) handleStart(ctx context.Context, params json.RawMessage) (any, 
 		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
 	old, err := s.mgr.Get(p.ID)
+	if err != nil {
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
+	}
+	// Serialize on the resolved ID (p.ID may be a name or prefix) across the
+	// whole check→create→start→remove sequence; a second concurrent start
+	// would otherwise also see StateStopped and boot a duplicate replacement
+	// sharing the VM's static IP.
+	if !s.claimStart(old.ID) {
+		return nil, &api.RPCError{Code: -32000, Message: fmt.Sprintf("vm %s: start already in progress", old.ID)}
+	}
+	defer s.releaseStart(old.ID)
+	// Re-resolve under the claim: a start that completed between the lookup
+	// above and the claim has replaced and removed this VM.
+	old, err = s.mgr.Get(old.ID)
 	if err != nil {
 		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}

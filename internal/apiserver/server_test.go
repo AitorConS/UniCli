@@ -7,6 +7,7 @@ import (
 	"net"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -224,6 +225,65 @@ func TestServer_Start_RunningVM_Errors(t *testing.T) {
 	_, err = client.Start(context.Background(), info.ID)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "only stopped VMs")
+}
+
+// TestServer_Start_ConcurrentSingleReplacement fires several simultaneous
+// VM.Start calls (each over its own connection) at one stopped VM. Without the
+// per-VM start claim they all pass the stopped-state check and boot duplicate
+// replacements sharing the VM's config; exactly one may win.
+func TestServer_Start_ConcurrentSingleReplacement(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "jerboad.sock")
+	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd(true)))
+	netStore, err := network.NewStore(t.TempDir())
+	require.NoError(t, err)
+	srv, err := apiserver.NewServer(mgr, netStore, socketPath, nil, "", nil)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = srv.Serve(ctx) }()
+
+	var client *api.Client
+	require.Eventually(t, func() bool {
+		var dialErr error
+		client, dialErr = api.Dial(socketPath)
+		return dialErr == nil
+	}, 2*time.Second, 10*time.Millisecond)
+	defer func() { _ = client.Close() }()
+
+	info, err := client.Run(context.Background(), api.RunParams{ImagePath: "test.img", Memory: "256M"})
+	require.NoError(t, err)
+	require.NoError(t, client.Stop(context.Background(), info.ID, false))
+	require.Eventually(t, func() bool {
+		got, err := client.Get(context.Background(), info.ID)
+		return err == nil && got.State == "stopped"
+	}, 5*time.Second, 50*time.Millisecond, "VM did not reach stopped state")
+
+	const n = 6
+	var wg sync.WaitGroup
+	var successes atomic.Int32
+	for range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c, dialErr := api.Dial(socketPath)
+			if dialErr != nil {
+				return
+			}
+			defer func() { _ = c.Close() }()
+			if _, startErr := c.Start(context.Background(), info.ID); startErr == nil {
+				successes.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+
+	require.EqualValues(t, 1, successes.Load(), "exactly one concurrent start must win")
+	vms, err := client.List(context.Background())
+	require.NoError(t, err)
+	require.Len(t, vms, 1, "the stopped VM must be replaced by exactly one VM")
+	require.Equal(t, "running", vms[0].State)
+	require.NotEqual(t, info.ID, vms[0].ID)
 }
 
 func TestServer_Run_WithPortsAndEnv(t *testing.T) {
