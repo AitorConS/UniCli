@@ -71,7 +71,7 @@ Key flags:
 | `--attach` | Stream serial console and block |
 | `-d, --detach` | Detached mode, default `true` |
 | `--network` | Managed network name |
-| `--ip` | Static guest IP, requires `--network` |
+| `--ip` | Static guest IP, requires `--network`; omitted, the daemon allocates one from the network's subnet |
 | `--health-check` | `tcp:PORT` or `http:PORT:/path` |
 | `--restart` | `never`, `on-failure`, `always[:max-retries]` |
 | `--verify` | Signature verification mode: `off`, `warn`, `enforce` |
@@ -83,6 +83,7 @@ Key flags:
 Notes:
 
 - Port publishing requires `--network`.
+- Every VM on a managed network gets a guest IP: `--ip` pins it, otherwise the daemon's IPAM allocates the next free address from the network's subnet.
 - TCP forwarding works today.
 - UDP mappings are currently skipped by the userspace forwarder with a warning.
 
