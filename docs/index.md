@@ -57,6 +57,7 @@ The daemon is Linux-only. On Windows, the CLI runs on the host and boots the dae
 
 - `cmd/jerboa/` - CLI commands
 - `cmd/jerboad/` - daemon entrypoint
+- `cmd/jerboa-agent/` and `internal/agent/` - local HTTP/SSE sidecar for the desktop app
 - `internal/vm/` - VM lifecycle, QEMU, Firecracker, stats, persistence
 - `internal/image/` - image store and build pipeline
 - `internal/network/` - bridge, TAP, IPAM, port forwarder
