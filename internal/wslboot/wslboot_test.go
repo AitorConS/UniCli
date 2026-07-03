@@ -98,17 +98,24 @@ func TestBuildLaunchArgs_TokenAndDistro(t *testing.T) {
 		Distro:      "Ubuntu",
 		Token:       "abc123",
 		JerboadPath: "jerboad",
-	})
+	}, "/mnt/c/Users/u/.jerboa/jerboad-wsl.log")
 
-	require.Equal(t, []string{"-d", "Ubuntu", "--", "jerboad", "--host", "tcp://127.0.0.1:7890"}, args)
+	require.Equal(t, []string{
+		"-d", "Ubuntu", "--", "bash", "-c",
+		"setsid 'jerboad' --host 'tcp://127.0.0.1:7890'" +
+			" < /dev/null >> '/mnt/c/Users/u/.jerboa/jerboad-wsl.log' 2>&1 & sleep 0.5",
+	}, args)
 	require.True(t, slices.Contains(env, "JERBOA_AUTH_TOKEN=abc123"))
 	require.True(t, slices.Contains(env, "WSLENV=JERBOA_AUTH_TOKEN/u"))
 }
 
 func TestBuildLaunchArgs_NoTokenNoDistro(t *testing.T) {
-	args, env := buildLaunchArgs(Config{Endpoint: "tcp://127.0.0.1:7890", JerboadPath: "/usr/local/bin/jerboad"})
+	args, env := buildLaunchArgs(Config{Endpoint: "tcp://127.0.0.1:7890", JerboadPath: "/usr/local/bin/jerboad"}, "/dev/null")
 
-	require.Equal(t, []string{"--", "/usr/local/bin/jerboad", "--host", "tcp://127.0.0.1:7890"}, args)
+	require.Equal(t, []string{
+		"--", "bash", "-c",
+		"setsid '/usr/local/bin/jerboad' --host 'tcp://127.0.0.1:7890' < /dev/null >> '/dev/null' 2>&1 & sleep 0.5",
+	}, args)
 	// With no token, buildLaunchArgs must not add anything beyond the inherited
 	// process environment (no JERBOA_AUTH_TOKEN / WSLENV injection).
 	require.Equal(t, os.Environ(), env)
@@ -120,19 +127,23 @@ func TestBuildLaunchArgs_HypervisorAndSudo(t *testing.T) {
 		Token:      "secret",
 		Hypervisor: "firecracker",
 		Sudo:       true,
-	})
+	}, "/dev/null")
 
 	require.Equal(t, []string{
-		"--", "sudo", "--preserve-env=JERBOA_AUTH_TOKEN",
-		"jerboad", "--host", "tcp://127.0.0.1:7890", "--hypervisor", "firecracker",
+		"--", "bash", "-c",
+		"setsid sudo --preserve-env=JERBOA_AUTH_TOKEN 'jerboad' --host 'tcp://127.0.0.1:7890'" +
+			" --hypervisor 'firecracker' < /dev/null >> '/dev/null' 2>&1 & sleep 0.5",
 	}, args)
 	require.True(t, slices.Contains(env, "JERBOA_AUTH_TOKEN=secret"))
 }
 
 func TestBuildLaunchArgs_SudoNoToken(t *testing.T) {
-	args, _ := buildLaunchArgs(Config{Endpoint: "tcp://127.0.0.1:7890", Sudo: true})
+	args, _ := buildLaunchArgs(Config{Endpoint: "tcp://127.0.0.1:7890", Sudo: true}, "/dev/null")
 	// Without a token there is nothing to preserve across sudo.
-	require.Equal(t, []string{"--", "sudo", "jerboad", "--host", "tcp://127.0.0.1:7890"}, args)
+	require.Equal(t, []string{
+		"--", "bash", "-c",
+		"setsid sudo 'jerboad' --host 'tcp://127.0.0.1:7890' < /dev/null >> '/dev/null' 2>&1 & sleep 0.5",
+	}, args)
 }
 
 func TestBuildLaunchArgs_DedicatedDistro(t *testing.T) {
@@ -142,14 +153,26 @@ func TestBuildLaunchArgs_DedicatedDistro(t *testing.T) {
 		Distro:         "jerboa",
 		User:           "root",
 		Hypervisor:     "firecracker",
-	})
+	}, "/dev/null")
 
 	// -u selects the user, and the daemon binds the listen endpoint (0.0.0.0)
 	// while the client keeps dialing loopback.
 	require.Equal(t, []string{
-		"-d", "jerboa", "-u", "root", "--",
-		"jerboad", "--host", "tcp://0.0.0.0:7890", "--hypervisor", "firecracker",
+		"-d", "jerboa", "-u", "root", "--", "bash", "-c",
+		"setsid 'jerboad' --host 'tcp://0.0.0.0:7890' --hypervisor 'firecracker'" +
+			" < /dev/null >> '/dev/null' 2>&1 & sleep 0.5",
 	}, args)
+}
+
+func TestShQuote(t *testing.T) {
+	require.Equal(t, "'plain'", shQuote("plain"))
+	require.Equal(t, `'it'\''s'`, shQuote("it's"))
+}
+
+func TestToWSLPath(t *testing.T) {
+	require.Equal(t, "/mnt/c/Users/foo/.jerboa/j.log", toWSLPath(`C:\Users\foo\.jerboa\j.log`))
+	require.Equal(t, "/mnt/d/x", toWSLPath(`D:/x`))
+	require.Equal(t, "/home/foo/j.log", toWSLPath("/home/foo/j.log"))
 }
 
 func TestSaveLoadDaemonFile_RoundTrip(t *testing.T) {
