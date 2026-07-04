@@ -30,7 +30,22 @@ import (
 	"time"
 
 	"github.com/AitorConS/jerboa/internal/httpclient"
+	"github.com/AitorConS/jerboa/internal/naming"
 )
+
+// validatePackageRef rejects package coordinates that could escape the store
+// root. Name and version originate from a remote index (see IndexURL) and are
+// joined onto on-disk paths, so an entry like {"name": "../../../.ssh"} must be
+// refused before any filesystem operation reads, writes, or deletes through it.
+func validatePackageRef(name, version string) error {
+	if err := naming.ValidateResourceName("package", name); err != nil {
+		return err
+	}
+	if err := naming.ValidateResourceName("package version", version); err != nil {
+		return err
+	}
+	return nil
+}
 
 // IndexURL is the base URL for the package index.
 // Can be overridden in tests to point to a local server.
@@ -83,6 +98,9 @@ func (s *Store) PackageDir(name, version string) string {
 
 // IsDownloaded returns true if the package archive exists locally.
 func (s *Store) IsDownloaded(name, version string) bool {
+	if err := validatePackageRef(name, version); err != nil {
+		return false
+	}
 	dir := s.PackageDir(name, version)
 	archive := filepath.Join(dir, "files.tar.gz")
 	info, err := os.Stat(archive)
@@ -92,6 +110,10 @@ func (s *Store) IsDownloaded(name, version string) bool {
 // Download fetches the package archive from its URL and stores it locally.
 // Verifies size and SHA-256 digest after download.
 func (s *Store) Download(pkg Package) error {
+	if err := validatePackageRef(pkg.Name, pkg.Version); err != nil {
+		return err
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -162,6 +184,9 @@ func (s *Store) Download(pkg Package) error {
 
 // Remove deletes a specific version of a locally cached package.
 func (s *Store) Remove(name, version string) error {
+	if err := validatePackageRef(name, version); err != nil {
+		return err
+	}
 	dir := s.PackageDir(name, version)
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		return fmt.Errorf("package %s:%s not found locally", name, version)
@@ -174,6 +199,9 @@ func (s *Store) Remove(name, version string) error {
 
 // RemoveAll deletes all locally cached versions of a package.
 func (s *Store) RemoveAll(name string) error {
+	if err := naming.ValidateResourceName("package", name); err != nil {
+		return err
+	}
 	dir := filepath.Join(s.root, name)
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		return fmt.Errorf("package %s not found locally", name)
@@ -187,6 +215,9 @@ func (s *Store) RemoveAll(name string) error {
 // Extract decompresses the package archive into a files subdirectory.
 // After extraction the individual files can be listed with ExtractedFiles.
 func (s *Store) Extract(pkg Package) error {
+	if err := validatePackageRef(pkg.Name, pkg.Version); err != nil {
+		return err
+	}
 	dir := s.PackageDir(pkg.Name, pkg.Version)
 	archivePath := filepath.Join(dir, "files.tar.gz")
 	filesDir := filepath.Join(dir, "files")
@@ -253,6 +284,9 @@ func (s *Store) Extract(pkg Package) error {
 
 // IsExtracted returns true if the package has been extracted and its files directory is non-empty.
 func (s *Store) IsExtracted(name, version string) bool {
+	if err := validatePackageRef(name, version); err != nil {
+		return false
+	}
 	filesDir := filepath.Join(s.PackageDir(name, version), "files")
 	entries, err := os.ReadDir(filesDir)
 	if err != nil {
@@ -264,6 +298,9 @@ func (s *Store) IsExtracted(name, version string) bool {
 // ExtractedFiles returns the absolute paths of all regular files inside the
 // package's extracted files directory.
 func (s *Store) ExtractedFiles(name, version string) ([]string, error) {
+	if err := validatePackageRef(name, version); err != nil {
+		return nil, err
+	}
 	filesDir := filepath.Join(s.PackageDir(name, version), "files")
 	var files []string
 	err := filepath.WalkDir(filesDir, func(path string, d fs.DirEntry, err error) error {
@@ -323,6 +360,9 @@ func (s *Store) List() ([]Package, error) {
 
 // SaveMeta writes the package metadata to the local cache.
 func (s *Store) SaveMeta(pkg Package) error {
+	if err := validatePackageRef(pkg.Name, pkg.Version); err != nil {
+		return err
+	}
 	dir := s.PackageDir(pkg.Name, pkg.Version)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("package meta mkdir %s: %w", dir, err)
@@ -439,6 +479,10 @@ func (idx *Index) Latest(name string) *Package {
 // Create builds a local package archive from the given binary and optional
 // extra files. It produces files.tar.gz and meta.json in the package store.
 func (s *Store) Create(name, version, binaryPath string, extraFiles []string, description, runtimeName string) error {
+	if err := validatePackageRef(name, version); err != nil {
+		return err
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -545,6 +589,10 @@ func (s *Store) createArchive(outPath string, files []string) (string, int64, er
 // Push uploads a local package archive and metadata to a remote package index.
 // The index must accept POST /packages with multipart form data (archive + metadata).
 func (s *Store) Push(name, version string, indexURL string) error {
+	if err := validatePackageRef(name, version); err != nil {
+		return err
+	}
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
