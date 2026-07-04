@@ -3,10 +3,32 @@ package ociblob
 import (
 	"bytes"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestStore_RejectsMalformedDigests(t *testing.T) {
+	t.Parallel()
+
+	s, err := NewStore(t.TempDir())
+	require.NoError(t, err)
+
+	for _, digest := range []string{
+		"sha256:../../etc/passwd",
+		"sha256:" + strings.Repeat("a", 63), // one char short
+		"sha256:" + strings.Repeat("g", 64), // non-hex
+		"sha256:",
+		"deadbeef",    // missing algorithm prefix
+		"sha512:0000", // wrong algorithm
+	} {
+		require.False(t, s.Exists(digest), "Exists(%q)", digest)
+		_, err := s.Open(digest)
+		require.Error(t, err, "Open(%q)", digest)
+		require.Error(t, s.Delete(digest), "Delete(%q)", digest)
+	}
+}
 
 func TestStore_PutOpenExistsDelete(t *testing.T) {
 	t.Parallel()

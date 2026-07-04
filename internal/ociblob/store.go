@@ -51,7 +51,10 @@ func (s *Store) Put(r io.Reader) (string, int64, error) {
 		return "", 0, fmt.Errorf("blob store put close temp: %w", err)
 	}
 
-	dst := s.pathForDigest(digest)
+	dst, err := s.pathForDigest(digest)
+	if err != nil {
+		return "", 0, fmt.Errorf("blob store put: %w", err)
+	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return "", 0, fmt.Errorf("blob store put mkdir: %w", err)
 	}
@@ -73,7 +76,11 @@ func (s *Store) Put(r io.Reader) (string, int64, error) {
 func (s *Store) Exists(digest string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	_, err := os.Stat(s.pathForDigest(digest))
+	path, err := s.pathForDigest(digest)
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(path)
 	return err == nil
 }
 
@@ -82,7 +89,11 @@ func (s *Store) Open(digest string) (io.ReadCloser, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	f, err := os.Open(s.pathForDigest(digest))
+	path, err := s.pathForDigest(digest)
+	if err != nil {
+		return nil, err
+	}
+	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("blob %s not found", digest)
@@ -97,7 +108,11 @@ func (s *Store) Delete(digest string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	err := os.Remove(s.pathForDigest(digest))
+	path, err := s.pathForDigest(digest)
+	if err != nil {
+		return err
+	}
+	err = os.Remove(path)
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -131,8 +146,17 @@ func (s *Store) List() ([]string, error) {
 	return out, nil
 }
 
-func (s *Store) pathForDigest(digest string) string {
-	return filepath.Join(s.root, strings.TrimPrefix(digest, "sha256:"))
+// pathForDigest maps a "sha256:<hex>" digest to its on-disk path. The digest is
+// content-addressable and untrusted (it can come from a remote manifest), so the
+// hex portion is validated to be exactly 64 hex characters before it is joined
+// onto the store root — otherwise a value like "sha256:../../etc/passwd" would
+// let a caller read, write, or delete outside the store.
+func (s *Store) pathForDigest(digest string) (string, error) {
+	hexDigest := strings.TrimPrefix(digest, "sha256:")
+	if !isHexSHA256(hexDigest) {
+		return "", fmt.Errorf("invalid blob digest %q", digest)
+	}
+	return filepath.Join(s.root, hexDigest), nil
 }
 
 func isHexSHA256(s string) bool {
