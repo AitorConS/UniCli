@@ -183,7 +183,14 @@ func Serve(ctx context.Context, addr, token string, c *Collectors) error {
 		_, _ = w.Write([]byte("ok"))
 	})
 
-	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 30 * time.Second}
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 30 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 	slog.Info("metrics server listening", "addr", addr)
 
 	errCh := make(chan error, 1)

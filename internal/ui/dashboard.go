@@ -298,7 +298,7 @@ func vmToDetailRow(v *vm.VM) VMDetailRow {
 	return row
 }
 
-// Serve runs the web dashboard on addr until ctx is cancelled.
+// Serve runs the web dashboard on addr until ctx is canceled.
 //
 // When token is non-empty, every route requires an "Authorization: Bearer
 // <token>" header, so exposing the dashboard on a non-loopback address does not
@@ -312,7 +312,14 @@ func Serve(ctx context.Context, addr, token string, mgr vm.Manager, version stri
 	mux.Handle("/ui/", h)
 	mux.Handle("/ui/api/vms", h)
 
-	srv := &http.Server{Addr: addr, Handler: httpauth.Bearer(token, mux), ReadHeaderTimeout: 30 * time.Second}
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           httpauth.Bearer(token, mux),
+		ReadHeaderTimeout: 30 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 	slog.Info("dashboard server listening", "addr", addr)
 
 	errCh := make(chan error, 1)

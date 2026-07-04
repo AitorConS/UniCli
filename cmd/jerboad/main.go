@@ -57,6 +57,7 @@ func newRootCmd() *cobra.Command {
 		traceAddr     string
 		clusterAddr   string
 		clusterToken  string
+		obsToken      string
 		joinAddrs     string
 		hypervisor    string
 		fcBin         string
@@ -92,8 +93,11 @@ func newRootCmd() *cobra.Command {
 			if clusterToken == "" {
 				clusterToken = os.Getenv("JERBOA_CLUSTER_TOKEN")
 			}
+			if obsToken == "" {
+				obsToken = os.Getenv("JERBOA_OBSERVABILITY_TOKEN")
+			}
 			vm.SetVMLogMaxBytes(vmLogMaxBytes)
-			return serve(cmd.Context(), endpoint, authToken, clusterToken, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs, hypervisor, fcBin, fcKernelPath, toolsDir)
+			return serve(cmd.Context(), endpoint, authToken, clusterToken, obsToken, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs, hypervisor, fcBin, fcKernelPath, toolsDir)
 		},
 	}
 	root.Flags().StringVarP(&hostFlag, "host", "H", "",
@@ -133,12 +137,15 @@ func newRootCmd() *cobra.Command {
 		"HTTP address for cluster gossip endpoint (e.g. :7946); empty disables cluster")
 	root.Flags().StringVar(&clusterToken, "cluster-token", "",
 		"shared secret authenticating cluster gossip between nodes (env: JERBOA_CLUSTER_TOKEN); must match on all nodes; empty leaves gossip unauthenticated")
+	root.Flags().StringVar(&obsToken, "observability-token", "",
+		"read-only bearer token required to scrape --metrics-addr and the --ui-addr dashboard (env: JERBOA_OBSERVABILITY_TOKEN); "+
+			"kept separate from --auth-token so scraping never grants daemon access; empty leaves these endpoints unauthenticated")
 	root.Flags().StringVar(&joinAddrs, "join", "",
 		"Comma-separated list of seed node addresses to join (e.g. 10.0.0.2:7946,10.0.0.3:7946)")
 	return root
 }
 
-func serve(ctx context.Context, endpoint, authToken, clusterToken, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs, hypervisor, fcBin, fcKernelPath, toolsDir string) error {
+func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs, hypervisor, fcBin, fcKernelPath, toolsDir string) error {
 	setupLogger(logFormat)
 
 	// Where the kernel build toolchain (mkfs, boot.img, kernel.img) lives. An
@@ -222,9 +229,9 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, qemuBin, stor
 	}()
 
 	if metricsAddr != "" {
-		warnIfExposed("metrics", metricsAddr, authToken != "")
+		warnIfExposed("metrics", metricsAddr, obsToken != "")
 		go func() {
-			if err := metrics.Serve(ctx, metricsAddr, authToken, collectors); err != nil {
+			if err := metrics.Serve(ctx, metricsAddr, obsToken, collectors); err != nil {
 				slog.Error("metrics server", "err", err)
 			}
 		}()
@@ -232,9 +239,9 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, qemuBin, stor
 	}
 
 	if uiAddr != "" {
-		warnIfExposed("dashboard", uiAddr, authToken != "")
+		warnIfExposed("dashboard", uiAddr, obsToken != "")
 		go func() {
-			if err := ui.Serve(ctx, uiAddr, authToken, mgr, version); err != nil {
+			if err := ui.Serve(ctx, uiAddr, obsToken, mgr, version); err != nil {
 				slog.Error("dashboard server", "err", err)
 			}
 		}()

@@ -107,7 +107,7 @@ func validateDescriptor(d Descriptor, field string) error {
 func validateSHA256Digest(digest string) error {
 	hexDigest, ok := strings.CutPrefix(digest, "sha256:")
 	if !ok {
-		return fmt.Errorf("digest %q must start with sha256:", digest)
+		return fmt.Errorf("digest %q must use the sha256 algorithm prefix", digest)
 	}
 	if len(hexDigest) != 64 {
 		return fmt.Errorf("digest %q must be 64 hex characters", digest)
