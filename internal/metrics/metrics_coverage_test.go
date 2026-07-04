@@ -63,7 +63,7 @@ func TestServe_StartAndShutdown(t *testing.T) {
 
 	doneCh := make(chan error, 1)
 	go func() {
-		doneCh <- Serve(ctx, addr, c)
+		doneCh <- Serve(ctx, addr, "", c)
 	}()
 
 	time.Sleep(100 * time.Millisecond)
@@ -93,6 +93,43 @@ func TestServe_StartAndShutdown(t *testing.T) {
 	}
 }
 
+func TestServe_TokenAuth(t *testing.T) {
+	c := NewCollectors("coverage-version")
+	addr := listenAddr(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	doneCh := make(chan error, 1)
+	go func() {
+		doneCh <- Serve(ctx, addr, "s3cret", c)
+	}()
+	time.Sleep(100 * time.Millisecond)
+
+	// /metrics without a token is rejected.
+	resp, err := http.Get("http://" + addr + "/metrics")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	resp.Body.Close()
+
+	// /metrics with the token is served.
+	req, err := http.NewRequest(http.MethodGet, "http://"+addr+"/metrics", nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer s3cret")
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	resp.Body.Close()
+
+	// /health stays open for liveness probes.
+	resp, err = http.Get("http://" + addr + "/health")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	resp.Body.Close()
+
+	cancel()
+	<-doneCh
+}
+
 func TestServe_ContextCancellation(t *testing.T) {
 	c := NewCollectors("coverage-version")
 	addr := listenAddr(t)
@@ -100,7 +137,7 @@ func TestServe_ContextCancellation(t *testing.T) {
 
 	doneCh := make(chan error, 1)
 	go func() {
-		doneCh <- Serve(ctx, addr, c)
+		doneCh <- Serve(ctx, addr, "", c)
 	}()
 
 	cancel()

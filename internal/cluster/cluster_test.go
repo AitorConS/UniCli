@@ -294,6 +294,59 @@ func TestRegisterGossipHandler_ValidGossip(t *testing.T) {
 	require.GreaterOrEqual(t, len(result.Members), 2)
 }
 
+func gossipReq(t *testing.T, url, token string) *http.Response {
+	t.Helper()
+	payload := gossipPayload{MemberID: "remote", Members: nil}
+	data, err := json.Marshal(payload)
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPost, url+"/cluster/gossip", bytes.NewReader(data))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	return resp
+}
+
+func TestGossipHandler_TokenAuth(t *testing.T) {
+	c := NewSwimCluster("127.0.0.1:7946", 0, 0, 0, WithToken("s3cret"))
+	mux := http.NewServeMux()
+	RegisterGossipHandler(mux, c)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	// No token -> rejected.
+	resp := gossipReq(t, srv.URL, "")
+	resp.Body.Close()
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+
+	// Wrong token -> rejected.
+	resp = gossipReq(t, srv.URL, "wrong")
+	resp.Body.Close()
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+
+	// Correct token -> accepted.
+	resp = gossipReq(t, srv.URL, "s3cret")
+	resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func TestGossipHandler_NoTokenStaysOpen(t *testing.T) {
+	// Without a configured token the endpoint must behave exactly as before:
+	// an unauthenticated request is accepted.
+	c := NewSwimCluster("127.0.0.1:7946", 0, 0, 0)
+	mux := http.NewServeMux()
+	RegisterGossipHandler(mux, c)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	resp := gossipReq(t, srv.URL, "")
+	resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
 func TestParseAddr(t *testing.T) {
 	tests := []struct {
 		input string

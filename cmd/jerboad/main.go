@@ -56,6 +56,7 @@ func newRootCmd() *cobra.Command {
 		logFormat     string
 		traceAddr     string
 		clusterAddr   string
+		clusterToken  string
 		joinAddrs     string
 		hypervisor    string
 		fcBin         string
@@ -88,8 +89,11 @@ func newRootCmd() *cobra.Command {
 				return fmt.Errorf("jerboad: refusing to serve TCP endpoint %q without authentication; "+
 					"set --auth-token or JERBOA_AUTH_TOKEN, or pass --insecure to override", endpoint)
 			}
+			if clusterToken == "" {
+				clusterToken = os.Getenv("JERBOA_CLUSTER_TOKEN")
+			}
 			vm.SetVMLogMaxBytes(vmLogMaxBytes)
-			return serve(cmd.Context(), endpoint, authToken, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs, hypervisor, fcBin, fcKernelPath, toolsDir)
+			return serve(cmd.Context(), endpoint, authToken, clusterToken, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs, hypervisor, fcBin, fcKernelPath, toolsDir)
 		},
 	}
 	root.Flags().StringVarP(&hostFlag, "host", "H", "",
@@ -127,12 +131,14 @@ func newRootCmd() *cobra.Command {
 		"OTLP gRPC address for trace export (e.g. localhost:4317); empty disables tracing")
 	root.Flags().StringVar(&clusterAddr, "cluster-addr", "",
 		"HTTP address for cluster gossip endpoint (e.g. :7946); empty disables cluster")
+	root.Flags().StringVar(&clusterToken, "cluster-token", "",
+		"shared secret authenticating cluster gossip between nodes (env: JERBOA_CLUSTER_TOKEN); must match on all nodes; empty leaves gossip unauthenticated")
 	root.Flags().StringVar(&joinAddrs, "join", "",
 		"Comma-separated list of seed node addresses to join (e.g. 10.0.0.2:7946,10.0.0.3:7946)")
 	return root
 }
 
-func serve(ctx context.Context, endpoint, authToken, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs, hypervisor, fcBin, fcKernelPath, toolsDir string) error {
+func serve(ctx context.Context, endpoint, authToken, clusterToken, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs, hypervisor, fcBin, fcKernelPath, toolsDir string) error {
 	setupLogger(logFormat)
 
 	// Where the kernel build toolchain (mkfs, boot.img, kernel.img) lives. An
@@ -216,8 +222,9 @@ func serve(ctx context.Context, endpoint, authToken, qemuBin, storePath, vmStore
 	}()
 
 	if metricsAddr != "" {
+		warnIfExposed("metrics", metricsAddr, authToken != "")
 		go func() {
-			if err := metrics.Serve(ctx, metricsAddr, collectors); err != nil {
+			if err := metrics.Serve(ctx, metricsAddr, authToken, collectors); err != nil {
 				slog.Error("metrics server", "err", err)
 			}
 		}()
@@ -225,8 +232,9 @@ func serve(ctx context.Context, endpoint, authToken, qemuBin, storePath, vmStore
 	}
 
 	if uiAddr != "" {
+		warnIfExposed("dashboard", uiAddr, authToken != "")
 		go func() {
-			if err := ui.Serve(ctx, uiAddr, mgr, version); err != nil {
+			if err := ui.Serve(ctx, uiAddr, authToken, mgr, version); err != nil {
 				slog.Error("dashboard server", "err", err)
 			}
 		}()
@@ -240,7 +248,8 @@ func serve(ctx context.Context, endpoint, authToken, qemuBin, storePath, vmStore
 	var clusterLister apiserver.ClusterMemberLister
 	var swimCluster *cluster.SwimCluster
 	if clusterAddr != "" {
-		swimCluster = cluster.NewSwimCluster(cluster.ParseAddr(clusterAddr), 0, 0, 0)
+		warnIfExposed("cluster gossip", clusterAddr, clusterToken != "")
+		swimCluster = cluster.NewSwimCluster(cluster.ParseAddr(clusterAddr), 0, 0, 0, cluster.WithToken(clusterToken))
 		mux := http.NewServeMux()
 		cluster.RegisterGossipHandler(mux, swimCluster)
 		clusterSrv := &http.Server{Addr: clusterAddr, Handler: mux, ReadHeaderTimeout: 30 * time.Second}
@@ -445,6 +454,34 @@ func splitCommaList(s string) []string {
 
 func volumeStorePath(storePath string) string {
 	return filepath.Join(filepath.Dir(storePath), "volumes")
+}
+
+// warnIfExposed logs a warning when an auxiliary HTTP endpoint is bound to a
+// non-loopback address without a token, since that hands its data (VM names,
+// IPs, logs, or cluster membership) to anyone who can reach the port.
+func warnIfExposed(kind, addr string, hasToken bool) {
+	if hasToken || isLoopbackAddr(addr) {
+		return
+	}
+	slog.Warn("endpoint is exposed without authentication; bind to 127.0.0.1 or set a token",
+		"endpoint", kind, "addr", addr)
+}
+
+// isLoopbackAddr reports whether addr's host is the loopback interface. A bare
+// port (":9090") or a wildcard host ("0.0.0.0", "::") is treated as non-loopback
+// because it is reachable from off-host.
+func isLoopbackAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	if host == "" {
+		return false
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return host == "localhost"
 }
 
 type clusterMemberAdapter struct {

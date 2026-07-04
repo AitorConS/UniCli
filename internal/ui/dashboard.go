@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AitorConS/jerboa/internal/httpauth"
 	"github.com/AitorConS/jerboa/internal/vm"
 )
 
@@ -297,7 +298,13 @@ func vmToDetailRow(v *vm.VM) VMDetailRow {
 	return row
 }
 
-func Serve(ctx context.Context, addr string, mgr vm.Manager, version string) error {
+// Serve runs the web dashboard on addr until ctx is cancelled.
+//
+// When token is non-empty, every route requires an "Authorization: Bearer
+// <token>" header, so exposing the dashboard on a non-loopback address does not
+// hand VM names, IPs, and serial logs to anyone who can reach the port. An empty
+// token preserves the previous unauthenticated behavior.
+func Serve(ctx context.Context, addr, token string, mgr vm.Manager, version string) error {
 	h := NewHandler(mgr, addr, version)
 	mux := http.NewServeMux()
 	mux.Handle("/", h)
@@ -305,7 +312,7 @@ func Serve(ctx context.Context, addr string, mgr vm.Manager, version string) err
 	mux.Handle("/ui/", h)
 	mux.Handle("/ui/api/vms", h)
 
-	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 30 * time.Second}
+	srv := &http.Server{Addr: addr, Handler: httpauth.Bearer(token, mux), ReadHeaderTimeout: 30 * time.Second}
 	slog.Info("dashboard server listening", "addr", addr)
 
 	errCh := make(chan error, 1)
