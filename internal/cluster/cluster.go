@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -57,6 +58,21 @@ type SwimCluster struct {
 	suspTimeout time.Duration
 	deadTimeout time.Duration
 	cancel      context.CancelFunc
+	// token is an optional shared secret. When non-empty, outbound gossip carries
+	// it as a bearer token and the gossip handler rejects requests without it, so
+	// a stranger who can merely reach the port cannot inject membership updates.
+	// It is set once at construction and never mutated, so it is read lock-free.
+	token string
+}
+
+// Option configures a SwimCluster at construction time.
+type Option func(*SwimCluster)
+
+// WithToken sets a shared secret that authenticates gossip between nodes. All
+// nodes in a cluster must use the same token; an empty token (the default)
+// leaves the gossip endpoint unauthenticated, preserving prior behavior.
+func WithToken(token string) Option {
+	return func(c *SwimCluster) { c.token = token }
 }
 
 func generateID() string {
@@ -65,7 +81,7 @@ func generateID() string {
 	return fmt.Sprintf("%x-%x-%x-%x", b[0:2], b[2:4], b[4:6], b[6:8])
 }
 
-func NewSwimCluster(addr string, vmCount int, cpuCap int, memCap int64) *SwimCluster {
+func NewSwimCluster(addr string, vmCount int, cpuCap int, memCap int64, opts ...Option) *SwimCluster {
 	id := generateID()
 	c := &SwimCluster{
 		local: Member{
@@ -82,8 +98,19 @@ func NewSwimCluster(addr string, vmCount int, cpuCap int, memCap int64) *SwimClu
 		suspTimeout: 15 * time.Second,
 		deadTimeout: 30 * time.Second,
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
 	c.members[id] = &c.local
 	return c
+}
+
+// setAuth adds the bearer token to an outbound gossip request when one is
+// configured; with no token it is a no-op and the request goes out unauthenticated.
+func (c *SwimCluster) setAuth(req *http.Request) {
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
 }
 
 func (c *SwimCluster) LocalID() string {
@@ -114,6 +141,7 @@ func (c *SwimCluster) Join(ctx context.Context, seedAddrs ...string) error {
 			return fmt.Errorf("cluster join request build: %w", err)
 		}
 		req.Header.Set("Content-Type", "application/json")
+		c.setAuth(req)
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
@@ -250,6 +278,7 @@ func (c *SwimCluster) doGossip(ctx context.Context) {
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
+	c.setAuth(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -368,10 +397,29 @@ func (c *SwimCluster) toEntriesLocked() []memberEntry {
 	return out
 }
 
+// authorized reports whether an inbound gossip request carries the configured
+// shared token. When no token is configured it always returns true, so the
+// endpoint stays open exactly as before; when one is set, a request must present
+// a matching "Authorization: Bearer <token>" header (compared in constant time).
+func (c *SwimCluster) authorized(r *http.Request) bool {
+	if c.token == "" {
+		return true
+	}
+	got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if !ok {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(got), []byte(c.token)) == 1
+}
+
 func RegisterGossipHandler(mux *http.ServeMux, cluster *SwimCluster) {
 	mux.HandleFunc("/cluster/gossip", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !cluster.authorized(r) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 		var payload gossipPayload

@@ -90,11 +90,33 @@ func validateDescriptor(d Descriptor, field string) error {
 	if d.MediaType == "" {
 		return fmt.Errorf("%s.mediaType is required", field)
 	}
-	if !strings.HasPrefix(d.Digest, "sha256:") {
-		return fmt.Errorf("%s.digest must start with sha256", field)
+	if err := validateSHA256Digest(d.Digest); err != nil {
+		return fmt.Errorf("%s.digest: %w", field, err)
 	}
 	if d.Size <= 0 {
 		return fmt.Errorf("%s.size must be positive", field)
+	}
+	return nil
+}
+
+// validateSHA256Digest checks that digest is a well-formed "sha256:<hex>" value
+// with exactly 64 lowercase hex characters. Digests from a manifest are later
+// used as content-addressable filenames, so rejecting malformed values here
+// keeps a crafted digest (e.g. "sha256:../../etc/passwd") from ever reaching a
+// filesystem path.
+func validateSHA256Digest(digest string) error {
+	hexDigest, ok := strings.CutPrefix(digest, "sha256:")
+	if !ok {
+		return fmt.Errorf("digest %q must use the sha256 algorithm prefix", digest)
+	}
+	if len(hexDigest) != 64 {
+		return fmt.Errorf("digest %q must be 64 hex characters", digest)
+	}
+	for _, r := range hexDigest {
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') {
+			continue
+		}
+		return fmt.Errorf("digest %q contains a non-hex character", digest)
 	}
 	return nil
 }

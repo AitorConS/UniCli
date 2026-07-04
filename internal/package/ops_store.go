@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"github.com/AitorConS/jerboa/internal/httpclient"
+	"github.com/AitorConS/jerboa/internal/naming"
 )
 
 // OpsStore manages locally cached ops packages under a root directory.
@@ -42,8 +43,28 @@ func (s *OpsStore) PackageDir(namespace, name, version string) string {
 	return filepath.Join(s.root, namespace, name+"_"+version)
 }
 
+// validateOpsRef rejects ops-package coordinates that could escape the store
+// root. namespace, name, and version come from the remote ops manifest (see
+// OpsPackageManifestURL) and are each used as a path component, so a value such
+// as "../../../.ssh" must be refused before any filesystem operation.
+func validateOpsRef(namespace, name, version string) error {
+	if err := naming.ValidateResourceName("ops namespace", namespace); err != nil {
+		return err
+	}
+	if err := naming.ValidateResourceName("ops package", name); err != nil {
+		return err
+	}
+	if err := naming.ValidateResourceName("ops package version", version); err != nil {
+		return err
+	}
+	return nil
+}
+
 // IsDownloaded returns true if the ops package archive exists locally.
 func (s *OpsStore) IsDownloaded(namespace, name, version string) bool {
+	if err := validateOpsRef(namespace, name, version); err != nil {
+		return false
+	}
 	dir := s.PackageDir(namespace, name, version)
 	archive := filepath.Join(dir, ArchSlug()+".tar.gz")
 	info, err := os.Stat(archive)
@@ -55,6 +76,9 @@ func (s *OpsStore) IsDownloaded(namespace, name, version string) bool {
 // extractions where directory entries were created but the binary was
 // removed (e.g. by AV quarantine) after extraction completed.
 func (s *OpsStore) IsExtracted(namespace, name, version string) bool {
+	if err := validateOpsRef(namespace, name, version); err != nil {
+		return false
+	}
 	dir := s.PackageDir(namespace, name, version)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -83,6 +107,10 @@ func (s *OpsStore) IsExtracted(namespace, name, version string) bool {
 // Download fetches an ops package from repo.ops.city and stores it locally.
 // The URL is constructed from OpsPackageBaseURL + /<namespace>/<name>/<version>.tar.gz.
 func (s *OpsStore) Download(namespace, name, version string, expectedSHA256 string) error {
+	if err := validateOpsRef(namespace, name, version); err != nil {
+		return err
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -162,6 +190,9 @@ func (s *OpsStore) Download(namespace, name, version string, expectedSHA256 stri
 //
 // Symlinks are handled on Linux; silently skipped on other platforms.
 func (s *OpsStore) Extract(namespace, name, version string) error {
+	if err := validateOpsRef(namespace, name, version); err != nil {
+		return err
+	}
 	if s.IsExtracted(namespace, name, version) {
 		return nil
 	}
@@ -381,6 +412,9 @@ func opsRuntimeBloatDir(rel string) bool {
 // Build-only subtrees (static libs, test suites, etc.) are excluded to keep
 // the image lean — see opsRuntimeBloatDir for the full list.
 func (s *OpsStore) ExtractedFiles(namespace, name, version string) ([]File, error) {
+	if err := validateOpsRef(namespace, name, version); err != nil {
+		return nil, err
+	}
 	dir := s.PackageDir(namespace, name, version)
 	var files []File
 
@@ -473,6 +507,9 @@ func (s *OpsStore) List() ([]OpsPackage, error) {
 
 // Remove deletes a locally cached ops package.
 func (s *OpsStore) Remove(namespace, name, version string) error {
+	if err := validateOpsRef(namespace, name, version); err != nil {
+		return err
+	}
 	dir := s.PackageDir(namespace, name, version)
 	if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("ops remove %s/%s: %w", namespace, name, err)
@@ -610,6 +647,9 @@ type OpsPackageManifestConfig struct {
 // LoadPackageManifest reads and parses the package.manifest from an extracted
 // ops package directory.
 func (s *OpsStore) LoadPackageManifest(namespace, name, version string) (*OpsPackageManifestConfig, error) {
+	if err := validateOpsRef(namespace, name, version); err != nil {
+		return nil, err
+	}
 	dir := s.PackageDir(namespace, name, version)
 	manifestPath := filepath.Join(dir, "package.manifest")
 
@@ -629,6 +669,9 @@ func (s *OpsStore) LoadPackageManifest(namespace, name, version string) (*OpsPac
 // It checks the package.manifest for the Program field, then falls back to
 // looking for ELF files at the top level.
 func (s *OpsStore) FindBinary(namespace, name, version string) (string, error) {
+	if err := validateOpsRef(namespace, name, version); err != nil {
+		return "", err
+	}
 	dir := s.PackageDir(namespace, name, version)
 
 	cfg, err := s.LoadPackageManifest(namespace, name, version)

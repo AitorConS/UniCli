@@ -6,6 +6,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Well-formed 64-hex digests for use where the digest itself is not under test.
+const (
+	validConfigDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	validLayerDigest  = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+)
+
 func TestParseManifest_Valid(t *testing.T) {
 	t.Parallel()
 
@@ -54,11 +60,45 @@ func TestValidateManifest(t *testing.T) {
 				SchemaVersion: OCIManifestSchemaVersion,
 				Config: Descriptor{
 					MediaType: MediaTypeImageConfig,
-					Digest:    "sha256:aaa",
+					Digest:    validConfigDigest,
 					Size:      1,
 				},
 			},
 			err: "layers is required",
+		},
+		{
+			name: "config digest not hex",
+			m: Manifest{
+				SchemaVersion: OCIManifestSchemaVersion,
+				Config: Descriptor{
+					MediaType: MediaTypeImageConfig,
+					Digest:    "sha256:../../etc/passwd",
+					Size:      1,
+				},
+				Layers: []Descriptor{{
+					MediaType: MediaTypeImageLayerTarGzip,
+					Digest:    validLayerDigest,
+					Size:      1,
+				}},
+			},
+			err: "config.digest",
+		},
+		{
+			name: "config digest wrong length",
+			m: Manifest{
+				SchemaVersion: OCIManifestSchemaVersion,
+				Config: Descriptor{
+					MediaType: MediaTypeImageConfig,
+					Digest:    "sha256:aaa",
+					Size:      1,
+				},
+				Layers: []Descriptor{{
+					MediaType: MediaTypeImageLayerTarGzip,
+					Digest:    validLayerDigest,
+					Size:      1,
+				}},
+			},
+			err: "64 hex characters",
 		},
 		{
 			name: "invalid config digest",
@@ -83,12 +123,12 @@ func TestValidateManifest(t *testing.T) {
 				SchemaVersion: OCIManifestSchemaVersion,
 				Config: Descriptor{
 					MediaType: MediaTypeImageConfig,
-					Digest:    "sha256:aaa",
+					Digest:    validConfigDigest,
 					Size:      1,
 				},
 				Layers: []Descriptor{{
 					MediaType: MediaTypeImageLayerTarGzip,
-					Digest:    "sha256:bbb",
+					Digest:    validLayerDigest,
 					Size:      0,
 				}},
 			},

@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/AitorConS/jerboa/internal/httpauth"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -168,15 +169,28 @@ func (c *Collectors) Handler() http.Handler {
 
 // Serve starts an HTTP server serving Prometheus metrics on the given address.
 // This is a blocking call; use with a goroutine or context cancellation.
-func Serve(ctx context.Context, addr string, c *Collectors) error {
+//
+// When token is non-empty, /metrics requires an "Authorization: Bearer <token>"
+// header so that binding the endpoint to a non-loopback address does not expose
+// VM names, IPs, and counts to anyone who can reach the port. /health is left
+// unauthenticated so liveness probes keep working. An empty token preserves the
+// previous unauthenticated behavior.
+func Serve(ctx context.Context, addr, token string, c *Collectors) error {
 	mux := http.NewServeMux()
-	mux.Handle("/metrics", c.Handler())
+	mux.Handle("/metrics", httpauth.Bearer(token, c.Handler()))
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
 
-	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 30 * time.Second}
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 30 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 	slog.Info("metrics server listening", "addr", addr)
 
 	errCh := make(chan error, 1)

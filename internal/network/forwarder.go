@@ -97,11 +97,22 @@ func proxyConn(client net.Conn, target string) {
 	}
 	defer backend.Close()
 
+	// Each direction closes both conns when it finishes so the other io.Copy
+	// unblocks and returns promptly. proxyConn then waits for BOTH goroutines
+	// before returning: it runs under the Forwarder's WaitGroup, so draining
+	// both is what lets Close()'s wg.Wait() guarantee no copy is still writing to
+	// a socket after Close returns. (Waiting on a single signal would leave the
+	// other copy running untracked; closing the conns only inside a deferred
+	// return — as before — would deadlock this two-signal wait.)
+	copyDir := func(dst, src net.Conn) {
+		_, _ = io.Copy(dst, src)
+		_ = client.Close()
+		_ = backend.Close()
+	}
 	done := make(chan struct{}, 2)
-	go func() { _, _ = io.Copy(backend, client); done <- struct{}{} }()
-	go func() { _, _ = io.Copy(client, backend); done <- struct{}{} }()
-	// When either direction ends, the deferred Close on both conns unblocks the
-	// other copy, so waiting for a single signal is enough.
+	go func() { copyDir(backend, client); done <- struct{}{} }()
+	go func() { copyDir(client, backend); done <- struct{}{} }()
+	<-done
 	<-done
 }
 
