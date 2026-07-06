@@ -45,6 +45,14 @@ func DownloadKernelFromManifest(ctx context.Context, cl *release.Client, toolsDi
 	if err := os.MkdirAll(toolsDir, 0o755); err != nil {
 		return fmt.Errorf("tools: create tools dir: %w", err)
 	}
+
+	// Resolve the download plan up front so a manifest missing a required file
+	// fails before we touch disk.
+	type kernelFile struct {
+		local string
+		asset release.Asset
+	}
+	var plan []kernelFile
 	for key, local := range kernelFileLocalNames {
 		a, ok := k.Files[key]
 		if !ok {
@@ -53,8 +61,28 @@ func DownloadKernelFromManifest(ctx context.Context, cl *release.Client, toolsDi
 			}
 			return fmt.Errorf("tools: kernel manifest missing required file %q", key)
 		}
-		if err := cl.DownloadArtifact(ctx, a, filepath.Join(toolsDir, local)); err != nil {
-			return fmt.Errorf("tools: download kernel %s: %w", key, err)
+		plan = append(plan, kernelFile{local: local, asset: a})
+	}
+
+	// Download into a staging dir on the same filesystem, then promote only once
+	// every artifact is verified, so a mid-download failure never leaves a
+	// half-updated toolset with a stale version marker.
+	staging, err := os.MkdirTemp(toolsDir, ".staging-*")
+	if err != nil {
+		return fmt.Errorf("tools: create staging dir: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(staging) }()
+
+	for _, f := range plan {
+		if err := cl.DownloadArtifact(ctx, f.asset, filepath.Join(staging, f.local)); err != nil {
+			return fmt.Errorf("tools: download kernel %s: %w", f.local, err)
+		}
+	}
+	for _, f := range plan {
+		dst := filepath.Join(toolsDir, f.local)
+		_ = os.Remove(dst) // Windows rename fails when dst already exists.
+		if err := os.Rename(filepath.Join(staging, f.local), dst); err != nil {
+			return fmt.Errorf("tools: install kernel %s: %w", f.local, err)
 		}
 	}
 	return SaveLocalVersion(toolsDir, k.Version)

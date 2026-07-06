@@ -129,7 +129,15 @@ func (c *Client) DownloadArtifact(ctx context.Context, a Asset, dest string) err
 	}()
 
 	h := sha256.New()
-	written, err := io.Copy(f, io.TeeReader(resp.Body, h))
+	reader := io.TeeReader(resp.Body, h)
+	if a.Size > 0 {
+		// Cap the stream so a misbehaving/compromised origin cannot write an
+		// unbounded amount to disk before the hash check fails. +1 so an
+		// oversized body trips the size mismatch below instead of being
+		// silently truncated to exactly a.Size bytes.
+		reader = io.LimitReader(reader, a.Size+1)
+	}
+	written, err := io.Copy(f, reader)
 	if err != nil {
 		return fmt.Errorf("release: write %s: %w", tmp, err)
 	}

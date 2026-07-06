@@ -372,7 +372,16 @@ func fetchRootfs(ctx context.Context, cmd *cobra.Command) (string, error) {
 		return "", fmt.Errorf("daemon install: temp file: %w", err)
 	}
 	tmpPath := tmp.Name()
-	_ = tmp.Close() // the downloaders below recreate/overwrite this path
+	// Both downloaders below recreate this path. Remove the placeholder now:
+	// DownloadArtifact installs via rename(dest.tmp -> dest), which fails on
+	// Windows when dest already exists, silently forcing the legacy fallback.
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return "", fmt.Errorf("daemon install: close temp: %w", err)
+	}
+	if err := os.Remove(tmpPath); err != nil {
+		return "", fmt.Errorf("daemon install: remove temp placeholder: %w", err)
+	}
 
 	// Preferred path: signed manifest, verified download.
 	if cl, cerr := release.Default(); cerr == nil {

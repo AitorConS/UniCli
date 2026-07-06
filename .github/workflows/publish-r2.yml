@@ -54,8 +54,11 @@ jobs:
 
       - name: Resolve tag
         id: tag
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          TAG="${{ github.event.inputs.tag || github.event.release.tag_name }}"
+          TAG="${INPUT_TAG:-$RELEASE_TAG}"
           # Only publish CLI release tags (vX.Y.Z), never the kernel-* tags.
           case "$TAG" in
             v[0-9]*) echo "tag=$TAG" >> "$GITHUB_OUTPUT" ;;
@@ -95,9 +98,19 @@ jobs:
           cp rel/jerboa-windows-amd64.exe "pub/cli/$TAG/"
           cp rel/jerboad-linux-amd64     "pub/daemon/$TAG/"
           cp rel/jerboa-rootfs-amd64.tar.gz "pub/distro/$TAG/"
-          cp rel/jerboa-installer.exe    "pub/installers/$TAG/" || true
           cp kern/kernel.img kern/boot.img kern/kernel-fc.img \
              kern/mkfs-linux-amd64 kern/dump-linux-amd64 "pub/kernel/$KVER/"
+
+          # The installer is optional (not every release ships one). Only stage
+          # it and emit its manifest component when the artifact is present, so
+          # jerboa-manifest never fails hashing a nonexistent file.
+          INSTALLER_JSON=""
+          if [ -f rel/jerboa-installer.exe ]; then
+            cp rel/jerboa-installer.exe "pub/installers/$TAG/"
+            INSTALLER_JSON="\"installer\": { \"version\": \"$TAG\", \"platforms\": { \"windows-amd64\": \"pub/installers/$TAG/jerboa-installer.exe\" } },"
+          else
+            echo "No installer artifact for $TAG; omitting installer component."
+          fi
 
           cat > spec.json <<EOF
           {
@@ -120,10 +133,7 @@ jobs:
                 "version": "$TAG", "kernel": "$KVER",
                 "file": "pub/distro/$TAG/jerboa-rootfs-amd64.tar.gz"
               },
-              "installer": {
-                "version": "$TAG",
-                "platforms": { "windows-amd64": "pub/installers/$TAG/jerboa-installer.exe" }
-              },
+              ${INSTALLER_JSON}
               "kernel": {
                 "version": "$KVER",
                 "files": {
@@ -142,12 +152,14 @@ jobs:
         if: steps.tag.outputs.skip != '1'
         env:
           JERBOA_MINISIGN_SEED: ${{ secrets.JERBOA_MINISIGN_SEED }}
+          KEY_ID: ${{ vars.JERBOA_MINISIGN_KEYID }}
+          TAG: ${{ steps.tag.outputs.tag }}
         run: |
           set -euo pipefail
           ./bin/jerboa-manifest -spec spec.json -out pub/channels/stable.json
           ./bin/jerboa-sign -in pub/channels/stable.json \
-            -key-id "${{ vars.JERBOA_MINISIGN_KEYID }}" \
-            -comment "channel:stable tag:${{ steps.tag.outputs.tag }}"
+            -key-id "$KEY_ID" \
+            -comment "channel:stable tag:$TAG"
           cat pub/channels/stable.json
 
       - name: Sync to R2
