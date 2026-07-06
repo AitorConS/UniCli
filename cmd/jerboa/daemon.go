@@ -15,6 +15,7 @@ import (
 	"github.com/AitorConS/jerboa/internal/api"
 	"github.com/AitorConS/jerboa/internal/config"
 	"github.com/AitorConS/jerboa/internal/httpclient"
+	"github.com/AitorConS/jerboa/internal/release"
 	"github.com/AitorConS/jerboa/internal/wslboot"
 	"github.com/AitorConS/jerboa/internal/wsldistro"
 	"github.com/spf13/cobra"
@@ -361,26 +362,49 @@ func newDaemonLogsCmd() *cobra.Command {
 	return c
 }
 
-// fetchRootfs downloads the dedicated-distro rootfs for the latest release into a
-// temp file and returns its path. The caller removes it after import.
+// fetchRootfs downloads the dedicated-distro rootfs into a temp file and returns
+// its path. The caller removes it after import. It prefers the signed release
+// manifest (SHA-256 verified) and falls back to the legacy GitHub "latest" tag
+// during the migration window.
 func fetchRootfs(ctx context.Context, cmd *cobra.Command) (string, error) {
-	// Pull from the rolling "latest" release, the same tag the kernel toolchain
-	// downloads from (internal/tools), so all artifacts track one source.
-	url := fmt.Sprintf("%s/latest/%s", cliReleaseBase, wsldistro.RootfsArtifact)
-
 	tmp, err := os.CreateTemp("", "jerboa-rootfs-*.tar.gz")
 	if err != nil {
 		return "", fmt.Errorf("daemon install: temp file: %w", err)
 	}
 	tmpPath := tmp.Name()
+	_ = tmp.Close() // the downloaders below recreate/overwrite this path
+
+	// Preferred path: signed manifest, verified download.
+	if cl, cerr := release.Default(); cerr == nil {
+		if m, merr := cl.FetchManifest(ctx, release.ChannelStable); merr == nil {
+			if d, ok := m.Component(release.ComponentDistro); ok {
+				if a, aerr := d.Asset(runtime.GOOS, runtime.GOARCH); aerr == nil {
+					fmt.Fprintf(cmd.OutOrStdout(), "downloading %s (%s, verified) ...\n",
+						wsldistro.RootfsArtifact, d.Version)
+					if err := cl.DownloadArtifact(ctx, a, tmpPath); err == nil {
+						return tmpPath, nil
+					}
+					// Fall through to the legacy path on any manifest download error.
+				}
+			}
+		}
+	}
+
+	// Fallback: legacy rolling "latest" GitHub release.
+	url := fmt.Sprintf("%s/latest/%s", cliReleaseBase, wsldistro.RootfsArtifact)
+	f, err := os.Create(tmpPath)
+	if err != nil {
+		_ = os.Remove(tmpPath)
+		return "", fmt.Errorf("daemon install: temp file: %w", err)
+	}
 	fmt.Fprintf(cmd.OutOrStdout(), "downloading %s (latest) ...\n", wsldistro.RootfsArtifact)
-	if err := downloadToVerified(ctx, url, tmp); err != nil {
-		_ = tmp.Close()
+	if err := downloadToVerified(ctx, url, f); err != nil {
+		_ = f.Close()
 		_ = os.Remove(tmpPath)
 		return "", fmt.Errorf("daemon install: download rootfs: %w "+
 			"(if no release is published, build it with distro/build.sh and pass --rootfs)", err)
 	}
-	if err := tmp.Close(); err != nil {
+	if err := f.Close(); err != nil {
 		_ = os.Remove(tmpPath)
 		return "", fmt.Errorf("daemon install: close temp: %w", err)
 	}
