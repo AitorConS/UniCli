@@ -111,13 +111,13 @@ func assetFor(localPath, remoteDir string) (Asset, error) {
 func hashFile(p string) (string, int64, error) {
 	f, err := os.Open(p) //nolint:gosec // CI-controlled staged artifact path
 	if err != nil {
-		return "", 0, err
+		return "", 0, fmt.Errorf("release: open %s: %w", p, err)
 	}
 	defer func() { _ = f.Close() }()
 	h := sha256.New()
 	n, err := io.Copy(h, f)
 	if err != nil {
-		return "", 0, err
+		return "", 0, fmt.Errorf("release: hash %s: %w", p, err)
 	}
 	return hex.EncodeToString(h.Sum(nil)), n, nil
 }
@@ -133,5 +133,9 @@ func sortedKeys(mm map[string]string) []string {
 
 // Marshal renders the manifest as stable, indented JSON suitable for signing.
 func (m *Manifest) Marshal() ([]byte, error) {
-	return json.MarshalIndent(m, "", "  ")
+	out, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("release: marshal manifest: %w", err)
+	}
+	return out, nil
 }

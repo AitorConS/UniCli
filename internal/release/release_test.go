@@ -75,7 +75,7 @@ func TestParsePublicKeyWithComment(t *testing.T) {
 
 func TestParsePublicKeyRejectsGarbage(t *testing.T) {
 	_, err := ParsePublicKey("not base64 !!!")
-	assert.Error(t, err)
+	require.Error(t, err)
 	_, err = ParsePublicKey("")
 	assert.Error(t, err)
 }
@@ -168,7 +168,7 @@ func TestComponentAssetInline(t *testing.T) {
 
 func TestParseManifestRejectsMissingFields(t *testing.T) {
 	_, err := ParseManifest([]byte(`{"channel":"stable","components":{"cli":{"version":"v1"}}}`))
-	assert.Error(t, err) // missing url/sha256
+	require.Error(t, err) // missing url/sha256
 	_, err = ParseManifest([]byte(`{"components":{}}`))
 	assert.Error(t, err) // missing channel
 }
@@ -262,7 +262,7 @@ func TestDownloadArtifactRejectsHashMismatch(t *testing.T) {
 	dest := filepath.Join(t.TempDir(), "artifact")
 	asset := Asset{URL: srv.URL + "/x", SHA256: hex.EncodeToString(sha256.New().Sum(nil))}
 	err := c.DownloadArtifact(context.Background(), asset, dest)
-	assert.Error(t, err)
+	require.Error(t, err)
 	// The bad download must not be left behind.
 	_, statErr := os.Stat(dest)
 	assert.True(t, os.IsNotExist(statErr))

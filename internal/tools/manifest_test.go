@@ -52,7 +52,7 @@ func TestDownloadKernelFromManifest(t *testing.T) {
 	// Every file lands under its local name, and the version is recorded.
 	for _, local := range []string{"kernel.img", "boot.img", fcKernelLocalName, "mkfs", "dump"} {
 		_, err := os.Stat(filepath.Join(toolsDir, local))
-		assert.NoError(t, err, "missing %s", local)
+		require.NoError(t, err, "missing %s", local)
 	}
 	assert.Equal(t, "v0.2.1", LocalVersion(toolsDir))
 }

@@ -158,16 +158,20 @@ func (c *Client) DownloadArtifact(ctx context.Context, a Asset, dest string) err
 func (c *Client) get(ctx context.Context, url string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("release: build request: %w", err)
 	}
 	resp, err := c.httpClient().Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("release: get %s: %w", url, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("HTTP %d from %s", resp.StatusCode, url)
 	}
 	const maxMeta = 1 << 20 // 1 MiB is plenty for a manifest or signature.
-	return io.ReadAll(io.LimitReader(resp.Body, maxMeta))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxMeta))
+	if err != nil {
+		return nil, fmt.Errorf("release: read %s: %w", url, err)
+	}
+	return body, nil
 }

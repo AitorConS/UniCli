@@ -10,7 +10,7 @@ import "os"
 // with BOTH the old and new keys during the overlap, then retire the old key.
 const PublicKeyB64 = "RWQUeMEQrLXFcshAMUevjf6nlhsSB1PuZYt5dFhb0za9aypwSAUMorsH"
 
-// Default builds a Client for the production release origin, honouring the
+// Default builds a Client for the production release origin, honoring the
 // JERBOA_RELEASE_BASE override (useful for staging or local mirrors).
 func Default() (*Client, error) {
 	base := os.Getenv("JERBOA_RELEASE_BASE")

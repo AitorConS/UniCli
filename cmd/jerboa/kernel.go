@@ -15,16 +15,14 @@ import (
 
 // kernelRemoteVersion resolves the latest kernel version, preferring the signed
 // release manifest and falling back to the legacy GitHub path when no manifest
-// is published yet (migration window). The bool reports whether the manifest was
-// used, so the caller can download from the same source.
-func kernelRemoteVersion(ctx context.Context) (version string, viaManifest bool, err error) {
+// is published yet (migration window).
+func kernelRemoteVersion(ctx context.Context) (string, error) {
 	if cl, cerr := release.Default(); cerr == nil {
 		if k, kerr := tools.KernelComponentFromManifest(ctx, cl, release.ChannelStable); kerr == nil {
-			return k.Version, true, nil
+			return k.Version, nil
 		}
 	}
-	v, err := tools.RemoteVersion(ctx)
-	return v, false, err
+	return tools.RemoteVersion(ctx)
 }
 
 // kernelDownloadLatest installs the latest kernel toolset, preferring the signed
@@ -65,7 +63,7 @@ func newKernelCheckCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
 			defer cancel()
 
-			remote, _, err := kernelRemoteVersion(ctx)
+			remote, err := kernelRemoteVersion(ctx)
 			if err != nil {
 				fmt.Fprintf(cmd.OutOrStdout(), "Latest kernel:    (unavailable — %v)\n", err)
 				return nil
@@ -175,7 +173,7 @@ func newKernelUpdateCmd(verbose *bool) *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
 			defer cancel()
 
-			remote, _, err := kernelRemoteVersion(ctx)
+			remote, err := kernelRemoteVersion(ctx)
 			if err != nil {
 				return fmt.Errorf("kernel update: check remote version: %w", err)
 			}
