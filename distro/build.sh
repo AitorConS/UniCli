@@ -16,16 +16,28 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "${here}/.." && pwd)"
 out="${1:-${root}/jerboa-rootfs-amd64.tar.gz}"
 
+# Version stamped into the baked jerboad so `jerboa status` reports the real
+# release, not "dev". Source order: $VERSION > repo VERSION file > git > "dev".
+version="${VERSION:-}"
+if [ -z "${version}" ] && [ -f "${root}/VERSION" ]; then
+    version="v$(tr -d '[:space:]' < "${root}/VERSION")"
+fi
+if [ -z "${version}" ]; then
+    version="$(git -C "${root}" rev-parse --short HEAD 2>/dev/null || echo dev)"
+fi
+
 ctx="$(mktemp -d)"
 cleanup() { rm -rf "${ctx}"; [ -n "${cid:-}" ] && docker rm -f "${cid}" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
 cp "${here}/Dockerfile" "${here}/wsl.conf" "${here}/load-kvm.sh" "${ctx}/"
 
-echo "==> building linux jerboad"
+echo "==> building linux jerboad (${version})"
 # -trimpath/-s -w match the Makefile: symbols and DWARF are dead weight in the
-# shipped rootfs (~10MB smaller binary).
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -C "${root}" -trimpath -ldflags="-s -w" \
+# shipped rootfs (~10MB smaller binary). -X stamps the release version so the
+# baked daemon reports it (matches the version the manifest publishes).
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -C "${root}" -trimpath \
+    -ldflags="-s -w -X main.version=${version}" \
     -o "${ctx}/jerboad" ./cmd/jerboad
 
 echo "==> staging kernel toolchain"
