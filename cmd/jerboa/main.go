@@ -17,6 +17,8 @@ import (
 var version = "dev"
 
 func main() {
+	// Clear a leftover <exe>.old from a previous `jerboa self update`.
+	cleanupStaleSelf()
 	if err := newRootCmd().Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -93,6 +95,7 @@ func newRootCmd() *cobra.Command {
 		newComposeCmd(&endpoint, &storePath, &outputFmt),
 		newVolumeCmd(&endpoint, &storePath, &outputFmt, &verbose),
 		newKernelCmd(&verbose),
+		newSelfCmd(&verbose),
 		newPkgCmd(&endpoint),
 		newNetworkCmd(&endpoint, &outputFmt),
 		newDNSCmd(&endpoint, &outputFmt),
@@ -126,7 +129,7 @@ func needsDaemon(cmd *cobra.Command) bool {
 	localGroups := map[string]bool{
 		"config": true, "kernel": true, "pkg": true, "volume": true,
 		"sign": true, "verify": true, "completion": true, "help": true,
-		"daemon": true, "init": true,
+		"daemon": true, "init": true, "self": true,
 	}
 	for c := cmd; c != nil; c = c.Parent() {
 		if c.Name() == "jerboa" && c.Parent() == nil {
