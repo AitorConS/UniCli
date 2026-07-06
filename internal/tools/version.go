@@ -192,6 +192,13 @@ func EnsureFCKernel(ctx context.Context, toolsDir string) (string, error) {
 	if err := os.MkdirAll(toolsDir, 0o755); err != nil {
 		return "", fmt.Errorf("tools: create tools dir: %w", err)
 	}
+
+	// Preferred: the signed manifest (SHA-256 verified). Fall back to the legacy
+	// GitHub "latest" artifact during the migration window.
+	if err := ensureFCKernelFromManifest(ctx, dest); err == nil {
+		return dest, nil
+	}
+
 	url := ArtifactURL("latest", fcKernelArtifact)
 	if err := downloadArtifact(ctx, url, dest); err != nil {
 		return "", fmt.Errorf("tools: download %s: %w", fcKernelArtifact, err)

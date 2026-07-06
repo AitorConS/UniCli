@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,9 @@ import (
 	"time"
 
 	"github.com/AitorConS/jerboa/internal/release"
+	"github.com/AitorConS/jerboa/internal/tools"
+	"github.com/AitorConS/jerboa/internal/wslboot"
+	"github.com/AitorConS/jerboa/internal/wsldistro"
 	"github.com/spf13/cobra"
 )
 
@@ -65,79 +69,226 @@ func newSelfCheckCmd(channel *string) *cobra.Command {
 	}
 }
 
-// newSelfUpdateCmd implements `jerboa self update`.
+// newSelfUpdateCmd implements `jerboa self update`. By default it updates only
+// the CLI; --kernel, --daemon, and --all extend it to the rest of the toolset.
 func newSelfUpdateCmd(channel *string, verbose *bool) *cobra.Command {
-	var yes bool
+	var yes, doKernel, doDaemon, doAll bool
 	cmd := &cobra.Command{
 		Use:   "update",
-		Short: "Download and install the latest jerboa CLI",
-		Args:  cobra.NoArgs,
+		Short: "Download and install the latest jerboa toolset",
+		Long: "Update the jerboa CLI against the signed release manifest.\n\n" +
+			"By default only the CLI is updated. Add --kernel to also refresh the\n" +
+			"kernel toolset, --daemon to replace jerboad inside the WSL2 distro\n" +
+			"(preserving its data), or --all for the CLI, kernel, and daemon together.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			out := cmd.OutOrStdout()
 			m, err := fetchManifest(cmd.Context(), *channel)
 			if err != nil {
 				return fmt.Errorf("self update: %w", err)
 			}
-			cli, ok := m.Component(release.ComponentCLI)
-			if !ok {
-				return fmt.Errorf("self update: manifest has no cli component")
-			}
-			if !release.IsNewer(version, cli.Version) {
-				fmt.Fprintf(out, "Already on the latest jerboa (%s).\n", version)
-				return nil
-			}
-			asset, err := cli.Asset(runtime.GOOS, runtime.GOARCH)
-			if err != nil {
-				return fmt.Errorf("self update: %w", err)
+
+			wantKernel := doKernel || doAll
+			wantDaemon := doDaemon || doAll
+
+			// Compatibility gate: never install a daemon the CLI that will drive
+			// it is too old to speak to. The effective CLI is the just-updated one
+			// when we are also updating the CLI, else the currently running build.
+			if wantDaemon {
+				effectiveCLI := version
+				if cli, ok := m.Component(release.ComponentCLI); ok && release.IsNewer(version, cli.Version) {
+					effectiveCLI = cli.Version
+				}
+				if err := m.CheckDaemonCompat(effectiveCLI); err != nil {
+					return fmt.Errorf("self update: %w", err)
+				}
 			}
 
-			fmt.Fprintf(out, "New jerboa available: %s (installed: %s)\n", cli.Version, version)
-			if !yes && !confirmPrompt("Update? [y/N] ") {
-				fmt.Fprintln(out, "Aborted.")
-				return nil
-			}
-
-			exe, err := os.Executable()
-			if err != nil {
-				return fmt.Errorf("self update: locate executable: %w", err)
-			}
-			exe, err = filepath.EvalSymlinks(exe)
-			if err != nil {
-				return fmt.Errorf("self update: resolve executable: %w", err)
-			}
-
-			cl, err := releaseClient()
-			if err != nil {
+			if err := updateSelfCLI(cmd, m, yes, verbose); err != nil {
 				return err
 			}
-			// Stage the new binary next to the current one so the final swap is a
-			// rename on the same filesystem (atomic, no cross-device copy).
-			staged := exe + ".new"
-			sp := newSpinner(cmd.ErrOrStderr(), *verbose)
-			sp.Start(fmt.Sprintf("Downloading jerboa %s", cli.Version))
-			dlCtx, cancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
-			defer cancel()
-			if err := cl.DownloadArtifact(dlCtx, asset, staged); err != nil {
-				sp.Fail("Download failed")
-				return fmt.Errorf("self update: %w", err)
+			if wantKernel {
+				if err := updateKernel(cmd, verbose); err != nil {
+					return err
+				}
 			}
-			if err := os.Chmod(staged, 0o755); err != nil {
-				sp.Fail("Update failed")
-				_ = os.Remove(staged)
-				return fmt.Errorf("self update: chmod: %w", err)
+			if wantDaemon {
+				if err := updateDaemon(cmd, m, yes, verbose); err != nil {
+					return err
+				}
 			}
-			if err := replaceExecutable(exe, staged); err != nil {
-				sp.Fail("Update failed")
-				_ = os.Remove(staged)
-				return fmt.Errorf("self update: %w", err)
-			}
-			sp.Done(fmt.Sprintf("jerboa updated to %s", cli.Version))
-			fmt.Fprintln(out, "Restart any running jerboa command to use the new version.")
 			return nil
 		},
 	}
-	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip confirmation prompt")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip confirmation prompts")
+	cmd.Flags().BoolVar(&doKernel, "kernel", false, "also update the kernel toolset")
+	cmd.Flags().BoolVar(&doDaemon, "daemon", false, "also update the daemon (jerboad) in the WSL2 distro")
+	cmd.Flags().BoolVar(&doAll, "all", false, "update the CLI, kernel, and daemon together")
 	return cmd
+}
+
+// updateSelfCLI swaps the running jerboa binary for the manifest's CLI build.
+func updateSelfCLI(cmd *cobra.Command, m *release.Manifest, yes bool, verbose *bool) error {
+	out := cmd.OutOrStdout()
+	cli, ok := m.Component(release.ComponentCLI)
+	if !ok {
+		return fmt.Errorf("self update: manifest has no cli component")
+	}
+	if !release.IsNewer(version, cli.Version) {
+		fmt.Fprintf(out, "CLI already on the latest jerboa (%s).\n", version)
+		return nil
+	}
+	asset, err := cli.Asset(runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		return fmt.Errorf("self update: %w", err)
+	}
+
+	fmt.Fprintf(out, "New jerboa available: %s (installed: %s)\n", cli.Version, version)
+	if !yes && !confirmPrompt("Update the CLI? [y/N] ") {
+		fmt.Fprintln(out, "Skipped CLI update.")
+		return nil
+	}
+
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("self update: locate executable: %w", err)
+	}
+	exe, err = filepath.EvalSymlinks(exe)
+	if err != nil {
+		return fmt.Errorf("self update: resolve executable: %w", err)
+	}
+
+	cl, err := releaseClient()
+	if err != nil {
+		return err
+	}
+	// Stage the new binary next to the current one so the final swap is a
+	// rename on the same filesystem (atomic, no cross-device copy).
+	staged := exe + ".new"
+	sp := newSpinner(cmd.ErrOrStderr(), *verbose)
+	sp.Start(fmt.Sprintf("Downloading jerboa %s", cli.Version))
+	dlCtx, cancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
+	defer cancel()
+	if err := cl.DownloadArtifact(dlCtx, asset, staged); err != nil {
+		sp.Fail("Download failed")
+		return fmt.Errorf("self update: %w", err)
+	}
+	if err := os.Chmod(staged, 0o755); err != nil {
+		sp.Fail("Update failed")
+		_ = os.Remove(staged)
+		return fmt.Errorf("self update: chmod: %w", err)
+	}
+	if err := replaceExecutable(exe, staged); err != nil {
+		sp.Fail("Update failed")
+		_ = os.Remove(staged)
+		return fmt.Errorf("self update: %w", err)
+	}
+	sp.Done(fmt.Sprintf("jerboa updated to %s", cli.Version))
+	fmt.Fprintln(out, "Restart any running jerboa command to use the new version.")
+	return nil
+}
+
+// updateKernel installs the latest kernel toolset (manifest-first) when newer.
+func updateKernel(cmd *cobra.Command, verbose *bool) error {
+	out := cmd.OutOrStdout()
+	toolsDir := defaultToolsPath()
+	local := tools.LocalVersion(toolsDir)
+
+	ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
+	defer cancel()
+	remote, err := kernelRemoteVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("self update kernel: %w", err)
+	}
+	if !tools.IsNewer(local, remote) {
+		fmt.Fprintf(out, "Kernel already up to date (%s).\n", local)
+		return nil
+	}
+	if err := tools.ClearCachedTools(toolsDir); err != nil {
+		return fmt.Errorf("self update kernel: clear cache: %w", err)
+	}
+	sp := newSpinner(cmd.ErrOrStderr(), *verbose)
+	sp.Start(fmt.Sprintf("Downloading kernel %s", remote))
+	dlCtx, dlCancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
+	defer dlCancel()
+	if err := kernelDownloadLatest(dlCtx, toolsDir); err != nil {
+		sp.Fail("Download failed")
+		return fmt.Errorf("self update kernel: %w", err)
+	}
+	sp.Done(fmt.Sprintf("Kernel updated to %s", remote))
+	return nil
+}
+
+// updateDaemon replaces jerboad inside the WSL2 distro with the manifest build,
+// preserving the distro's data. It is Windows-only because the daemon runs in
+// the dedicated distro; the swap stops the daemon, streams the new binary in,
+// and restarts it.
+func updateDaemon(cmd *cobra.Command, m *release.Manifest, yes bool, verbose *bool) error {
+	out := cmd.OutOrStdout()
+	if runtime.GOOS != "windows" {
+		return errNotWindows("self update --daemon")
+	}
+	if err := requireDistro(); err != nil {
+		return err
+	}
+	d, ok := m.Component(release.ComponentDaemon)
+	if !ok {
+		return fmt.Errorf("self update: manifest has no daemon component")
+	}
+	// jerboad runs inside the Linux distro regardless of the host architecture.
+	asset, err := d.Asset("linux", "amd64")
+	if err != nil {
+		return fmt.Errorf("self update daemon: %w", err)
+	}
+
+	fmt.Fprintf(out, "Updating daemon to %s ...\n", d.Version)
+	if !yes && !confirmPrompt("Stop the running daemon and replace jerboad? [y/N] ") {
+		fmt.Fprintln(out, "Skipped daemon update.")
+		return nil
+	}
+
+	cl, err := releaseClient()
+	if err != nil {
+		return err
+	}
+	// Stage on the host, then stream into the distro. Remove the placeholder so
+	// DownloadArtifact's rename(dest.tmp -> dest) does not fail on Windows.
+	tmp, err := os.CreateTemp("", "jerboad-*")
+	if err != nil {
+		return fmt.Errorf("self update daemon: temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("self update daemon: close temp: %w", err)
+	}
+	if err := os.Remove(tmpPath); err != nil {
+		return fmt.Errorf("self update daemon: remove temp placeholder: %w", err)
+	}
+	defer func() { _ = os.Remove(tmpPath) }()
+
+	sp := newSpinner(cmd.ErrOrStderr(), *verbose)
+	sp.Start(fmt.Sprintf("Downloading jerboad %s", d.Version))
+	dlCtx, cancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
+	defer cancel()
+	if err := cl.DownloadArtifact(dlCtx, asset, tmpPath); err != nil {
+		sp.Fail("Download failed")
+		return fmt.Errorf("self update daemon: %w", err)
+	}
+	sp.Done(fmt.Sprintf("Downloaded jerboad %s", d.Version))
+
+	wcfg, token, err := resolveDaemonConfig(daemonOpts{})
+	if err != nil {
+		return err
+	}
+	if err := wslboot.Stop(wcfg.Distro, wcfg.User); err != nil && !errors.Is(err, wslboot.ErrNoDaemon) {
+		return fmt.Errorf("self update daemon: stop: %w", err)
+	}
+	waitPortReleased(cmd.Context(), wcfg.Endpoint, token, 5*time.Second)
+	if err := wsldistro.InstallDaemonBinary(tmpPath); err != nil {
+		return fmt.Errorf("self update daemon: %w", err)
+	}
+	fmt.Fprintln(out, "daemon binary updated; restarting ...")
+	return launchAndWait(cmd, wcfg, token)
 }
 
 // replaceExecutable swaps the running binary at exe with the staged file.

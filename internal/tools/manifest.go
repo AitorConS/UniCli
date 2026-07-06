@@ -23,6 +23,29 @@ var kernelFileLocalNames = map[string]string{
 // optionalKernelFiles are absent from older releases and must not fail a fetch.
 var optionalKernelFiles = map[string]bool{"dump": true, "kernel-fc.img": true}
 
+// ensureFCKernelFromManifest downloads the Firecracker kernel (kernel-fc.img)
+// named by the signed stable manifest into dest, SHA-256 verified. It returns an
+// error (letting the caller fall back to GitHub) whenever no manifest is
+// published yet, the client cannot be built, or the component omits the file.
+func ensureFCKernelFromManifest(ctx context.Context, dest string) error {
+	cl, err := release.Default()
+	if err != nil {
+		return fmt.Errorf("tools: release client: %w", err)
+	}
+	k, err := KernelComponentFromManifest(ctx, cl, release.ChannelStable)
+	if err != nil {
+		return err
+	}
+	a, ok := k.Files["kernel-fc.img"]
+	if !ok {
+		return fmt.Errorf("tools: manifest kernel component has no kernel-fc.img")
+	}
+	if err := cl.DownloadArtifact(ctx, a, dest); err != nil {
+		return fmt.Errorf("tools: download kernel-fc.img: %w", err)
+	}
+	return nil
+}
+
 // KernelComponentFromManifest fetches and verifies the signed channel manifest
 // and returns its kernel component. Errors (including no published manifest yet)
 // let callers fall back to the legacy GitHub path during the migration.
