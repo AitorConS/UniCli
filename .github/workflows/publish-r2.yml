@@ -1,0 +1,191 @@
+name: Publish to R2
+
+# Mirrors a published release onto the R2 origin (releases.jerboa.dev) as a
+# signed, manifest-driven channel. Artifacts are laid out under the bucket
+# convention <component>/<version>/<file>, and a minisign-signed channel
+# manifest is generated so clients (jerboa self update, the desktop app) can
+# discover and verify them.
+#
+# Required repository secrets:
+#   AWS_ACCESS_KEY_ID      R2 S3 access key id  (see JerboaTerraform/r2_ci_token.tf)
+#   AWS_SECRET_ACCESS_KEY  R2 S3 secret access key
+#   JERBOA_MINISIGN_SEED   base64 Ed25519 seed matching internal/release.PublicKeyB64
+# Required repository variables:
+#   R2_ACCOUNT_ID          Cloudflare account id (R2 S3 endpoint host)
+#   R2_BUCKET              bucket name (releases-r2-bucket-aitorcons)
+#   JERBOA_MINISIGN_KEYID  8-byte public key id in hex (1478c110acb5c572)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'CLI release tag to publish (e.g. v0.4.0)'
+        required: true
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-r2
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      BASE_URL: https://releases.jerboa.dev
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Build release tooling
+        run: |
+          go build -o bin/jerboa-manifest ./cmd/jerboa-manifest
+          go build -o bin/jerboa-sign     ./cmd/jerboa-sign
+
+      - name: Resolve tag
+        id: tag
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          TAG="${INPUT_TAG:-$RELEASE_TAG}"
+          # Only publish CLI release tags (vX.Y.Z), never the kernel-* tags.
+          case "$TAG" in
+            v[0-9]*) echo "tag=$TAG" >> "$GITHUB_OUTPUT" ;;
+            *) echo "Skipping non-CLI tag '$TAG'"; echo "skip=1" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Download release + kernel artifacts
+        if: steps.tag.outputs.skip != '1'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p rel
+          # CLI / daemon / distro / installer come from the versioned release.
+          gh release download "$TAG" --dir rel \
+            --pattern 'jerboa-*' --pattern 'jerboad-*' --pattern 'jerboa-rootfs-*'
+          # Kernel toolset + its version marker come from the rolling latest release
+          # (published by kernel-release.yml).
+          mkdir -p kern
+          gh release download latest --dir kern \
+            --pattern 'kernel*.img' --pattern 'boot.img' \
+            --pattern 'mkfs-linux-amd64' --pattern 'dump-linux-amd64' \
+            --pattern 'kernel-version.txt'
+          echo "KVER=$(tr -d '[:space:]' < kern/kernel-version.txt)" >> "$GITHUB_ENV"
+
+      - name: Stage bucket tree + spec
+        if: steps.tag.outputs.skip != '1'
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p "pub/cli/$TAG" "pub/daemon/$TAG" "pub/distro/$TAG" \
+                   "pub/installers/$TAG" "pub/kernel/$KVER" pub/channels
+          cp rel/jerboa-linux-amd64      "pub/cli/$TAG/"
+          cp rel/jerboa-linux-arm64      "pub/cli/$TAG/"
+          cp rel/jerboa-windows-amd64.exe "pub/cli/$TAG/"
+          cp rel/jerboad-linux-amd64     "pub/daemon/$TAG/"
+          cp rel/jerboa-rootfs-amd64.tar.gz "pub/distro/$TAG/"
+          cp kern/kernel.img kern/boot.img kern/kernel-fc.img \
+             kern/mkfs-linux-amd64 kern/dump-linux-amd64 "pub/kernel/$KVER/"
+
+          # The installer is optional (not every release ships one). Only stage
+          # it and emit its manifest component when the artifact is present, so
+          # jerboa-manifest never fails hashing a nonexistent file.
+          INSTALLER_JSON=""
+          if [ -f rel/jerboa-installer.exe ]; then
+            cp rel/jerboa-installer.exe "pub/installers/$TAG/"
+            INSTALLER_JSON="\"installer\": { \"version\": \"$TAG\", \"platforms\": { \"windows-amd64\": \"pub/installers/$TAG/jerboa-installer.exe\" } },"
+          else
+            echo "No installer artifact for $TAG; omitting installer component."
+          fi
+
+          cat > spec.json <<EOF
+          {
+            "channel": "stable",
+            "base": "$BASE_URL",
+            "components": {
+              "cli": {
+                "version": "$TAG",
+                "platforms": {
+                  "windows-amd64": "pub/cli/$TAG/jerboa-windows-amd64.exe",
+                  "linux-amd64":   "pub/cli/$TAG/jerboa-linux-amd64",
+                  "linux-arm64":   "pub/cli/$TAG/jerboa-linux-arm64"
+                }
+              },
+              "daemon": {
+                "version": "$TAG",
+                "platforms": { "linux-amd64": "pub/daemon/$TAG/jerboad-linux-amd64" }
+              },
+              "distro": {
+                "version": "$TAG", "kernel": "$KVER",
+                "file": "pub/distro/$TAG/jerboa-rootfs-amd64.tar.gz"
+              },
+              ${INSTALLER_JSON}
+              "kernel": {
+                "version": "$KVER",
+                "files": {
+                  "kernel.img":  "pub/kernel/$KVER/kernel.img",
+                  "boot.img":    "pub/kernel/$KVER/boot.img",
+                  "kernel-fc.img": "pub/kernel/$KVER/kernel-fc.img",
+                  "mkfs":        "pub/kernel/$KVER/mkfs-linux-amd64",
+                  "dump":        "pub/kernel/$KVER/dump-linux-amd64"
+                }
+              }
+            }
+          }
+          EOF
+
+      - name: Generate + sign manifest
+        if: steps.tag.outputs.skip != '1'
+        env:
+          JERBOA_MINISIGN_SEED: ${{ secrets.JERBOA_MINISIGN_SEED }}
+          KEY_ID: ${{ vars.JERBOA_MINISIGN_KEYID }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          ./bin/jerboa-manifest -spec spec.json -out pub/channels/stable.json
+          ./bin/jerboa-sign -in pub/channels/stable.json \
+            -key-id "$KEY_ID" \
+            -comment "channel:stable tag:$TAG"
+          cat pub/channels/stable.json
+
+      - name: Sync to R2
+        if: steps.tag.outputs.skip != '1'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          # R2 rejects the default streaming checksum trailer the AWS CLI adds;
+          # only send checksums when the operation requires them.
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+          ENDPOINT: https://${{ vars.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          BUCKET: ${{ vars.R2_BUCKET }}
+        run: |
+          set -euo pipefail
+          # Immutable versioned artifacts: long cache. The channel manifest must
+          # never be cached — it is the pointer clients re-read every check.
+          aws s3 sync pub/ "s3://$BUCKET/" \
+            --endpoint-url "$ENDPOINT" \
+            --exclude 'channels/*' \
+            --cache-control 'public, max-age=31536000, immutable'
+          aws s3 cp pub/channels/stable.json "s3://$BUCKET/channels/stable.json" \
+            --endpoint-url "$ENDPOINT" \
+            --content-type application/json \
+            --cache-control 'no-cache'
+          aws s3 cp pub/channels/stable.json.minisig "s3://$BUCKET/channels/stable.json.minisig" \
+            --endpoint-url "$ENDPOINT" \
+            --cache-control 'no-cache'

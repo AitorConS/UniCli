@@ -8,9 +8,33 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AitorConS/jerboa/internal/release"
 	"github.com/AitorConS/jerboa/internal/tools"
 	"github.com/spf13/cobra"
 )
+
+// kernelRemoteVersion resolves the latest kernel version, preferring the signed
+// release manifest and falling back to the legacy GitHub path when no manifest
+// is published yet (migration window).
+func kernelRemoteVersion(ctx context.Context) (string, error) {
+	if cl, cerr := release.Default(); cerr == nil {
+		if k, kerr := tools.KernelComponentFromManifest(ctx, cl, release.ChannelStable); kerr == nil {
+			return k.Version, nil
+		}
+	}
+	return tools.RemoteVersion(ctx)
+}
+
+// kernelDownloadLatest installs the latest kernel toolset, preferring the signed
+// manifest and falling back to the legacy GitHub artifacts.
+func kernelDownloadLatest(ctx context.Context, toolsDir string) error {
+	if cl, cerr := release.Default(); cerr == nil {
+		if k, kerr := tools.KernelComponentFromManifest(ctx, cl, release.ChannelStable); kerr == nil {
+			return tools.DownloadKernelFromManifest(ctx, cl, toolsDir, k)
+		}
+	}
+	return tools.DownloadVersion(ctx, toolsDir, "latest")
+}
 
 func newKernelCmd(verbose *bool) *cobra.Command {
 	cmd := &cobra.Command{
@@ -36,10 +60,10 @@ func newKernelCheckCmd() *cobra.Command {
 			local := tools.LocalVersion(toolsDir)
 			fmt.Fprintf(cmd.OutOrStdout(), "Installed kernel: %s\n", local)
 
-			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
 			defer cancel()
 
-			remote, err := tools.RemoteVersion(ctx)
+			remote, err := kernelRemoteVersion(ctx)
 			if err != nil {
 				fmt.Fprintf(cmd.OutOrStdout(), "Latest kernel:    (unavailable — %v)\n", err)
 				return nil
@@ -149,7 +173,7 @@ func newKernelUpdateCmd(verbose *bool) *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
 			defer cancel()
 
-			remote, err := tools.RemoteVersion(ctx)
+			remote, err := kernelRemoteVersion(ctx)
 			if err != nil {
 				return fmt.Errorf("kernel update: check remote version: %w", err)
 			}
@@ -175,7 +199,7 @@ func newKernelUpdateCmd(verbose *bool) *cobra.Command {
 			sp.Start(fmt.Sprintf("Downloading kernel %s", remote))
 			dlCtx, dlCancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
 			defer dlCancel()
-			if err := tools.DownloadVersion(dlCtx, toolsDir, "latest"); err != nil {
+			if err := kernelDownloadLatest(dlCtx, toolsDir); err != nil {
 				sp.Fail("Download failed")
 				return fmt.Errorf("kernel update: %w", err)
 			}
