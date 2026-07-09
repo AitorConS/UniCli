@@ -8,6 +8,7 @@ package wsldistro
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -108,6 +109,48 @@ func InstallDaemonBinary(localPath string) error {
 	cmd.Stdin = f
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("wsldistro: install jerboad: %w (%s)", err, strings.TrimSpace(decodeWSLOutput(out)))
+	}
+	return nil
+}
+
+// DataDirs are the daemon state directories (under $HOME/.jerboa inside the
+// distro) that hold user data worth preserving across a rootfs reimport. The
+// kernel toolchain cache (tools/) is deliberately excluded — it re-downloads on
+// demand, so carrying it would only bloat the archive.
+var DataDirs = []string{"images", "vms", "networks"}
+
+// ExportData streams a gzip tarball of the distro's persistent data
+// (DataDirs under $HOME/.jerboa) to w. Piping over stdout avoids translating a
+// Windows path into the distro's /mnt view. When none of the directories exist
+// (a fresh distro), it writes nothing and returns nil — the caller detects the
+// empty archive by the written size. The daemon should be stopped first so the
+// snapshot is consistent.
+func ExportData(w io.Writer) error {
+	// Build the tar argument list from only the directories that exist, so
+	// tar never fails on a missing path; emit nothing when there is no data.
+	script := `d="$HOME/.jerboa"; [ -d "$d" ] || exit 0; cd "$d" || exit 0; ` +
+		`set --; for x in ` + strings.Join(DataDirs, " ") + `; do [ -e "$x" ] && set -- "$@" "$x"; done; ` +
+		`[ "$#" -eq 0 ] && exit 0; exec tar czf - "$@"`
+	cmd := exec.Command("wsl", "-d", Name, "-u", "root", "--", "sh", "-c", script) //nolint:gosec,noctx // fixed program, controlled args
+	cmd.Stdout = w
+	var errb bytes.Buffer
+	cmd.Stderr = &errb
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("wsldistro: export data: %w (%s)", err, strings.TrimSpace(decodeWSLOutput(errb.Bytes())))
+	}
+	return nil
+}
+
+// ImportData restores a gzip tarball previously produced by ExportData into the
+// distro, extracting it under $HOME/.jerboa. Piping over stdin avoids a
+// Windows-path translation. Extracting into the freshly imported rootfs auto-
+// starts the distro.
+func ImportData(r io.Reader) error {
+	script := `mkdir -p "$HOME/.jerboa" && exec tar xzf - -C "$HOME/.jerboa"`
+	cmd := exec.Command("wsl", "-d", Name, "-u", "root", "--", "sh", "-c", script) //nolint:gosec,noctx // fixed program, controlled args
+	cmd.Stdin = r
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("wsldistro: import data: %w (%s)", err, strings.TrimSpace(decodeWSLOutput(out)))
 	}
 	return nil
 }

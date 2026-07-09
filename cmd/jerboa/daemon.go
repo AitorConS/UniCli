@@ -38,6 +38,7 @@ func newDaemonCmd() *cobra.Command {
 	}
 	cmd.AddCommand(
 		newDaemonInstallCmd(),
+		newDaemonReinstallCmd(),
 		newDaemonUninstallCmd(),
 		newDaemonStartCmd(),
 		newDaemonStopCmd(),
@@ -146,6 +147,142 @@ func newDaemonInstallCmd() *cobra.Command {
 	c.Flags().BoolVar(&force, "force", false,
 		"reimport even if the distro already exists (destroys its data)")
 	return c
+}
+
+// newDaemonReinstallCmd swaps the distro rootfs for a fresh (or newer) one.
+// With --keep-data it preserves images, VMs and networks across the reimport,
+// the non-destructive alternative to `install --force`.
+func newDaemonReinstallCmd() *cobra.Command {
+	var (
+		rootfs   string
+		keepData bool
+		o        daemonOpts
+	)
+	c := &cobra.Command{
+		Use:   "reinstall",
+		Short: "Reimport the distro rootfs, optionally preserving data (--keep-data)",
+		Long: "Replace the jerboa distro root filesystem with a fresh (or newer) rootfs.\n\n" +
+			"Unlike `install --force` (which destroys everything), `--keep-data` preserves\n" +
+			"your images, VMs and networks across the reimport: they are exported before the\n" +
+			"swap and restored afterwards. The kernel toolchain cache is not preserved (it\n" +
+			"re-downloads on demand). The daemon is stopped and restarted around the swap.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if runtime.GOOS != "windows" {
+				return errNotWindows("reinstall")
+			}
+			if err := requireDistro(); err != nil {
+				return err
+			}
+			ensureNestedVirtualization(cmd)
+
+			// Resolve the launch config up front so a bad config fails before we
+			// touch the distro.
+			wcfg, token, err := resolveDaemonConfig(o)
+			if err != nil {
+				return err
+			}
+
+			// Obtain the new rootfs before destroying anything, so a download
+			// failure leaves the current install intact.
+			tarPath := rootfs
+			if tarPath == "" {
+				p, ferr := fetchRootfs(cmd.Context(), cmd)
+				if ferr != nil {
+					return ferr
+				}
+				tarPath = p
+				defer func() { _ = os.Remove(p) }()
+			}
+
+			// Stop the daemon so nothing writes to the data dirs during the swap.
+			if err := wslboot.Stop(wcfg.Distro, wcfg.User); err != nil && !errors.Is(err, wslboot.ErrNoDaemon) {
+				return err
+			}
+
+			// Snapshot data before the reimport (nothing to restore if empty).
+			var dataPath string
+			if keepData {
+				dp, derr := exportDistroData(cmd)
+				if derr != nil {
+					return derr
+				}
+				if dp != "" {
+					dataPath = dp
+					defer func() { _ = os.Remove(dataPath) }()
+				}
+			}
+
+			// Swap the rootfs.
+			if err := wsldistro.Unregister(); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "importing %q from %s ...\n", wsldistro.Name, tarPath)
+			if err := wsldistro.Import(wsldistro.DefaultInstallDir(), tarPath); err != nil {
+				return err
+			}
+
+			// Restore data into the fresh rootfs.
+			if dataPath != "" {
+				if err := importDistroData(cmd, dataPath); err != nil {
+					return err
+				}
+			}
+
+			// Bring the daemon back up on the new rootfs.
+			return launchAndWait(cmd, wcfg, token)
+		},
+	}
+	c.Flags().StringVar(&rootfs, "rootfs", "",
+		"path to a jerboa rootfs tarball (default: download the release artifact)")
+	c.Flags().BoolVar(&keepData, "keep-data", false,
+		"preserve images, VMs and networks across the reimport")
+	o.bind(c)
+	return c
+}
+
+// exportDistroData snapshots the distro's persistent data to a temp gzip
+// tarball, returning its path. An empty archive (a fresh distro with no data)
+// yields "" with no error — the caller then skips the restore.
+func exportDistroData(cmd *cobra.Command) (string, error) {
+	tmp, err := os.CreateTemp("", "jerboa-data-*.tar.gz")
+	if err != nil {
+		return "", fmt.Errorf("daemon reinstall: temp data file: %w", err)
+	}
+	path := tmp.Name()
+	fmt.Fprintf(cmd.OutOrStdout(), "exporting data (%s) ...\n", strings.Join(wsldistro.DataDirs, ", "))
+	if err := wsldistro.ExportData(tmp); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(path)
+		return "", err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", fmt.Errorf("daemon reinstall: close data file: %w", err)
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		_ = os.Remove(path)
+		return "", fmt.Errorf("daemon reinstall: stat data file: %w", err)
+	}
+	if fi.Size() == 0 {
+		_ = os.Remove(path)
+		fmt.Fprintln(cmd.OutOrStdout(), "no existing data to preserve")
+		return "", nil
+	}
+	return path, nil
+}
+
+// importDistroData restores a tarball produced by exportDistroData into the
+// freshly imported distro.
+func importDistroData(cmd *cobra.Command, path string) error {
+	f, err := os.Open(path) //nolint:gosec // caller-owned temp file we just wrote
+	if err != nil {
+		return fmt.Errorf("daemon reinstall: open data file: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	fmt.Fprintln(cmd.OutOrStdout(), "restoring data ...")
+	return wsldistro.ImportData(f)
 }
 
 func newDaemonUninstallCmd() *cobra.Command {

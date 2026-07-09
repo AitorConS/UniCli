@@ -46,14 +46,39 @@ jobs:
             || (echo "ERROR: kernel.img not built" && exit 1)
           test -f kernel/output/platform/pc/boot/boot.img \
             || (echo "ERROR: boot.img not built" && exit 1)
+          test -f kernel/output/platform/pc/bin/kernel.elf \
+            || (echo "ERROR: kernel.elf not built" && exit 1)
           cp kernel/output/tools/bin/mkfs             dist/mkfs-linux-amd64
           cp kernel/output/tools/bin/dump             dist/dump-linux-amd64
           cp kernel/output/platform/pc/bin/kernel.img dist/kernel.img
           cp kernel/output/platform/pc/boot/boot.img  dist/boot.img
+          # Firecracker boots a PVH ELF kernel (no BIOS boot sector), unlike the
+          # QEMU kernel.img. The Nanos pc kernel.elf already carries the PVH note
+          # (Xen ELFNOTE type 18); strip debug info (keeping symbols, same recipe
+          # as kernel.img) to produce a lean kernel-fc.img candidate. NOTE: this
+          # is rebuilt from repo source and is NOT byte-identical to the manually
+          # produced v0.2.0 kernel-fc.img in R2 — it must pass the Firecracker
+          # boot benchmark (main.yml) before it is published as a new kernel
+          # version. See roadmap.md Phase 7.
+          strip -g kernel/output/platform/pc/bin/kernel.elf -o dist/kernel-fc.img
           chmod +x dist/mkfs-linux-amd64 dist/dump-linux-amd64
           VERSION="v$(cat kernel/VERSION | tr -d '[:space:]')"
           echo "$VERSION" > dist/kernel-version.txt
-          file dist/mkfs-linux-amd64 dist/dump-linux-amd64 dist/kernel.img dist/boot.img
+          file dist/mkfs-linux-amd64 dist/dump-linux-amd64 dist/kernel.img dist/boot.img dist/kernel-fc.img
+
+      - name: Validate kernel-fc.img is a Firecracker-bootable PVH ELF
+        run: |
+          set -euo pipefail
+          # Must be an x86-64 executable ELF...
+          readelf -h dist/kernel-fc.img | grep -q 'Type:.*EXEC' \
+            || { echo "ERROR: kernel-fc.img is not ET_EXEC"; exit 1; }
+          readelf -h dist/kernel-fc.img | grep -q 'Machine:.*X86-64' \
+            || { echo "ERROR: kernel-fc.img is not x86-64"; exit 1; }
+          # ...carrying the PVH entry note Firecracker needs to boot it. Nanos
+          # emits it as a Xen ELF note (namespace "Xen").
+          readelf -n dist/kernel-fc.img | grep -qi 'Xen' \
+            || { echo "ERROR: kernel-fc.img has no PVH/Xen ELF note — Firecracker cannot boot it"; exit 1; }
+          echo "kernel-fc.img OK: x86-64 PVH ELF"
 
       - name: Upload kernel artifacts (build validation)
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

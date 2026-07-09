@@ -246,6 +246,12 @@ jobs:
           cp kernel/output/tools/bin/mkfs "${BENCH_TOOLS}/mkfs"
           cp kernel/output/platform/pc/boot/boot.img "${BENCH_TOOLS}/boot.img"
           cp kernel/output/platform/pc/bin/kernel.img "${BENCH_TOOLS}/kernel.img"
+          # Also stage a locally-built Firecracker PVH kernel (strip debug from
+          # the pc kernel.elf, which carries the PVH note). Booting THIS in the
+          # Firecracker phase below is the gate that proves the repo can build a
+          # bootable kernel-fc.img — instead of downloading the manually-produced
+          # one from R2. See roadmap.md Phase 7 / kernel-release.yml.
+          strip -g kernel/output/platform/pc/bin/kernel.elf -o "${BENCH_TOOLS}/kernel-fc.img"
           echo "QEMU_SOCK=${QEMU_SOCK}" >> "$GITHUB_ENV"
           echo "BENCH_STORE=${BENCH_STORE}" >> "$GITHUB_ENV"
           ./dist/jerboad --host "unix://${QEMU_SOCK}" --tools-dir "${BENCH_TOOLS}" &
@@ -295,9 +301,11 @@ jobs:
         run: |
           FC_SOCK=/tmp/bench-fc.sock
           echo "FC_SOCK=${FC_SOCK}" >> "$GITHUB_ENV"
-          ./dist/jerboad --host "unix://${FC_SOCK}" --hypervisor firecracker &
+          # Boot the locally-built kernel-fc.img (staged above) rather than the
+          # one published to R2, so this job validates the repo build recipe.
+          ./dist/jerboad --host "unix://${FC_SOCK}" --hypervisor firecracker \
+            --fc-kernel "${BENCH_TOOLS}/kernel-fc.img" &
           echo "FC_PID=$!" >> "$GITHUB_ENV"
-          # longer wait — first run downloads kernel-fc.img from releases
           for i in $(seq 1 60); do [ -S "${FC_SOCK}" ] && break; sleep 1; done
           [ -S "${FC_SOCK}" ] || { echo "Firecracker jerboad failed to start"; exit 1; }
 

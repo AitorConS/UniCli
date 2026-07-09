@@ -28,7 +28,7 @@ func TestDaemonCmd_Structure(t *testing.T) {
 	for _, c := range newDaemonCmd().Commands() {
 		names[c.Name()] = true
 	}
-	for _, want := range []string{"install", "uninstall", "start", "stop", "restart", "status", "logs"} {
+	for _, want := range []string{"install", "reinstall", "uninstall", "start", "stop", "restart", "status", "logs"} {
 		require.True(t, names[want], "missing subcommand %q", want)
 	}
 }
@@ -37,7 +37,7 @@ func TestDaemonWindowsOnly_ErrorsOffWindows(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("on Windows these run the real WSL path")
 	}
-	for _, name := range []string{"install", "uninstall", "start", "stop", "restart"} {
+	for _, name := range []string{"install", "reinstall", "uninstall", "start", "stop", "restart"} {
 		cmd := daemonSubcommand(t, name)
 		var buf bytes.Buffer
 		cmd.SetOut(&buf)
