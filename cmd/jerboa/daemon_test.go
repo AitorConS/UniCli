@@ -28,7 +28,7 @@ func TestDaemonCmd_Structure(t *testing.T) {
 	for _, c := range newDaemonCmd().Commands() {
 		names[c.Name()] = true
 	}
-	for _, want := range []string{"install", "uninstall", "start", "stop", "restart", "status", "logs"} {
+	for _, want := range []string{"install", "reinstall", "uninstall", "start", "stop", "restart", "status", "logs"} {
 		require.True(t, names[want], "missing subcommand %q", want)
 	}
 }
@@ -37,7 +37,7 @@ func TestDaemonWindowsOnly_ErrorsOffWindows(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("on Windows these run the real WSL path")
 	}
-	for _, name := range []string{"install", "uninstall", "start", "stop", "restart"} {
+	for _, name := range []string{"install", "reinstall", "uninstall", "start", "stop", "restart"} {
 		cmd := daemonSubcommand(t, name)
 		var buf bytes.Buffer
 		cmd.SetOut(&buf)
@@ -122,6 +122,21 @@ func TestWaitPortReleased_ReturnsWhenUnreachable(t *testing.T) {
 
 func TestErrNotWindows(t *testing.T) {
 	require.Contains(t, errNotWindows("start").Error(), "only runs on Windows")
+}
+
+func TestPreserveDataBackup(t *testing.T) {
+	// With a backup path it must surface the location on stderr so the user can
+	// recover after a failed reinstall; with no backup it must stay silent.
+	cmd := &cobra.Command{}
+	var buf bytes.Buffer
+	cmd.SetErr(&buf)
+	preserveDataBackup(cmd, `C:\Temp\jerboa-data-123.tar.gz`)
+	require.Contains(t, buf.String(), `C:\Temp\jerboa-data-123.tar.gz`)
+	require.Contains(t, buf.String(), "preserved at")
+
+	buf.Reset()
+	preserveDataBackup(cmd, "")
+	require.Empty(t, buf.String())
 }
 
 func TestDaemonLogPath(t *testing.T) {

@@ -482,6 +482,20 @@ Flags:
 - `--rootfs <tarball>`
 - `--force`
 
+### `jerboa daemon reinstall`
+
+Reimport the distro rootfs (fresh or newer). Unlike `install --force`, which
+destroys everything, `--keep-data` preserves your images, VMs and networks
+across the swap (exported before, restored after). The daemon is stopped and
+restarted around the reimport; the kernel toolchain cache is not preserved (it
+re-downloads on demand).
+
+Flags:
+
+- `--rootfs <tarball>` — use a local rootfs instead of downloading the release
+- `--keep-data` — preserve images, VMs and networks across the reimport
+- `--hypervisor <qemu|firecracker>` — hypervisor to run after restart
+
 ### `jerboa daemon uninstall`
 ### `jerboa daemon start`
 ### `jerboa daemon restart`

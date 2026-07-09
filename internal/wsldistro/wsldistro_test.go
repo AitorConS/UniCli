@@ -1,7 +1,10 @@
 package wsldistro
 
 import (
+	"bytes"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -38,6 +41,30 @@ func TestInstallDaemonBinary_OpenError(t *testing.T) {
 	err := InstallDaemonBinary(filepath.Join(t.TempDir(), "does-not-exist"))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "wsldistro: open")
+}
+
+func TestDataDirs_ExcludesToolsCache(t *testing.T) {
+	// The kernel toolchain cache re-downloads on demand, so it must never be in
+	// the preserved set; the user-data dirs must be.
+	require.Equal(t, []string{"images", "vms", "networks"}, DataDirs)
+	require.NotContains(t, DataDirs, "tools")
+}
+
+func TestExportImportData_WrapErrorsWithoutWSL(t *testing.T) {
+	// On the Linux CI there is no `wsl`, so both calls fail at exec; assert they
+	// wrap the error under the package prefix rather than panicking. On Windows
+	// they would drive the real distro, so skip there.
+	if runtime.GOOS == "windows" {
+		t.Skip("on Windows these drive the real WSL distro")
+	}
+	var buf bytes.Buffer
+	err := ExportData(&buf)
+	require.Error(t, err)
+	require.True(t, strings.HasPrefix(err.Error(), "wsldistro: export data"), err.Error())
+
+	err = ImportData(strings.NewReader("ignored"))
+	require.Error(t, err)
+	require.True(t, strings.HasPrefix(err.Error(), "wsldistro: import data"), err.Error())
 }
 
 func TestDefaultInstallDir_FallbackHome(t *testing.T) {
