@@ -151,11 +151,28 @@ type IDParams struct {
 	ID string `json:"id"`
 }
 
+// ProtoVersion is the wire protocol version this build speaks. Client and daemon
+// negotiate it in the Auth.Hello handshake and refuse to talk across a mismatch,
+// so a stale binary on either side fails fast with a clear message instead of
+// misbehaving mid-session. Bump it on any breaking change to the RPC wire format.
+const ProtoVersion = 1
+
 // AuthParams is the payload of the Auth.Hello handshake. When the daemon is
 // configured with a token, the first request on every connection must be
 // Auth.Hello carrying the matching token before any other method is accepted.
+// Proto carries the client's wire protocol version (0 when a legacy client omits
+// it, in which case the daemon skips the compatibility check).
 type AuthParams struct {
 	Token string `json:"token"`
+	Proto int    `json:"proto,omitempty"`
+}
+
+// HelloResult is the daemon's Auth.Hello acknowledgement. Proto reports the
+// daemon's wire protocol version so the client can detect talking to an
+// incompatible (older) daemon that did not itself reject the handshake.
+type HelloResult struct {
+	Status string `json:"status"`
+	Proto  int    `json:"proto,omitempty"`
 }
 
 // NetworkCreateParams are the parameters for Network.Create.

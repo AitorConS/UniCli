@@ -459,36 +459,50 @@ jobs:
             -o dist/jerboad-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} \
             ./cmd/jerboad
 
-      # The installer is windows-only (//go:build windows).
-      - name: Build installer
-        if: matrix.goos == 'windows'
-        env:
-          GOOS: windows
-          GOARCH: amd64
-          CGO_ENABLED: 0
-        run: |
-          go build -ldflags="-s -w -X main.version=${CLI_VERSION}" \
-            -o dist/jerboa-installer.exe \
-            ./cmd/installer
-
       - name: Upload binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: binaries-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/
 
-  publish-release:
-    name: Publish GitHub Release
+  publish-r2:
+    name: Publish to R2
     runs-on: ubuntu-latest
     needs: [build-release, build-distro]
     if: github.event_name == 'push'
-    timeout-minutes: 10
-    permissions:
-      contents: write
+    timeout-minutes: 15
+    # Publishes the freshly built cli/daemon/distro (and the current desktop
+    # release) straight to the R2 origin as a minisign-signed channel manifest —
+    # no GitHub Releases round-trip. The kernel component is carried forward from
+    # the existing signed manifest: its artifacts (incl. kernel-fc.img, which no
+    # workflow rebuilds) already live in R2 under kernel/<ver>/ and are re-hashed
+    # here unchanged. A kernel bump is published by its own pipeline.
+    #
+    # Required repository secrets: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
+    #   JERBOA_MINISIGN_SEED. Variables: R2_ACCOUNT_ID, R2_BUCKET,
+    #   JERBOA_MINISIGN_KEYID.
+    env:
+      BASE_URL: https://releases.jerboa.dev
+      ENDPOINT: https://${{ vars.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+      BUCKET: ${{ vars.R2_BUCKET }}
+      AWS_DEFAULT_REGION: auto
+      # R2 rejects the default streaming checksum trailer the AWS CLI adds.
+      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+      AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Build release tooling
+        run: |
+          go build -o bin/jerboa-manifest ./cmd/jerboa-manifest
+          go build -o bin/jerboa-sign     ./cmd/jerboa-sign
 
       - name: Download binary artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -503,31 +517,122 @@ jobs:
           name: distro-rootfs
           path: dist-distro/
 
-      - name: Read version
-        run: |
-          VERSION="v$(cat VERSION | tr -d '[:space:]')"
-          echo "CLI_VERSION=$VERSION" >> "$GITHUB_ENV"
-
-      - name: Publish versioned release
+      - name: Read CLI version + carry the kernel forward from R2
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
-          TAG="${CLI_VERSION}"
-          gh release view "$TAG" > /dev/null 2>&1 \
-            || gh release create "$TAG" \
-               --title "jerboa ${CLI_VERSION}" \
-               --notes "Release ${CLI_VERSION} — built from commit $(git rev-parse --short HEAD)"
-          gh release upload "$TAG" dist/* dist-distro/jerboa-rootfs-amd64.tar.gz --clobber
+          set -euo pipefail
+          echo "TAG=v$(cat VERSION | tr -d '[:space:]')" >> "$GITHUB_ENV"
+          # The kernel component (incl. kernel-fc.img) is not rebuilt here — reuse
+          # whatever version the current signed manifest points at; its files
+          # already live in R2 under kernel/<ver>/.
+          KVER="$(curl -fsSL "$BASE_URL/channels/stable.json" | jq -r '.components.kernel.version')"
+          if [ -z "$KVER" ] || [ "$KVER" = "null" ]; then
+            echo "::error::could not resolve kernel version from $BASE_URL/channels/stable.json"; exit 1
+          fi
+          echo "KVER=$KVER" >> "$GITHUB_ENV"
+          mkdir -p kern
+          aws s3 cp "s3://$BUCKET/kernel/$KVER/" kern/ --recursive --endpoint-url "$ENDPOINT"
 
-      - name: Update rolling latest release (CLI assets only)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Stage bucket tree + spec
         run: |
-          gh release create latest --prerelease \
-            --title "latest" --notes "Rolling latest release" \
-            2>/dev/null || true
-          # Upload only CLI binaries, installer, and the distro rootfs — never touch kernel assets.
-          gh release upload latest dist/jerboa-* dist/jerboad-* dist-distro/jerboa-rootfs-amd64.tar.gz --clobber
+          set -euo pipefail
+          mkdir -p "pub/cli/$TAG" "pub/daemon/$TAG" "pub/distro/$TAG" \
+                   "pub/kernel/$KVER" pub/channels
+          cp dist/jerboa-linux-amd64        "pub/cli/$TAG/"
+          cp dist/jerboa-linux-arm64        "pub/cli/$TAG/"
+          cp dist/jerboa-windows-amd64.exe  "pub/cli/$TAG/"
+          cp dist/jerboad-linux-amd64       "pub/daemon/$TAG/"
+          cp dist-distro/jerboa-rootfs-amd64.tar.gz "pub/distro/$TAG/"
+          cp kern/kernel.img kern/boot.img kern/kernel-fc.img \
+             kern/mkfs-linux-amd64 kern/dump-linux-amd64 "pub/kernel/$KVER/"
+
+          # The desktop app publishes independently (JerboaDesktop release.yml) to
+          # the R2 desktop/ channel. Mirror its current version into the signed
+          # manifest so `jerboa version` can report it. Optional: omit when absent.
+          DESKTOP_JSON=""
+          if curl -fsSL "$BASE_URL/desktop/latest.yml" -o desktop-latest.yml 2>/dev/null; then
+            DVER="v$(sed -n 's/^version:[[:space:]]*//p' desktop-latest.yml | tr -d '[:space:]')"
+            DFILE="$(sed -n 's/^path:[[:space:]]*//p' desktop-latest.yml | tr -d '[:space:]')"
+            if [ -n "$DVER" ] && [ -n "$DFILE" ] && curl -fsSL "$BASE_URL/desktop/$DFILE" -o desktop-installer 2>/dev/null; then
+              mkdir -p "pub/desktop/$DVER"
+              cp desktop-installer "pub/desktop/$DVER/$DFILE"
+              DESKTOP_JSON="\"desktop\": { \"version\": \"$DVER\", \"platforms\": { \"windows-amd64\": \"pub/desktop/$DVER/$DFILE\" } },"
+            else
+              echo "Desktop latest.yml present but incomplete; omitting desktop component."
+            fi
+          else
+            echo "No desktop channel published yet; omitting desktop component."
+          fi
+
+          cat > spec.json <<EOF
+          {
+            "channel": "stable",
+            "base": "$BASE_URL",
+            "components": {
+              "cli": {
+                "version": "$TAG",
+                "platforms": {
+                  "windows-amd64": "pub/cli/$TAG/jerboa-windows-amd64.exe",
+                  "linux-amd64":   "pub/cli/$TAG/jerboa-linux-amd64",
+                  "linux-arm64":   "pub/cli/$TAG/jerboa-linux-arm64"
+                }
+              },
+              "daemon": {
+                "version": "$TAG",
+                "platforms": { "linux-amd64": "pub/daemon/$TAG/jerboad-linux-amd64" }
+              },
+              "distro": {
+                "version": "$TAG", "kernel": "$KVER",
+                "file": "pub/distro/$TAG/jerboa-rootfs-amd64.tar.gz"
+              },
+              ${DESKTOP_JSON}
+              "kernel": {
+                "version": "$KVER",
+                "files": {
+                  "kernel.img":  "pub/kernel/$KVER/kernel.img",
+                  "boot.img":    "pub/kernel/$KVER/boot.img",
+                  "kernel-fc.img": "pub/kernel/$KVER/kernel-fc.img",
+                  "mkfs":        "pub/kernel/$KVER/mkfs-linux-amd64",
+                  "dump":        "pub/kernel/$KVER/dump-linux-amd64"
+                }
+              }
+            }
+          }
+          EOF
+
+      - name: Generate + sign manifest
+        env:
+          JERBOA_MINISIGN_SEED: ${{ secrets.JERBOA_MINISIGN_SEED }}
+          KEY_ID: ${{ vars.JERBOA_MINISIGN_KEYID }}
+        run: |
+          set -euo pipefail
+          ./bin/jerboa-manifest -spec spec.json -out pub/channels/stable.json
+          ./bin/jerboa-sign -in pub/channels/stable.json \
+            -key-id "$KEY_ID" \
+            -comment "channel:stable tag:$TAG"
+          cat pub/channels/stable.json
+
+      - name: Sync to R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          # Immutable versioned artifacts: long cache. The channel manifest must
+          # never be cached — it is the pointer clients re-read every check.
+          aws s3 sync pub/ "s3://$BUCKET/" \
+            --endpoint-url "$ENDPOINT" \
+            --exclude 'channels/*' \
+            --cache-control 'public, max-age=31536000, immutable'
+          aws s3 cp pub/channels/stable.json "s3://$BUCKET/channels/stable.json" \
+            --endpoint-url "$ENDPOINT" \
+            --content-type application/json \
+            --cache-control 'no-cache'
+          aws s3 cp pub/channels/stable.json.minisig "s3://$BUCKET/channels/stable.json.minisig" \
+            --endpoint-url "$ENDPOINT" \
+            --cache-control 'no-cache'
 
   coverage:
     name: Coverage Report

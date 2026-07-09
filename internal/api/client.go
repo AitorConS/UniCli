@@ -57,9 +57,12 @@ func DialWithToken(endpoint, token string) (*Client, error) {
 	return c, nil
 }
 
-// sendAuth performs the Auth.Hello handshake on a connection's encoder/decoder.
+// sendAuth performs the Auth.Hello handshake on a connection's encoder/decoder,
+// carrying this build's wire protocol version so the daemon can reject a
+// mismatch. It also checks the daemon's advertised proto in the reply, catching
+// the reverse case (a newer client talking to an older daemon).
 func sendAuth(enc *json.Encoder, dec *json.Decoder, token string) error {
-	raw, err := json.Marshal(AuthParams{Token: token})
+	raw, err := json.Marshal(AuthParams{Token: token, Proto: ProtoVersion})
 	if err != nil {
 		return fmt.Errorf("marshal auth: %w", err)
 	}
@@ -73,6 +76,16 @@ func sendAuth(enc *json.Encoder, dec *json.Decoder, token string) error {
 	}
 	if resp.Error != nil {
 		return fmt.Errorf("authentication failed: %s", resp.Error.Message)
+	}
+	// A daemon that advertises a proto version must match ours. A zero/absent
+	// proto is a daemon that predates negotiation — leave it to the caller.
+	if len(resp.Result) > 0 {
+		var hello HelloResult
+		if err := json.Unmarshal(resp.Result, &hello); err == nil && hello.Proto != 0 && hello.Proto != ProtoVersion {
+			return fmt.Errorf(
+				"protocol version mismatch: daemon speaks v%d, this jerboa speaks v%d — update jerboa to match the daemon",
+				hello.Proto, ProtoVersion)
+		}
 	}
 	return nil
 }

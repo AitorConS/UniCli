@@ -11,7 +11,7 @@ type CompatError struct {
 
 func (e *CompatError) Error() string {
 	return fmt.Sprintf(
-		"jerboa %s is too old for this release's daemon (needs %s or newer); run `jerboa self update` first",
+		"jerboa %s is too old for this release's daemon (needs %s or newer); update jerboa first",
 		e.CLIVersion, e.MinCLI)
 }
 

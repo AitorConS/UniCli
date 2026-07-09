@@ -134,3 +134,51 @@ func TestDial_BadEndpoint(t *testing.T) {
 	_, err := api.Dial("tcp://127.0.0.1:1")
 	require.Error(t, err)
 }
+
+// startProtoServer stubs a daemon whose Auth.Hello reply advertises the given
+// wire protocol version, so the client's proto negotiation can be exercised.
+func startProtoServer(t *testing.T, proto int) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ln.Close() })
+
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer func() { _ = conn.Close() }()
+				dec := json.NewDecoder(conn)
+				enc := json.NewEncoder(conn)
+				for {
+					var req api.Request
+					if err := dec.Decode(&req); err != nil {
+						return
+					}
+					resp := api.Response{JSONRPC: "2.0", ID: req.ID}
+					if req.Method == "Auth.Hello" {
+						raw, _ := json.Marshal(api.HelloResult{Status: "ok", Proto: proto})
+						resp.Result = raw
+					}
+					_ = enc.Encode(resp)
+				}
+			}()
+		}
+	}()
+	return "tcp://" + ln.Addr().String()
+}
+
+func TestClient_ProtoMatch(t *testing.T) {
+	c, err := api.DialWithToken(startProtoServer(t, api.ProtoVersion), "tok")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = c.Close() })
+}
+
+func TestClient_ProtoMismatch(t *testing.T) {
+	_, err := api.DialWithToken(startProtoServer(t, api.ProtoVersion+1), "tok")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "protocol version mismatch")
+}
