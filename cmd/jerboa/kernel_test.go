@@ -4,8 +4,6 @@ package main
 
 import (
 	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -39,41 +37,4 @@ func TestConfirmPrompt(t *testing.T) {
 	os.Stdin = r
 
 	require.True(t, confirmPrompt("Proceed? "))
-}
-
-func TestKernelUse_AlreadyOnVersion(t *testing.T) {
-	_, socketPath := startDaemon(t)
-	storePath := t.TempDir()
-
-	home := t.TempDir()
-	setHomeForTest(t, home)
-
-	toolsDir := filepath.Join(home, ".jerboa", "tools")
-	require.NoError(t, os.MkdirAll(toolsDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(toolsDir, "kernel-version.txt"), []byte("v1.2.3\n"), 0o644))
-
-	out := execRoot(t, socketPath, storePath, "kernel", "use", "1.2.3")
-	require.Contains(t, out, "Already on kernel v1.2.3")
-}
-
-func setHomeForTest(t *testing.T, home string) {
-	t.Helper()
-	keys := []string{"HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH"}
-	old := map[string]string{}
-	for _, k := range keys {
-		old[k] = os.Getenv(k)
-	}
-	require.NoError(t, os.Setenv("HOME", home))
-	require.NoError(t, os.Setenv("USERPROFILE", home))
-	if len(home) >= 2 && home[1] == ':' {
-		require.NoError(t, os.Setenv("HOMEDRIVE", home[:2]))
-		rest := strings.TrimPrefix(home[2:], "\\")
-		rest = strings.TrimPrefix(rest, "/")
-		require.NoError(t, os.Setenv("HOMEPATH", "\\"+rest))
-	}
-	t.Cleanup(func() {
-		for _, k := range keys {
-			_ = os.Setenv(k, old[k])
-		}
-	})
 }

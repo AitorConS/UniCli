@@ -1,4 +1,11 @@
-name: Kernel Release
+name: Kernel Build
+
+# Builds and validates the kernel toolset when kernel/ changes. It no longer
+# publishes anywhere: distribution is via the R2 signed manifest, and the kernel
+# component there is carried forward by main.yml's publish-r2 job (the artifacts,
+# including kernel-fc.img which no workflow rebuilds, already live in R2 under
+# kernel/<ver>/). Cutting a NEW kernel version to R2 — including regenerating
+# kernel-fc.img — is a manual/future step tracked in roadmap.md Phase 7.
 
 on:
   push:
@@ -8,16 +15,13 @@ on:
       - '.github/workflows/kernel-release.yml'
   workflow_dispatch:
 
-# Least privilege by default; the publish job elevates to contents: write.
 permissions:
   contents: read
 
 jobs:
-  build-and-publish:
-    name: Build kernel artifacts and publish to release
+  build-and-validate:
+    name: Build and validate kernel artifacts
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -49,31 +53,10 @@ jobs:
           chmod +x dist/mkfs-linux-amd64 dist/dump-linux-amd64
           VERSION="v$(cat kernel/VERSION | tr -d '[:space:]')"
           echo "$VERSION" > dist/kernel-version.txt
-          echo "KERNEL_VERSION=$VERSION" >> "$GITHUB_ENV"
           file dist/mkfs-linux-amd64 dist/dump-linux-amd64 dist/kernel.img dist/boot.img
 
-      - name: Publish versioned release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TAG="kernel-${KERNEL_VERSION}"
-          # Create the versioned release if it does not already exist.
-          gh release view "$TAG" > /dev/null 2>&1 \
-            || gh release create "$TAG" \
-               --title "Kernel ${KERNEL_VERSION}" \
-               --notes "Kernel build from commit $(git rev-parse --short HEAD)"
-          gh release upload "$TAG" \
-            dist/mkfs-linux-amd64 dist/dump-linux-amd64 dist/kernel.img dist/boot.img dist/kernel-version.txt \
-            --clobber
-
-      - name: Update rolling latest release (kernel assets only)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release create latest --prerelease \
-            --title "latest" --notes "Rolling latest release" \
-            2>/dev/null || true
-          # Upload only kernel assets — never touch CLI binaries in this pipeline.
-          gh release upload latest \
-            dist/mkfs-linux-amd64 dist/dump-linux-amd64 dist/kernel.img dist/boot.img dist/kernel-version.txt \
-            --clobber
+      - name: Upload kernel artifacts (build validation)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: kernel-artifacts
+          path: dist/

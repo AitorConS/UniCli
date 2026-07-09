@@ -21,10 +21,8 @@ import (
 // WSL2), so the disk path passed to the returned Formatter must already be a
 // daemon-visible path.
 func ResolveVolumeFormatter(ctx context.Context, toolsDir, override string) (volume.Formatter, error) {
-	if !Exist(toolsDir) {
-		if err := DownloadVersion(ctx, toolsDir, "latest"); err != nil {
-			return nil, err
-		}
+	if err := EnsureKernelTools(ctx, toolsDir); err != nil {
+		return nil, err
 	}
 	mkfsPath := override
 	if mkfsPath == "" {
@@ -58,10 +56,8 @@ func ResolveVolumeFormatter(ctx context.Context, toolsDir, override string) (vol
 // WSL2), so the disk path passed to the returned Seeder must already be a
 // daemon-visible path.
 func ResolveVolumeSeeder(ctx context.Context, toolsDir, override string) (volume.Seeder, error) {
-	if !Exist(toolsDir) {
-		if err := DownloadVersion(ctx, toolsDir, "latest"); err != nil {
-			return nil, err
-		}
+	if err := EnsureKernelTools(ctx, toolsDir); err != nil {
+		return nil, err
 	}
 	mkfsPath := override
 	if mkfsPath == "" {

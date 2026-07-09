@@ -429,10 +429,18 @@ Requires the daemon to run with `--cluster-addr`.
 
 ### `jerboa kernel check`
 ### `jerboa kernel update`
-### `jerboa kernel list`
-### `jerboa kernel use <version>`
 
-These manage the cached toolchain (`mkfs`, `boot.img`, `kernel.img`) independently of the CLI version.
+These manage the cached toolchain (`mkfs`, `boot.img`, `kernel.img`) independently of the CLI version. Both resolve the latest kernel from the signed release manifest at `releases.jerboa.dev` and verify each artifact against its recorded SHA-256; there is no GitHub fallback and no historical version selection.
+
+---
+
+## Version Command
+
+### `jerboa version`
+
+Read-only readout of the installed CLI and kernel versions alongside the latest published version of every component (CLI, kernel, daemon, distro, desktop) taken from the signed release manifest. It never installs anything: on Windows the toolset is updated through the Jerboa Desktop app; on Linux you reinstall the CLI/daemon yourself. (`jerboa --version` still prints just the CLI version.)
+
+Add `--channel beta` to query the beta channel instead of stable.
 
 ---
 

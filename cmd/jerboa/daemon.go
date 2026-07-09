@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -14,7 +13,6 @@ import (
 
 	"github.com/AitorConS/jerboa/internal/api"
 	"github.com/AitorConS/jerboa/internal/config"
-	"github.com/AitorConS/jerboa/internal/httpclient"
 	"github.com/AitorConS/jerboa/internal/release"
 	"github.com/AitorConS/jerboa/internal/wslboot"
 	"github.com/AitorConS/jerboa/internal/wsldistro"
@@ -25,29 +23,6 @@ import (
 // root runs privileged (firecracker networking) without any host sudo prompt,
 // because the distro is isolated and contains nothing but jerboa.
 const daemonLaunchUser = "root"
-
-// cliReleaseBase is the GitHub release download base for jerboa artifacts.
-const cliReleaseBase = "https://github.com/AitorConS/jerboa/releases/download"
-
-// downloadToVerified streams the body of a GET request for url into w.
-func downloadToVerified(ctx context.Context, url string, w io.Writer) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return fmt.Errorf("build request: %w", err)
-	}
-	resp, err := httpclient.Default.Do(req)
-	if err != nil {
-		return fmt.Errorf("download: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("server returned HTTP %d for %s", resp.StatusCode, url)
-	}
-	if _, err := io.Copy(w, resp.Body); err != nil {
-		return fmt.Errorf("write: %w", err)
-	}
-	return nil
-}
 
 // newDaemonCmd builds the `jerboa daemon` command group, which manages the
 // jerboad daemon hosted in the dedicated jerboa WSL2 distro.
@@ -362,19 +337,18 @@ func newDaemonLogsCmd() *cobra.Command {
 	return c
 }
 
-// fetchRootfs downloads the dedicated-distro rootfs into a temp file and returns
-// its path. The caller removes it after import. It prefers the signed release
-// manifest (SHA-256 verified) and falls back to the legacy GitHub "latest" tag
-// during the migration window.
+// fetchRootfs downloads the dedicated-distro rootfs named by the signed release
+// manifest (SHA-256 verified) into a temp file and returns its path. The caller
+// removes it after import. R2 is the single source of truth — there is no
+// GitHub fallback.
 func fetchRootfs(ctx context.Context, cmd *cobra.Command) (string, error) {
 	tmp, err := os.CreateTemp("", "jerboa-rootfs-*.tar.gz")
 	if err != nil {
 		return "", fmt.Errorf("daemon install: temp file: %w", err)
 	}
 	tmpPath := tmp.Name()
-	// Both downloaders below recreate this path. Remove the placeholder now:
 	// DownloadArtifact installs via rename(dest.tmp -> dest), which fails on
-	// Windows when dest already exists, silently forcing the legacy fallback.
+	// Windows when dest already exists, so remove the placeholder now.
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(tmpPath)
 		return "", fmt.Errorf("daemon install: close temp: %w", err)
@@ -383,39 +357,27 @@ func fetchRootfs(ctx context.Context, cmd *cobra.Command) (string, error) {
 		return "", fmt.Errorf("daemon install: remove temp placeholder: %w", err)
 	}
 
-	// Preferred path: signed manifest, verified download.
-	if cl, cerr := release.Default(); cerr == nil {
-		if m, merr := cl.FetchManifest(ctx, release.ChannelStable); merr == nil {
-			if d, ok := m.Component(release.ComponentDistro); ok {
-				if a, aerr := d.Asset(runtime.GOOS, runtime.GOARCH); aerr == nil {
-					fmt.Fprintf(cmd.OutOrStdout(), "downloading %s (%s, verified) ...\n",
-						wsldistro.RootfsArtifact, d.Version)
-					if err := cl.DownloadArtifact(ctx, a, tmpPath); err == nil {
-						return tmpPath, nil
-					}
-					// Fall through to the legacy path on any manifest download error.
-				}
-			}
-		}
-	}
-
-	// Fallback: legacy rolling "latest" GitHub release.
-	url := fmt.Sprintf("%s/latest/%s", cliReleaseBase, wsldistro.RootfsArtifact)
-	f, err := os.Create(tmpPath)
+	cl, err := release.Default()
 	if err != nil {
-		_ = os.Remove(tmpPath)
-		return "", fmt.Errorf("daemon install: temp file: %w", err)
+		return "", fmt.Errorf("daemon install: release client: %w", err)
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "downloading %s (latest) ...\n", wsldistro.RootfsArtifact)
-	if err := downloadToVerified(ctx, url, f); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmpPath)
+	m, err := cl.FetchManifest(ctx, release.ChannelStable)
+	if err != nil {
+		return "", fmt.Errorf("daemon install: fetch manifest: %w", err)
+	}
+	d, ok := m.Component(release.ComponentDistro)
+	if !ok {
+		return "", fmt.Errorf("daemon install: manifest has no distro component")
+	}
+	a, err := d.Asset(runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		return "", fmt.Errorf("daemon install: %w", err)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "downloading %s (%s, verified) ...\n",
+		wsldistro.RootfsArtifact, d.Version)
+	if err := cl.DownloadArtifact(ctx, a, tmpPath); err != nil {
 		return "", fmt.Errorf("daemon install: download rootfs: %w "+
 			"(if no release is published, build it with distro/build.sh and pass --rootfs)", err)
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return "", fmt.Errorf("daemon install: close temp: %w", err)
 	}
 	return tmpPath, nil
 }

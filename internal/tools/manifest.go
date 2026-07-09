@@ -10,8 +10,7 @@ import (
 )
 
 // kernelFileLocalNames maps the manifest's kernel file keys to their on-disk
-// names in the tools dir (mkfs/dump drop their -linux-amd64 suffix, matching
-// DownloadVersion's legacy layout).
+// names in the tools dir (mkfs/dump drop their -linux-amd64 suffix).
 var kernelFileLocalNames = map[string]string{
 	"kernel.img":    "kernel.img",
 	"boot.img":      "boot.img",
@@ -23,10 +22,30 @@ var kernelFileLocalNames = map[string]string{
 // optionalKernelFiles are absent from older releases and must not fail a fetch.
 var optionalKernelFiles = map[string]bool{"dump": true, "kernel-fc.img": true}
 
+// EnsureKernelTools makes sure the kernel toolset (mkfs, boot.img, kernel.img,
+// plus kernel-fc.img/dump when published) is present in toolsDir. When any of
+// the core artifacts is missing it downloads the full set named by the signed
+// release manifest, each file SHA-256 verified. R2 is the single source of
+// truth — there is no GitHub fallback.
+func EnsureKernelTools(ctx context.Context, toolsDir string) error {
+	if Exist(toolsDir) {
+		return nil
+	}
+	cl, err := release.Default()
+	if err != nil {
+		return fmt.Errorf("tools: release client: %w", err)
+	}
+	k, err := KernelComponentFromManifest(ctx, cl, release.ChannelStable)
+	if err != nil {
+		return err
+	}
+	return DownloadKernelFromManifest(ctx, cl, toolsDir, k)
+}
+
 // ensureFCKernelFromManifest downloads the Firecracker kernel (kernel-fc.img)
 // named by the signed stable manifest into dest, SHA-256 verified. It returns an
-// error (letting the caller fall back to GitHub) whenever no manifest is
-// published yet, the client cannot be built, or the component omits the file.
+// error whenever no manifest is reachable, the client cannot be built, or the
+// component omits the file.
 func ensureFCKernelFromManifest(ctx context.Context, dest string) error {
 	cl, err := release.Default()
 	if err != nil {

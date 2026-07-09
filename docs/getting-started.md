@@ -86,7 +86,9 @@ smaller.
 
 ### Windows
 
-On Windows, install the host CLI and then import the dedicated WSL2 distro:
+On Windows the `jerboa` CLI ships with the **Jerboa Desktop app**, whose
+installer puts `jerboa` on your PATH. Install the app, then import the dedicated
+WSL2 distro that hosts the daemon:
 
 ```powershell
 jerboa daemon install
@@ -94,7 +96,9 @@ jerboa daemon start
 jerboa daemon status
 ```
 
-`jerboa daemon install --rootfs <tarball>` can import a locally built distro rootfs instead of downloading the release artifact.
+The desktop app can also manage this runtime for you from its GUI.
+`jerboa daemon install --rootfs <tarball>` imports a locally built distro rootfs
+instead of downloading the release artifact from the signed manifest.
 
 ---
 
@@ -327,19 +331,21 @@ jerboa compose down stack.yaml --volumes
 
 ## Updating
 
-There is no self-update command for the CLI or daemon binaries.
+The CLI has no self-update command. How you update depends on the platform:
 
-- update `jerboa` manually from releases
-- update `jerboad` manually on Linux, or replace the daemon binary inside the WSL2 distro on Windows
-- kernel tooling is managed separately through `jerboa kernel`
+- **Windows** — update through the **Jerboa Desktop app**, which bundles the CLI
+  (on your PATH) and reconciles the WSL2 daemon/distro runtime for you.
+- **Linux** — reinstall `jerboa`/`jerboad` yourself (rerun `scripts/install.sh`
+  or rebuild from source).
+- **kernel tooling** is managed separately through `jerboa kernel` and is also
+  auto-downloaded on first VM boot when missing.
 
-Kernel toolchain commands:
+Check what you have against the latest published release with `jerboa version`:
 
 ```bash
-jerboa kernel check
-jerboa kernel update
-jerboa kernel list
-jerboa kernel use v0.1.2
+jerboa version          # installed CLI/kernel vs latest of every component
+jerboa kernel check     # is a newer kernel available?
+jerboa kernel update    # install the latest kernel toolchain
 ```
 
 ---

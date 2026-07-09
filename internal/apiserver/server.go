@@ -155,8 +155,16 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 				_ = enc.Encode(api.Response{JSONRPC: "2.0", ID: req.ID, Error: &api.RPCError{Code: -32001, Message: "authentication required"}})
 				return
 			}
+			// Refuse a client whose wire protocol differs from ours. A client
+			// that omits proto (0) predates negotiation and is left alone.
+			if proto := helloProto(req.Params); proto != 0 && proto != api.ProtoVersion {
+				_ = enc.Encode(api.Response{JSONRPC: "2.0", ID: req.ID, Error: &api.RPCError{Code: -32002, Message: fmt.Sprintf(
+					"protocol version mismatch: daemon speaks v%d, client speaks v%d — update jerboa to match the daemon",
+					api.ProtoVersion, proto)}})
+				return
+			}
 			authed = true
-			_ = enc.Encode(api.Response{JSONRPC: "2.0", ID: req.ID, Result: okResult()})
+			_ = enc.Encode(api.Response{JSONRPC: "2.0", ID: req.ID, Result: helloResult()})
 			continue
 		}
 		result, rpcErr := s.dispatch(ctx, &req, conn, dec)
@@ -191,9 +199,21 @@ func (s *Server) checkAuth(params json.RawMessage) bool {
 	return subtle.ConstantTimeCompare([]byte(p.Token), []byte(s.authToken)) == 1
 }
 
-// okResult is the JSON-encoded {"status":"ok"} acknowledgement.
-func okResult() json.RawMessage {
-	return json.RawMessage(`{"status":"ok"}`)
+// helloProto extracts the client's advertised wire protocol version from the
+// Auth.Hello params, returning 0 when absent or unparseable.
+func helloProto(params json.RawMessage) int {
+	var p api.AuthParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return 0
+	}
+	return p.Proto
+}
+
+// helloResult is the Auth.Hello acknowledgement, carrying the daemon's wire
+// protocol version so the client can detect an incompatible (older) daemon.
+func helloResult() json.RawMessage {
+	raw, _ := json.Marshal(api.HelloResult{Status: "ok", Proto: api.ProtoVersion})
+	return raw
 }
 
 // attachHandled is a sentinel value returned by dispatch when VM.Attach

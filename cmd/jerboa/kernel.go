@@ -13,27 +13,32 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// kernelRemoteVersion resolves the latest kernel version, preferring the signed
-// release manifest and falling back to the legacy GitHub path when no manifest
-// is published yet (migration window).
+// kernelRemoteVersion resolves the latest kernel version from the signed release
+// manifest (SHA-256/signature verified). R2 is the single source of truth.
 func kernelRemoteVersion(ctx context.Context) (string, error) {
-	if cl, cerr := release.Default(); cerr == nil {
-		if k, kerr := tools.KernelComponentFromManifest(ctx, cl, release.ChannelStable); kerr == nil {
-			return k.Version, nil
-		}
+	cl, err := release.Default()
+	if err != nil {
+		return "", fmt.Errorf("release client: %w", err)
 	}
-	return tools.RemoteVersion(ctx)
+	k, err := tools.KernelComponentFromManifest(ctx, cl, release.ChannelStable)
+	if err != nil {
+		return "", err
+	}
+	return k.Version, nil
 }
 
-// kernelDownloadLatest installs the latest kernel toolset, preferring the signed
-// manifest and falling back to the legacy GitHub artifacts.
+// kernelDownloadLatest installs the latest kernel toolset named by the signed
+// manifest, verifying each artifact against its recorded SHA-256.
 func kernelDownloadLatest(ctx context.Context, toolsDir string) error {
-	if cl, cerr := release.Default(); cerr == nil {
-		if k, kerr := tools.KernelComponentFromManifest(ctx, cl, release.ChannelStable); kerr == nil {
-			return tools.DownloadKernelFromManifest(ctx, cl, toolsDir, k)
-		}
+	cl, err := release.Default()
+	if err != nil {
+		return fmt.Errorf("release client: %w", err)
 	}
-	return tools.DownloadVersion(ctx, toolsDir, "latest")
+	k, err := tools.KernelComponentFromManifest(ctx, cl, release.ChannelStable)
+	if err != nil {
+		return err
+	}
+	return tools.DownloadKernelFromManifest(ctx, cl, toolsDir, k)
 }
 
 func newKernelCmd(verbose *bool) *cobra.Command {
@@ -44,8 +49,6 @@ func newKernelCmd(verbose *bool) *cobra.Command {
 	cmd.AddCommand(
 		newKernelCheckCmd(),
 		newKernelUpdateCmd(verbose),
-		newKernelListCmd(),
-		newKernelUseCmd(verbose),
 	)
 	return cmd
 }
@@ -79,85 +82,6 @@ func newKernelCheckCmd() *cobra.Command {
 			return nil
 		},
 	}
-}
-
-// newKernelListCmd implements `jerboa kernel list`.
-func newKernelListCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "list",
-		Short: "List all available kernel versions",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
-			defer cancel()
-
-			versions, err := tools.ListRemoteVersions(ctx)
-			if err != nil {
-				return fmt.Errorf("kernel list: %w", err)
-			}
-			if len(versions) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "No kernel releases found.")
-				return nil
-			}
-
-			local := tools.LocalVersion(defaultToolsPath())
-			for _, v := range versions {
-				marker := "  "
-				if v == local {
-					marker = "* "
-				}
-				fmt.Fprintf(cmd.OutOrStdout(), "%s%s\n", marker, v)
-			}
-			return nil
-		},
-	}
-}
-
-// newKernelUseCmd implements `jerboa kernel use <version>`.
-func newKernelUseCmd(verbose *bool) *cobra.Command {
-	var yes bool
-	cmd := &cobra.Command{
-		Use:   "use <version>",
-		Short: "Switch to a specific kernel version (e.g. v0.1.0)",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			version := args[0]
-			if !strings.HasPrefix(version, "v") {
-				version = "v" + version
-			}
-			toolsDir := defaultToolsPath()
-			local := tools.LocalVersion(toolsDir)
-
-			if local == version {
-				fmt.Fprintf(cmd.OutOrStdout(), "Already on kernel %s.\n", version)
-				return nil
-			}
-
-			fmt.Fprintf(cmd.OutOrStdout(),
-				"Switching kernel: %s → %s\n", local, version)
-
-			if !yes && !confirmPrompt("Proceed? [y/N] ") {
-				fmt.Fprintln(cmd.OutOrStdout(), "Aborted.")
-				return nil
-			}
-
-			if err := tools.ClearCachedTools(toolsDir); err != nil {
-				return fmt.Errorf("kernel use: clear cache: %w", err)
-			}
-
-			sp := newSpinner(cmd.ErrOrStderr(), *verbose)
-			sp.Start(fmt.Sprintf("Downloading kernel %s", version))
-			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
-			defer cancel()
-			if err := tools.DownloadVersion(ctx, toolsDir, version); err != nil {
-				sp.Fail("Download failed")
-				return fmt.Errorf("kernel use: %w", err)
-			}
-			sp.Done(fmt.Sprintf("Kernel switched to %s", version))
-			return nil
-		},
-	}
-	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip confirmation prompt")
-	return cmd
 }
 
 // newKernelUpdateCmd implements `jerboa kernel update`.
