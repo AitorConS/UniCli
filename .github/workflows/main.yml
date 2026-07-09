@@ -33,7 +33,7 @@ jobs:
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: '1.25'
+          go-version: '1.25.12'
           cache: true
 
       - name: Check go.mod / go.sum are tidy
@@ -55,7 +55,7 @@ jobs:
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: '1.25'
+          go-version: '1.25.12'
           cache: true
 
       - name: golangci-lint
@@ -74,7 +74,7 @@ jobs:
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: '1.25'
+          go-version: '1.25.12'
           cache: true
 
       - name: Run unit tests
@@ -109,7 +109,7 @@ jobs:
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: '1.25'
+          go-version: '1.25.12'
           cache: true
 
       - name: govulncheck
@@ -147,7 +147,7 @@ jobs:
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: '1.25'
+          go-version: '1.25.12'
           # Self-hosted runner: the module cache persists on disk between runs,
           # so setup-go's tarball restore would extract over existing read-only
           # files and fail ("tar: Cannot open: File exists").
@@ -177,7 +177,7 @@ jobs:
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: '1.25'
+          go-version: '1.25.12'
           # Self-hosted runner: the module cache persists on disk between runs,
           # so setup-go's tarball restore would extract over existing read-only
           # files and fail ("tar: Cannot open: File exists").
@@ -210,7 +210,7 @@ jobs:
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: '1.25'
+          go-version: '1.25.12'
           # Self-hosted runner: the module cache persists on disk between runs,
           # so setup-go's tarball restore would extract over existing read-only
           # files and fail ("tar: Cannot open: File exists").
@@ -380,7 +380,7 @@ jobs:
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: '1.25'
+          go-version: '1.25.12'
           cache: true
 
       - name: Install kernel toolchain deps
@@ -427,7 +427,7 @@ jobs:
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: '1.25'
+          go-version: '1.25.12'
           cache: true
 
       - name: Read version
@@ -496,7 +496,7 @@ jobs:
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: '1.25'
+          go-version: '1.25.12'
           cache: true
 
       - name: Build release tooling
@@ -646,7 +646,7 @@ jobs:
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: '1.25'
+          go-version: '1.25.12'
           cache: true
 
       - name: Download coverage artifact
