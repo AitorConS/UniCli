@@ -201,36 +201,49 @@ func newDaemonReinstallCmd() *cobra.Command {
 			}
 
 			// Snapshot data before the reimport (nothing to restore if empty).
+			// The backup is deliberately NOT deferred-deleted: once the distro is
+			// unregistered it is the only copy of the user's data, so it must
+			// survive any later failure. It is removed only on full success; on
+			// any error after export its path is reported for manual recovery.
 			var dataPath string
 			if keepData {
 				dp, derr := exportDistroData(cmd)
 				if derr != nil {
 					return derr
 				}
-				if dp != "" {
-					dataPath = dp
-					defer func() { _ = os.Remove(dataPath) }()
-				}
+				dataPath = dp // "" when there was nothing to preserve
 			}
 
 			// Swap the rootfs.
 			if err := wsldistro.Unregister(); err != nil {
+				preserveDataBackup(cmd, dataPath)
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "importing %q from %s ...\n", wsldistro.Name, tarPath)
 			if err := wsldistro.Import(wsldistro.DefaultInstallDir(), tarPath); err != nil {
+				preserveDataBackup(cmd, dataPath)
 				return err
 			}
 
 			// Restore data into the fresh rootfs.
 			if dataPath != "" {
 				if err := importDistroData(cmd, dataPath); err != nil {
+					preserveDataBackup(cmd, dataPath)
 					return err
 				}
 			}
 
 			// Bring the daemon back up on the new rootfs.
-			return launchAndWait(cmd, wcfg, token)
+			if err := launchAndWait(cmd, wcfg, token); err != nil {
+				// Data is already restored into the distro at this point, but keep
+				// the backup too until the user confirms the machine is healthy.
+				preserveDataBackup(cmd, dataPath)
+				return err
+			}
+			if dataPath != "" {
+				_ = os.Remove(dataPath)
+			}
+			return nil
 		},
 	}
 	c.Flags().StringVar(&rootfs, "rootfs", "",
@@ -271,6 +284,17 @@ func exportDistroData(cmd *cobra.Command) (string, error) {
 		return "", nil
 	}
 	return path, nil
+}
+
+// preserveDataBackup tells the user where the data backup was left after a
+// failed reinstall, so they can recover manually instead of losing it. No-op
+// when there was no data to preserve.
+func preserveDataBackup(cmd *cobra.Command, dataPath string) {
+	if dataPath != "" {
+		fmt.Fprintf(cmd.ErrOrStderr(),
+			"warning: reinstall failed after data was exported; your data backup is preserved at:\n  %s\n"+
+				"restore it into the distro under ~/.jerboa once the machine is healthy.\n", dataPath)
+	}
 }
 
 // importDistroData restores a tarball produced by exportDistroData into the

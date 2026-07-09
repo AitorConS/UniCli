@@ -124,6 +124,21 @@ func TestErrNotWindows(t *testing.T) {
 	require.Contains(t, errNotWindows("start").Error(), "only runs on Windows")
 }
 
+func TestPreserveDataBackup(t *testing.T) {
+	// With a backup path it must surface the location on stderr so the user can
+	// recover after a failed reinstall; with no backup it must stay silent.
+	cmd := &cobra.Command{}
+	var buf bytes.Buffer
+	cmd.SetErr(&buf)
+	preserveDataBackup(cmd, `C:\Temp\jerboa-data-123.tar.gz`)
+	require.Contains(t, buf.String(), `C:\Temp\jerboa-data-123.tar.gz`)
+	require.Contains(t, buf.String(), "preserved at")
+
+	buf.Reset()
+	preserveDataBackup(cmd, "")
+	require.Empty(t, buf.String())
+}
+
 func TestDaemonLogPath(t *testing.T) {
 	require.Contains(t, daemonLogPath(), filepath.Join(".jerboa", "jerboad-wsl.log"))
 }
