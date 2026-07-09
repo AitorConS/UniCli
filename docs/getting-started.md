@@ -100,6 +100,11 @@ The desktop app can also manage this runtime for you from its GUI.
 `jerboa daemon install --rootfs <tarball>` imports a locally built distro rootfs
 instead of downloading the release artifact from the signed manifest.
 
+To upgrade the distro to a newer rootfs **without losing your images, VMs and
+networks**, use `jerboa daemon reinstall --keep-data` — it exports your data,
+swaps in the fresh rootfs, and restores the data around the reimport. (Plain
+`jerboa daemon install --force` reimports destructively and wipes that data.)
+
 ---
 
 ## First Start
@@ -334,7 +339,9 @@ jerboa compose down stack.yaml --volumes
 The CLI has no self-update command. How you update depends on the platform:
 
 - **Windows** — update through the **Jerboa Desktop app**, which bundles the CLI
-  (on your PATH) and reconciles the WSL2 daemon/distro runtime for you.
+  (on your PATH) and reconciles the WSL2 daemon/distro runtime for you. To move
+  the WSL2 distro itself onto a newer rootfs while keeping your images, VMs and
+  networks, run `jerboa daemon reinstall --keep-data`.
 - **Linux** — reinstall `jerboa`/`jerboad` yourself (rerun `scripts/install.sh`
   or rebuild from source).
 - **kernel tooling** is managed separately through `jerboa kernel` and is also
