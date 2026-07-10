@@ -117,7 +117,7 @@ func InstallDaemonBinary(localPath string) error {
 // distro) that hold user data worth preserving across a rootfs reimport. The
 // kernel toolchain cache (tools/) is deliberately excluded — it re-downloads on
 // demand, so carrying it would only bloat the archive.
-var DataDirs = []string{"images", "vms", "networks"}
+var DataDirs = []string{"images", "vms", "networks", "volumes"}
 
 // ExportData streams a gzip tarball of the distro's persistent data
 // (DataDirs under $HOME/.jerboa) to w. Piping over stdout avoids translating a
@@ -125,13 +125,21 @@ var DataDirs = []string{"images", "vms", "networks"}
 // (a fresh distro), it writes nothing and returns nil — the caller detects the
 // empty archive by the written size. The daemon should be stopped first so the
 // snapshot is consistent.
+//
+// The script is fed over stdin rather than as a `sh -c` argument on purpose:
+// some wsl.exe builds expand every `$NAME` in the command-line arguments
+// against the Windows-side environment before invoking the Linux shell, which
+// silently blanks the script's own shell variables ($d, $x, $@, $#) and yields
+// an empty archive — losing all user data on reimport. Commands read from stdin
+// are not subject to that interpolation, so the Linux shell expands them.
 func ExportData(w io.Writer) error {
 	// Build the tar argument list from only the directories that exist, so
 	// tar never fails on a missing path; emit nothing when there is no data.
 	script := `d="$HOME/.jerboa"; [ -d "$d" ] || exit 0; cd "$d" || exit 0; ` +
 		`set --; for x in ` + strings.Join(DataDirs, " ") + `; do [ -e "$x" ] && set -- "$@" "$x"; done; ` +
 		`[ "$#" -eq 0 ] && exit 0; exec tar czf - "$@"`
-	cmd := exec.Command("wsl", "-d", Name, "-u", "root", "--", "sh", "-c", script) //nolint:gosec,noctx // fixed program, controlled args
+	cmd := exec.Command("wsl", "-d", Name, "-u", "root", "--", "sh") //nolint:gosec,noctx // fixed program, controlled args
+	cmd.Stdin = strings.NewReader(script)
 	cmd.Stdout = w
 	var errb bytes.Buffer
 	cmd.Stderr = &errb
@@ -142,11 +150,18 @@ func ExportData(w io.Writer) error {
 }
 
 // ImportData restores a gzip tarball previously produced by ExportData into the
-// distro, extracting it under $HOME/.jerboa. Piping over stdin avoids a
-// Windows-path translation. Extracting into the freshly imported rootfs auto-
-// starts the distro.
+// distro, extracting it under ~/.jerboa. Piping over stdin avoids a Windows-path
+// translation. Extracting into the freshly imported rootfs auto-starts the
+// distro.
+//
+// The archive occupies stdin, so — unlike ExportData — the script cannot also be
+// fed there; it must ride as a `sh -c` argument. To stay safe against wsl.exe
+// builds that interpolate `$NAME` in arguments against the Windows-side
+// environment (which would blank $HOME and extract into the wrong directory), the
+// target is written as an unquoted tilde: `~` carries no `$`, so wsl.exe leaves
+// it untouched and the Linux shell expands it to the distro user's home.
 func ImportData(r io.Reader) error {
-	script := `mkdir -p "$HOME/.jerboa" && exec tar xzf - -C "$HOME/.jerboa"`
+	script := `mkdir -p ~/.jerboa && exec tar xzf - -C ~/.jerboa`
 	cmd := exec.Command("wsl", "-d", Name, "-u", "root", "--", "sh", "-c", script) //nolint:gosec,noctx // fixed program, controlled args
 	cmd.Stdin = r
 	if out, err := cmd.CombinedOutput(); err != nil {
