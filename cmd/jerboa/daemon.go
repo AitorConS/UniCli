@@ -150,8 +150,8 @@ func newDaemonInstallCmd() *cobra.Command {
 }
 
 // newDaemonReinstallCmd swaps the distro rootfs for a fresh (or newer) one.
-// With --keep-data it preserves images, VMs and networks across the reimport,
-// the non-destructive alternative to `install --force`.
+// With --keep-data it preserves images, VMs, networks and volumes across the
+// reimport, the non-destructive alternative to `install --force`.
 func newDaemonReinstallCmd() *cobra.Command {
 	var (
 		rootfs   string
@@ -163,7 +163,7 @@ func newDaemonReinstallCmd() *cobra.Command {
 		Short: "Reimport the distro rootfs, optionally preserving data (--keep-data)",
 		Long: "Replace the jerboa distro root filesystem with a fresh (or newer) rootfs.\n\n" +
 			"Unlike `install --force` (which destroys everything), `--keep-data` preserves\n" +
-			"your images, VMs and networks across the reimport: they are exported before the\n" +
+			"your images, VMs, networks and volumes across the reimport: they are exported before the\n" +
 			"swap and restored afterwards. The kernel toolchain cache is not preserved (it\n" +
 			"re-downloads on demand). The daemon is stopped and restarted around the swap.",
 		Args: cobra.NoArgs,
@@ -249,7 +249,7 @@ func newDaemonReinstallCmd() *cobra.Command {
 	c.Flags().StringVar(&rootfs, "rootfs", "",
 		"path to a jerboa rootfs tarball (default: download the release artifact)")
 	c.Flags().BoolVar(&keepData, "keep-data", false,
-		"preserve images, VMs and networks across the reimport")
+		"preserve images, VMs, networks and volumes across the reimport")
 	o.bind(c)
 	return c
 }

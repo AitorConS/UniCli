@@ -45,8 +45,8 @@ func TestInstallDaemonBinary_OpenError(t *testing.T) {
 
 func TestDataDirs_ExcludesToolsCache(t *testing.T) {
 	// The kernel toolchain cache re-downloads on demand, so it must never be in
-	// the preserved set; the user-data dirs must be.
-	require.Equal(t, []string{"images", "vms", "networks"}, DataDirs)
+	// the preserved set; the user-data dirs (including volumes) must be.
+	require.Equal(t, []string{"images", "vms", "networks", "volumes"}, DataDirs)
 	require.NotContains(t, DataDirs, "tools")
 }
 
