@@ -189,7 +189,7 @@ func (s *OpsStore) Download(namespace, name, version string, expectedSHA256 stri
 //   - sysroot/ (shared libraries and filesystem layout)
 //
 // Symlinks are handled on Linux; silently skipped on other platforms.
-func (s *OpsStore) Extract(namespace, name, version string) error {
+func (s *OpsStore) Extract(namespace, name, version string) (err error) {
 	if err := validateOpsRef(namespace, name, version); err != nil {
 		return err
 	}
@@ -199,6 +199,15 @@ func (s *OpsStore) Extract(namespace, name, version string) error {
 
 	dir := s.PackageDir(namespace, name, version)
 	archivePath := filepath.Join(dir, ArchSlug()+".tar.gz")
+
+	// A failed extraction must not leave a half-written tree behind: with no
+	// package.manifest to check the binary against, IsExtracted would report
+	// the partial result as complete on the next call.
+	defer func() {
+		if err != nil {
+			discardExtracted(dir)
+		}
+	}()
 
 	f, err := os.Open(archivePath)
 	if err != nil {
@@ -215,7 +224,7 @@ func (s *OpsStore) Extract(namespace, name, version string) error {
 	tr := tar.NewReader(gz)
 	var stripPrefix string
 	var pendingLinks []pendingLink
-	budget := int64(maxExtractedBytes)
+	budget := maxExtractedBytes
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -257,7 +266,9 @@ func (s *OpsStore) Extract(namespace, name, version string) error {
 
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, fs.FileMode(hdr.Mode).Perm()); err != nil {
+			// Force owner rwx: a 0o555 (or 0o000) directory entry would
+			// otherwise make every later write beneath it fail with EACCES.
+			if err := os.MkdirAll(target, fs.FileMode(hdr.Mode).Perm()|0o700); err != nil {
 				return fmt.Errorf("ops extract mkdir %s: %w", target, err)
 			}
 		case tar.TypeReg:
@@ -278,7 +289,7 @@ func (s *OpsStore) Extract(namespace, name, version string) error {
 				return fmt.Errorf("ops extract close %s: %w", target, err)
 			}
 			if budget < 0 {
-				return fmt.Errorf("ops extract %s: archive expands beyond %d bytes", name, int64(maxExtractedBytes))
+				return fmt.Errorf("ops extract %s: archive expands beyond %d bytes", name, maxExtractedBytes)
 			}
 		case tar.TypeSymlink:
 			// Refuse links resolving outside the package directory. Such a link
@@ -308,10 +319,29 @@ func (s *OpsStore) Extract(namespace, name, version string) error {
 	return nil
 }
 
+// discardExtracted removes everything Extract wrote into an ops package
+// directory, keeping the downloaded archive and the store metadata so a retry
+// does not have to fetch the package again.
+func discardExtracted(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() && (strings.HasSuffix(e.Name(), ".tar.gz") || e.Name() == "manifest.json") {
+			continue
+		}
+		if rmErr := os.RemoveAll(filepath.Join(dir, e.Name())); rmErr != nil {
+			slog.Warn("ops extract: cleanup after failed extraction", "entry", e.Name(), "error", rmErr)
+		}
+	}
+}
+
 // maxExtractedBytes caps the total uncompressed size of a package archive.
 // A gzip stream can expand by orders of magnitude, so a crafted package could
 // otherwise fill the disk. The cap sits far above any real runtime package.
-const maxExtractedBytes = 4 << 30 // 4 GiB
+// It is a var so tests can shrink it instead of building a multi-GiB archive.
+var maxExtractedBytes int64 = 4 << 30 // 4 GiB
 
 // withinDir reports whether path is contained within dir. It defends against
 // archive entries or symlink targets that escape the package directory via "..".
@@ -331,6 +361,8 @@ func withinDir(dir, path string) bool {
 // an earlier entry created "sysroot/x" as a link to somewhere else — os.OpenFile
 // and os.MkdirAll follow links. A component that does not exist yet ends the
 // walk: nothing below it exists either, so there is nothing left to follow.
+// Any other Lstat failure (EACCES, ELOOP) leaves the component unclassified,
+// so the guard reports "traverses" rather than assuming the path is safe.
 func traversesSymlink(dir, path string) bool {
 	rel, err := filepath.Rel(dir, path)
 	if err != nil {
@@ -343,8 +375,11 @@ func traversesSymlink(dir, path string) bool {
 		}
 		cur = filepath.Join(cur, part)
 		info, err := os.Lstat(cur)
-		if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
 			return false
+		}
+		if err != nil {
+			return true
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
 			return true

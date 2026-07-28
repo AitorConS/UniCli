@@ -51,7 +51,10 @@ func validEntry(e memberEntry) bool {
 	if !memberIDPattern.MatchString(e.ID) {
 		return false
 	}
-	if _, _, err := net.SplitHostPort(e.Addr); err != nil {
+	// SplitHostPort accepts "10.0.0.2:" (empty port) without an error, and that
+	// address would be dialled for gossip, so check both halves explicitly.
+	host, port, err := net.SplitHostPort(e.Addr)
+	if err != nil || host == "" || port == "" {
 		return false
 	}
 	switch e.Status {

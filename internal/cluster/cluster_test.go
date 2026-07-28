@@ -95,6 +95,8 @@ func TestSwimCluster_HandleGossip_DropsMalformedEntries(t *testing.T) {
 		{ID: strings.Repeat("a", 500), Addr: "10.0.0.2:7946", Status: StatusAlive},
 		{ID: "", Addr: "10.0.0.2:7946", Status: StatusAlive},
 		{ID: "node-3", Addr: "not-a-host-port", Status: StatusAlive},
+		{ID: "node-3", Addr: "10.0.0.3:", Status: StatusAlive},
+		{ID: "node-3", Addr: ":7946", Status: StatusAlive},
 		{ID: "node-4", Addr: "10.0.0.4:7946", Status: MemberStatus("bogus")},
 	}
 	for _, e := range bad {

@@ -20,6 +20,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -85,16 +86,12 @@ func handleWrite(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("open error: %v", err), http.StatusInternalServerError)
 		return
 	}
-	if _, err := f.WriteString(line); err != nil {
-		_ = f.Close()
+	// The write only reaches a volume-backed disk on Close, so a close failure
+	// matters as much as a write failure: a deferred close would hide it and
+	// still answer 200. Report whichever occurred, or both.
+	_, writeErr := f.WriteString(line)
+	if err := errors.Join(writeErr, f.Close()); err != nil {
 		http.Error(w, fmt.Sprintf("write error: %v", err), http.StatusInternalServerError)
-		return
-	}
-	// Report the close error too: on a volume-backed file the write only
-	// reaches the disk here, so a deferred close would hide the failure and
-	// still answer 200.
-	if err := f.Close(); err != nil {
-		http.Error(w, fmt.Sprintf("close error: %v", err), http.StatusInternalServerError)
 		return
 	}
 	fmt.Fprintf(w, "written: %s", line)

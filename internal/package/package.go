@@ -214,7 +214,7 @@ func (s *Store) RemoveAll(name string) error {
 
 // Extract decompresses the package archive into a files subdirectory.
 // After extraction the individual files can be listed with ExtractedFiles.
-func (s *Store) Extract(pkg Package) error {
+func (s *Store) Extract(pkg Package) (err error) {
 	if err := validatePackageRef(pkg.Name, pkg.Version); err != nil {
 		return err
 	}
@@ -225,6 +225,15 @@ func (s *Store) Extract(pkg Package) error {
 	if s.IsExtracted(pkg.Name, pkg.Version) {
 		return nil
 	}
+
+	// A failed extraction must not leave a half-written tree behind:
+	// IsExtracted only checks that files/ is non-empty, so the next call would
+	// report the truncated -- or attacker-shaped -- result as complete.
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(filesDir)
+		}
+	}()
 
 	f, err := os.Open(archivePath)
 	if err != nil {
@@ -239,7 +248,7 @@ func (s *Store) Extract(pkg Package) error {
 	defer func() { _ = gz.Close() }()
 
 	tr := tar.NewReader(gz)
-	budget := int64(maxExtractedBytes)
+	budget := maxExtractedBytes
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -260,7 +269,9 @@ func (s *Store) Extract(pkg Package) error {
 
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, fs.FileMode(hdr.Mode).Perm()); err != nil {
+			// Force owner rwx: a 0o555 (or 0o000) directory entry would
+			// otherwise make every later write beneath it fail with EACCES.
+			if err := os.MkdirAll(target, fs.FileMode(hdr.Mode).Perm()|0o700); err != nil {
 				return fmt.Errorf("package extract mkdir %s: %w", target, err)
 			}
 		case tar.TypeReg:
@@ -281,7 +292,7 @@ func (s *Store) Extract(pkg Package) error {
 				return fmt.Errorf("package extract close %s: %w", target, err)
 			}
 			if budget < 0 {
-				return fmt.Errorf("package extract %s: archive expands beyond %d bytes", pkg.Name, int64(maxExtractedBytes))
+				return fmt.Errorf("package extract %s: archive expands beyond %d bytes", pkg.Name, maxExtractedBytes)
 			}
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -188,4 +189,106 @@ func TestTraversesSymlink(t *testing.T) {
 	require.False(t, traversesSymlink(dir, filepath.Join(dir, "not", "created", "yet")))
 	require.True(t, traversesSymlink(dir, filepath.Join(dir, "escape")))
 	require.True(t, traversesSymlink(dir, filepath.Join(dir, "escape", "authorized_keys")))
+}
+
+// TestStore_Extract_CleansUpAfterFailure checks that an aborted extraction
+// leaves nothing behind. IsExtracted only tests that files/ is non-empty, so a
+// half-written tree would be served to the next caller as if it were complete.
+func TestStore_Extract_CleansUpAfterFailure(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	require.NoError(t, err)
+
+	pkgDir := store.PackageDir("evilpkg", "1.0.0")
+	require.NoError(t, os.MkdirAll(pkgDir, 0o755))
+
+	f, err := os.Create(filepath.Join(pkgDir, "files.tar.gz"))
+	require.NoError(t, err)
+	gw := gzip.NewWriter(f)
+	tw := tar.NewWriter(gw)
+	// A legitimate entry lands on disk before the traversing one aborts the run.
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name: "bin/app", Typeflag: tar.TypeReg, Size: 2, Mode: 0o755,
+	}))
+	_, err = tw.Write([]byte("ok"))
+	require.NoError(t, err)
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name: "../escaped", Typeflag: tar.TypeReg, Size: 5, Mode: 0o644,
+	}))
+	_, err = tw.Write([]byte("pwned"))
+	require.NoError(t, err)
+	require.NoError(t, tw.Close())
+	require.NoError(t, gw.Close())
+	require.NoError(t, f.Close())
+
+	require.Error(t, store.Extract(Package{Name: "evilpkg", Version: "1.0.0"}))
+
+	_, statErr := os.Stat(filepath.Join(pkgDir, "files"))
+	require.True(t, os.IsNotExist(statErr), "partial extraction must be discarded")
+	require.False(t, store.IsExtracted("evilpkg", "1.0.0"))
+}
+
+// TestOpsStore_Extract_DecompressionBudget checks the cap on uncompressed size
+// and, with it, that a failed ops extraction is discarded while the downloaded
+// archive is kept so a retry does not have to fetch it again.
+func TestOpsStore_Extract_DecompressionBudget(t *testing.T) {
+	orig := maxExtractedBytes
+	maxExtractedBytes = 32
+	t.Cleanup(func() { maxExtractedBytes = orig })
+
+	root := t.TempDir()
+	store, err := NewOpsStore(root)
+	require.NoError(t, err)
+
+	pkgDir := store.PackageDir("eyberg", "fat", "1.0")
+	require.NoError(t, os.MkdirAll(pkgDir, 0o755))
+
+	archive := createOpsPackageArchive(t, map[string]string{
+		"package.manifest": `{"Program":"fat"}`,
+		"fat":              strings.Repeat("A", 128),
+	})
+	archivePath := filepath.Join(pkgDir, ArchSlug()+".tar.gz")
+	require.NoError(t, os.WriteFile(archivePath, archive, 0o644))
+
+	err = store.Extract("eyberg", "fat", "1.0")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "expands beyond")
+
+	require.False(t, store.IsExtracted("eyberg", "fat", "1.0"))
+	_, statErr := os.Stat(archivePath)
+	require.NoError(t, statErr, "the downloaded archive must survive the cleanup")
+}
+
+// TestExtract_ReadOnlyDirEntry checks that a read-only directory entry does not
+// abort the extraction: the archive controls the mode, and 0o555 would make
+// every write beneath it fail with EACCES.
+func TestExtract_ReadOnlyDirEntry(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	require.NoError(t, err)
+
+	pkgDir := store.PackageDir("ropkg", "1.0.0")
+	require.NoError(t, os.MkdirAll(pkgDir, 0o755))
+
+	f, err := os.Create(filepath.Join(pkgDir, "files.tar.gz"))
+	require.NoError(t, err)
+	gw := gzip.NewWriter(f)
+	tw := tar.NewWriter(gw)
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name: "locked", Typeflag: tar.TypeDir, Mode: 0o555,
+	}))
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name: "locked/app", Typeflag: tar.TypeReg, Size: 2, Mode: 0o644,
+	}))
+	_, err = tw.Write([]byte("hi"))
+	require.NoError(t, err)
+	require.NoError(t, tw.Close())
+	require.NoError(t, gw.Close())
+	require.NoError(t, f.Close())
+
+	require.NoError(t, store.Extract(Package{Name: "ropkg", Version: "1.0.0"}))
+
+	files, err := store.ExtractedFiles("ropkg", "1.0.0")
+	require.NoError(t, err)
+	require.Len(t, files, 1)
 }
