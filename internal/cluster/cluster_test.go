@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -82,6 +83,32 @@ func TestSwimCluster_HandleGossip_Discovery(t *testing.T) {
 	require.Equal(t, StatusAlive, remote.Status)
 	require.Equal(t, "127.0.0.1:7947", remote.Addr)
 	require.Equal(t, 3, remote.VMCount)
+}
+
+// TestSwimCluster_HandleGossip_DropsMalformedEntries checks that member data
+// off the wire is validated before it lands in the member table or the logs:
+// gossip is unauthenticated unless a cluster token is configured, so an ID with
+// embedded newlines could otherwise forge log lines.
+func TestSwimCluster_HandleGossip_DropsMalformedEntries(t *testing.T) {
+	bad := []memberEntry{
+		{ID: "node-2\n2026-01-01 INFO forged log line", Addr: "10.0.0.2:7946", Status: StatusAlive},
+		{ID: strings.Repeat("a", 500), Addr: "10.0.0.2:7946", Status: StatusAlive},
+		{ID: "", Addr: "10.0.0.2:7946", Status: StatusAlive},
+		{ID: "node-3", Addr: "not-a-host-port", Status: StatusAlive},
+		{ID: "node-4", Addr: "10.0.0.4:7946", Status: MemberStatus("bogus")},
+	}
+	for _, e := range bad {
+		c := NewSwimCluster("127.0.0.1:7946", 0, 0, 0)
+		c.HandleGossip(gossipPayload{MemberID: "relay", Members: []memberEntry{e}})
+		require.Len(t, c.Members(), 1, "only the local member should remain for entry %q", e.ID)
+	}
+
+	// A well-formed entry still merges.
+	c := NewSwimCluster("127.0.0.1:7946", 0, 0, 0)
+	c.HandleGossip(gossipPayload{MemberID: "relay", Members: []memberEntry{
+		{ID: "node-2", Addr: "10.0.0.2:7946", Status: StatusAlive, LastSeen: time.Now().Format(time.RFC3339)},
+	}})
+	require.Len(t, c.Members(), 2)
 }
 
 func TestSwimCluster_HandleGossip_SuspectRecovery(t *testing.T) {

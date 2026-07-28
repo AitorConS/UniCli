@@ -215,6 +215,7 @@ func (s *OpsStore) Extract(namespace, name, version string) error {
 	tr := tar.NewReader(gz)
 	var stripPrefix string
 	var pendingLinks []pendingLink
+	budget := int64(maxExtractedBytes)
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -247,28 +248,48 @@ func (s *OpsStore) Extract(namespace, name, version string) error {
 			slog.Warn("ops extract: skipping entry outside package dir", "entry", hdr.Name)
 			continue
 		}
+		// A lexically safe path can still resolve outside dir once an earlier
+		// entry has planted a symlink along the way, so re-check the real chain.
+		if traversesSymlink(dir, target) {
+			slog.Warn("ops extract: skipping entry resolving through a symlink", "entry", hdr.Name)
+			continue
+		}
 
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, fs.FileMode(hdr.Mode)); err != nil {
+			if err := os.MkdirAll(target, fs.FileMode(hdr.Mode).Perm()); err != nil {
 				return fmt.Errorf("ops extract mkdir %s: %w", target, err)
 			}
 		case tar.TypeReg:
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return fmt.Errorf("ops extract mkdir %s: %w", filepath.Dir(target), err)
 			}
-			out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, fs.FileMode(hdr.Mode)|0o200)
+			out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, fs.FileMode(hdr.Mode).Perm()|0o200)
 			if err != nil {
 				return fmt.Errorf("ops extract create %s: %w", target, err)
 			}
-			if _, err := io.Copy(out, tr); err != nil {
+			n, err := io.Copy(out, io.LimitReader(tr, budget+1))
+			budget -= n
+			if err != nil {
 				_ = out.Close()
 				return fmt.Errorf("ops extract write %s: %w", target, err)
 			}
 			if err := out.Close(); err != nil {
 				return fmt.Errorf("ops extract close %s: %w", target, err)
 			}
+			if budget < 0 {
+				return fmt.Errorf("ops extract %s: archive expands beyond %d bytes", name, int64(maxExtractedBytes))
+			}
 		case tar.TypeSymlink:
+			// Refuse links resolving outside the package directory. Such a link
+			// is itself harmless, but a later entry writing "through" it passes
+			// the withinDir check above while landing outside dir on disk.
+			linkTarget, ok := resolveLinkname(dir, target, hdr.Linkname)
+			if !ok {
+				slog.Warn("ops extract: skipping symlink pointing outside package dir",
+					"entry", hdr.Name, "linkname", hdr.Linkname)
+				continue
+			}
 			if runtime.GOOS == "linux" {
 				if err := os.Symlink(hdr.Linkname, target); err != nil {
 					slog.Warn("ops extract: symlink failed", "target", target, "error", err)
@@ -280,15 +301,22 @@ func (s *OpsStore) Extract(namespace, name, version string) error {
 			// binaries load at runtime. Record the link and materialize it as a
 			// real file copy after extraction (ExtractedFiles only walks regular
 			// files on disk, so a skipped link would never reach the image).
-			pendingLinks = append(pendingLinks, pendingLink{path: target, linkname: hdr.Linkname})
+			pendingLinks = append(pendingLinks, pendingLink{path: target, resolved: linkTarget, linkname: hdr.Linkname})
 		}
 	}
-	materializeLinks(dir, pendingLinks)
+	materializeLinks(pendingLinks)
 	return nil
 }
 
+// maxExtractedBytes caps the total uncompressed size of a package archive.
+// A gzip stream can expand by orders of magnitude, so a crafted package could
+// otherwise fill the disk. The cap sits far above any real runtime package.
+const maxExtractedBytes = 4 << 30 // 4 GiB
+
 // withinDir reports whether path is contained within dir. It defends against
 // archive entries or symlink targets that escape the package directory via "..".
+// The comparison is lexical only — use traversesSymlink as well when the path is
+// about to be written to.
 func withinDir(dir, path string) bool {
 	rel, err := filepath.Rel(dir, path)
 	if err != nil {
@@ -297,33 +325,76 @@ func withinDir(dir, path string) bool {
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
 }
 
+// traversesSymlink reports whether any component of path, from dir down to the
+// leaf, already exists on disk as a symlink. Archive entries are validated
+// lexically, but an entry named "sysroot/x/f" is still written outside dir when
+// an earlier entry created "sysroot/x" as a link to somewhere else — os.OpenFile
+// and os.MkdirAll follow links. A component that does not exist yet ends the
+// walk: nothing below it exists either, so there is nothing left to follow.
+func traversesSymlink(dir, path string) bool {
+	rel, err := filepath.Rel(dir, path)
+	if err != nil {
+		return true
+	}
+	cur := dir
+	for _, part := range strings.Split(rel, string(os.PathSeparator)) {
+		if part == "" || part == "." {
+			continue
+		}
+		cur = filepath.Join(cur, part)
+		info, err := os.Lstat(cur)
+		if err != nil {
+			return false
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveLinkname resolves a tar symlink header (a link at target pointing at
+// linkname) to the path it designates on disk, reporting false when the link
+// escapes dir. Absolute link targets are always refused: inside a package they
+// only ever point at host paths, which are meaningless in the built image.
+func resolveLinkname(dir, target, linkname string) (string, bool) {
+	// Tar link names are POSIX paths, so a leading "/" means absolute even on a
+	// Windows host where filepath.IsAbs would say otherwise.
+	if linkname == "" || strings.HasPrefix(linkname, "/") {
+		return "", false
+	}
+	src := filepath.FromSlash(linkname)
+	if filepath.IsAbs(src) || filepath.VolumeName(src) != "" {
+		return "", false
+	}
+	src = filepath.Join(filepath.Dir(target), src)
+	if !withinDir(dir, src) {
+		return "", false
+	}
+	return src, true
+}
+
 // pendingLink records a tar symlink to be turned into a real file copy on hosts
 // that cannot create symlinks.
 type pendingLink struct {
 	path     string // absolute path where the link should exist
-	linkname string // raw link target from the tar header
+	resolved string // link target resolved against path, validated inside the package dir
+	linkname string // raw link target from the tar header, for diagnostics
 }
 
 // materializeLinks turns recorded symlinks into real file copies. Soname links
 // such as libpq.so.5 -> libpq.so.5.11 must survive as regular files because the
 // image build only includes regular files on disk. Multiple passes resolve
 // chains where a link points at another link.
-func materializeLinks(dir string, links []pendingLink) {
+func materializeLinks(links []pendingLink) {
 	remaining := links
 	for len(remaining) > 0 {
 		var next []pendingLink
 		progressed := false
 		for _, l := range remaining {
-			src := filepath.FromSlash(l.linkname)
-			if !filepath.IsAbs(src) {
-				src = filepath.Join(filepath.Dir(l.path), src)
-			}
-			// Defend against a symlink target that escapes the package directory
-			// ("Zip Slip" via the link name): never copy from outside dir.
-			if !withinDir(dir, src) {
-				slog.Warn("ops extract: skipping symlink with target outside package dir", "target", l.path, "linkname", l.linkname)
-				continue
-			}
+			// l.resolved was already validated against dir when the header was
+			// read, so a link target outside the package never reaches the copy.
+			src := l.resolved
 			info, err := os.Stat(src) // follows: src may be a copy made in a prior pass
 			if err != nil || info.IsDir() {
 				next = append(next, l) // target not materialized yet; retry next pass

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +33,33 @@ type Member struct {
 	CPUCap   int          `json:"cpu_capacity"`
 	MemCap   int64        `json:"mem_capacity_bytes"`
 	LastSeen time.Time    `json:"last_seen"`
+}
+
+// memberIDPattern is the shape a gossiped member ID must have to be merged:
+// the hex quartets generateID produces, plus the punctuation operators use for
+// hand-set node names. Anything else — control characters that would forge log
+// lines, or an unbounded blob that would bloat the member table — is dropped.
+var memberIDPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
+
+// maxGossipBody bounds the request body accepted by the gossip handler, which
+// is unauthenticated unless a cluster token is configured.
+const maxGossipBody = 1 << 20 // 1 MiB
+
+// validEntry reports whether a member entry received over gossip is well-formed
+// enough to merge into the member table.
+func validEntry(e memberEntry) bool {
+	if !memberIDPattern.MatchString(e.ID) {
+		return false
+	}
+	if _, _, err := net.SplitHostPort(e.Addr); err != nil {
+		return false
+	}
+	switch e.Status {
+	case StatusAlive, StatusSuspect, StatusDead, StatusLeft:
+	default:
+		return false
+	}
+	return true
 }
 
 type gossipPayload struct {
@@ -348,6 +376,12 @@ func (c *SwimCluster) mergeEntriesLocked(entries []memberEntry) {
 		if e.ID == c.local.ID {
 			continue
 		}
+		if !validEntry(e) {
+			// Dropped rather than logged verbatim: the entry is unauthenticated
+			// wire data unless a cluster token is configured.
+			slog.Warn("cluster: dropping malformed gossip entry")
+			continue
+		}
 		existing, ok := c.members[e.ID]
 		entryTime, _ := time.Parse(time.RFC3339, e.LastSeen)
 
@@ -423,7 +457,7 @@ func RegisterGossipHandler(mux *http.ServeMux, cluster *SwimCluster) {
 			return
 		}
 		var payload gossipPayload
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxGossipBody)).Decode(&payload); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}

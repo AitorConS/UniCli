@@ -239,6 +239,7 @@ func (s *Store) Extract(pkg Package) error {
 	defer func() { _ = gz.Close() }()
 
 	tr := tar.NewReader(gz)
+	budget := int64(maxExtractedBytes)
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -248,34 +249,39 @@ func (s *Store) Extract(pkg Package) error {
 			return fmt.Errorf("package extract tar %s: %w", pkg.Name, err)
 		}
 
-		cleanName := filepath.Clean(hdr.Name)
-		if strings.HasPrefix(cleanName, "..") || strings.HasPrefix(cleanName, "/") {
-			return fmt.Errorf("package extract: insecure path %q in archive", hdr.Name)
-		}
-		target := filepath.Join(filesDir, cleanName)
-		if !strings.HasPrefix(filepath.Clean(target), filepath.Clean(filesDir)+string(os.PathSeparator)) && cleanName != "." {
+		// Defend against archive path traversal ("Zip Slip"). filepath.Join
+		// cleans the joined path, so an entry named "a/../../b" lands outside
+		// filesDir and is caught here; one named "/etc/passwd" is re-rooted
+		// under filesDir by Join and stays contained.
+		target := filepath.Join(filesDir, filepath.FromSlash(hdr.Name))
+		if !withinDir(filesDir, target) {
 			return fmt.Errorf("package extract: path %q escapes extraction directory", hdr.Name)
 		}
 
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, fs.FileMode(hdr.Mode)); err != nil {
+			if err := os.MkdirAll(target, fs.FileMode(hdr.Mode).Perm()); err != nil {
 				return fmt.Errorf("package extract mkdir %s: %w", target, err)
 			}
 		case tar.TypeReg:
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return fmt.Errorf("package extract mkdir %s: %w", filepath.Dir(target), err)
 			}
-			out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, fs.FileMode(hdr.Mode))
+			out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, fs.FileMode(hdr.Mode).Perm())
 			if err != nil {
 				return fmt.Errorf("package extract create %s: %w", target, err)
 			}
-			if _, err := io.Copy(out, tr); err != nil {
+			n, err := io.Copy(out, io.LimitReader(tr, budget+1))
+			budget -= n
+			if err != nil {
 				_ = out.Close()
 				return fmt.Errorf("package extract write %s: %w", target, err)
 			}
 			if err := out.Close(); err != nil {
 				return fmt.Errorf("package extract close %s: %w", target, err)
+			}
+			if budget < 0 {
+				return fmt.Errorf("package extract %s: archive expands beyond %d bytes", pkg.Name, int64(maxExtractedBytes))
 			}
 		}
 	}
