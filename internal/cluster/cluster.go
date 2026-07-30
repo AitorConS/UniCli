@@ -52,7 +52,7 @@ func validEntry(e memberEntry) bool {
 		return false
 	}
 	// SplitHostPort accepts "10.0.0.2:" (empty port) without an error, and that
-	// address would be dialled for gossip, so check both halves explicitly.
+	// address would be dialed for gossip, so check both halves explicitly.
 	host, port, err := net.SplitHostPort(e.Addr)
 	if err != nil || host == "" || port == "" {
 		return false
