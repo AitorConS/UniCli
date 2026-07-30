@@ -258,13 +258,17 @@ func (s *Store) Extract(pkg Package) (err error) {
 			return fmt.Errorf("package extract tar %s: %w", pkg.Name, err)
 		}
 
-		// Defend against archive path traversal ("Zip Slip"). filepath.Join
-		// cleans the joined path, so an entry named "a/../../b" lands outside
-		// filesDir and is caught here; one named "/etc/passwd" is re-rooted
-		// under filesDir by Join and stays contained.
-		target := filepath.Join(filesDir, filepath.FromSlash(hdr.Name))
-		if !withinDir(filesDir, target) {
+		// Defend against archive path traversal ("Zip Slip"). safePath cleans
+		// and validates the entry name, rejecting entries that would escape
+		// filesDir via ".." or other path tricks.
+		target, ok := safePath(filesDir, hdr.Name)
+		if !ok {
 			return fmt.Errorf("package extract: path %q escapes extraction directory", hdr.Name)
+		}
+		// A lexically safe path can still resolve outside filesDir if an earlier
+		// entry planted a symlink along the way, so check the real chain.
+		if traversesSymlink(filesDir, target) {
+			return fmt.Errorf("package extract: path %q resolves through a symlink", hdr.Name)
 		}
 
 		switch hdr.Typeflag {

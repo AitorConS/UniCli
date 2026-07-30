@@ -249,11 +249,11 @@ func (s *OpsStore) Extract(namespace, name, version string) (err error) {
 			continue
 		}
 
-		target := filepath.Join(dir, entryName)
 		// Defend against archive path traversal ("Zip Slip"): an entry whose name
 		// contains ".." could otherwise resolve outside the package directory and
 		// overwrite arbitrary files. Skip any entry that escapes dir.
-		if !withinDir(dir, target) {
+		target, ok := safePath(dir, entryName)
+		if !ok {
 			slog.Warn("ops extract: skipping entry outside package dir", "entry", hdr.Name)
 			continue
 		}
@@ -353,6 +353,31 @@ func withinDir(dir, path string) bool {
 		return false
 	}
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
+}
+
+// safePath sanitizes an archive entry name and returns the absolute path within
+// baseDir. It returns ("", false) if the entry would escape baseDir. This function
+// uses a pattern that static analyzers (CodeQL) recognize as a Zip Slip mitigation:
+// filepath.Clean on the untrusted name, followed by strings.HasPrefix on the result.
+func safePath(baseDir, entryName string) (string, bool) {
+	// Clean the entry name to resolve any ".." or other path tricks
+	cleanName := filepath.Clean(filepath.FromSlash(entryName))
+	if cleanName == "." {
+		return "", false
+	}
+	// Reject entries that start with ".." after cleaning
+	if strings.HasPrefix(cleanName, ".."+string(os.PathSeparator)) || cleanName == ".." {
+		return "", false
+	}
+	// Join with base directory and verify the result is contained
+	target := filepath.Join(baseDir, cleanName)
+	cleanBase := filepath.Clean(baseDir)
+	cleanTarget := filepath.Clean(target)
+	// The target must start with the base directory path
+	if !strings.HasPrefix(cleanTarget, cleanBase+string(os.PathSeparator)) && cleanTarget != cleanBase {
+		return "", false
+	}
+	return cleanTarget, true
 }
 
 // traversesSymlink reports whether any component of path, from dir down to the

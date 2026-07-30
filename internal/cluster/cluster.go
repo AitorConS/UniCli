@@ -65,6 +65,23 @@ func validEntry(e memberEntry) bool {
 	return true
 }
 
+// sanitizeForLog returns a copy of the entry with fields sanitized for safe logging.
+// This function is called AFTER validEntry has accepted the entry, so the values
+// already match memberIDPattern and are valid host:port pairs. The explicit copy
+// ensures static analyzers recognize the sanitization boundary.
+func sanitizeForLog(e memberEntry) (id, addr string) {
+	// Re-validate to satisfy static analysis taint tracking. The regex and
+	// SplitHostPort guarantee no control characters reach the log output.
+	if !memberIDPattern.MatchString(e.ID) {
+		return "[invalid]", "[invalid]"
+	}
+	host, port, err := net.SplitHostPort(e.Addr)
+	if err != nil || host == "" || port == "" {
+		return e.ID, "[invalid]"
+	}
+	return e.ID, net.JoinHostPort(host, port)
+}
+
 type gossipPayload struct {
 	MemberID string        `json:"member_id"`
 	Members  []memberEntry `json:"members"`
@@ -398,7 +415,8 @@ func (c *SwimCluster) mergeEntriesLocked(entries []memberEntry) {
 				MemCap:   e.MemCap,
 				LastSeen: entryTime,
 			}
-			slog.Info("cluster member discovered", "member", e.ID, "addr", e.Addr)
+			safeID, safeAddr := sanitizeForLog(e)
+			slog.Info("cluster member discovered", "member", safeID, "addr", safeAddr)
 			continue
 		}
 
