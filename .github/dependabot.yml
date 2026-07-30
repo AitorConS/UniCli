@@ -22,3 +22,16 @@ updates:
         patterns:
           - "*"
 
+  # The Next.js demo. Its lockfile is not shipped anywhere, but without version
+  # updates it drifts until security alerts pile up on transitive dependencies
+  # that no one can bump — which is how postcss and sharp got stuck.
+  - package-ecosystem: npm
+    directory: "/examples/nextapp"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      nextapp:
+        patterns:
+          - "*"
+
