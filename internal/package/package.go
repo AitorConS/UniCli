@@ -264,13 +264,12 @@ func (s *Store) Extract(pkg Package) (err error) {
 		if _, ok := safePath(filesDir, hdr.Name); !ok {
 			return fmt.Errorf("package extract: path %q escapes extraction directory", hdr.Name)
 		}
-		// Canonical zip-slip guard: build the write target inline from the cleaned
-		// entry name and confirm it stays within filesDir. safePath enforces the same
-		// invariant, but taint trackers only credit a HasPrefix barrier computed in
-		// the function that performs the write, so target is derived and checked here.
-		cleanBase := filepath.Clean(filesDir)
-		target := filepath.Join(cleanBase, filepath.Clean(filepath.FromSlash(hdr.Name)))
-		if target != cleanBase && !strings.HasPrefix(target, cleanBase+string(os.PathSeparator)) {
+		// Canonical zip-slip guard: filepath.Join cleans the entry name (resolving
+		// any ".."), then HasPrefix confirms the result stays within filesDir.
+		// safePath enforces the same invariant, but taint trackers only credit a
+		// HasPrefix barrier computed in the function that performs the write.
+		target := filepath.Join(filesDir, hdr.Name)
+		if !strings.HasPrefix(target, filepath.Clean(filesDir)+string(os.PathSeparator)) {
 			return fmt.Errorf("package extract: path %q escapes extraction directory", hdr.Name)
 		}
 		// A lexically safe path can still resolve outside filesDir if an earlier
