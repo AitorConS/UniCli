@@ -70,16 +70,25 @@ func validEntry(e memberEntry) bool {
 // already match memberIDPattern and are valid host:port pairs. The explicit copy
 // ensures static analyzers recognize the sanitization boundary.
 func sanitizeForLog(e memberEntry) (id, addr string) {
-	// Re-validate to satisfy static analysis taint tracking. The regex and
-	// SplitHostPort guarantee no control characters reach the log output.
 	if !memberIDPattern.MatchString(e.ID) {
 		return "[invalid]", "[invalid]"
 	}
 	host, port, err := net.SplitHostPort(e.Addr)
 	if err != nil || host == "" || port == "" {
-		return e.ID, "[invalid]"
+		return stripLogControl(e.ID), "[invalid]"
 	}
-	return e.ID, net.JoinHostPort(host, port)
+	return stripLogControl(e.ID), net.JoinHostPort(host, port)
+}
+
+// stripLogControl removes carriage returns and newlines so a value cannot forge
+// or split log lines (log injection). It is a plain string transformation rather
+// than a regex guard: taint trackers model strings.ReplaceAll as a sanitizer that
+// crosses function boundaries, whereas a MatchString guard only clears taint
+// inside the function that performs it.
+func stripLogControl(s string) string {
+	s = strings.ReplaceAll(s, "\r", "")
+	s = strings.ReplaceAll(s, "\n", "")
+	return s
 }
 
 type gossipPayload struct {

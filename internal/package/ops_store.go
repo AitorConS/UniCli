@@ -257,6 +257,15 @@ func (s *OpsStore) Extract(namespace, name, version string) (err error) {
 			slog.Warn("ops extract: skipping entry outside package dir", "entry", hdr.Name)
 			continue
 		}
+		// Inline containment check on the exact path value used at the sinks below.
+		// safePath already enforces this, but taint trackers only recognize a
+		// HasPrefix barrier guard within the function that writes the file, so the
+		// guard is repeated here rather than trusted across the safePath boundary.
+		cleanDir := filepath.Clean(dir)
+		if target != cleanDir && !strings.HasPrefix(target, cleanDir+string(os.PathSeparator)) {
+			slog.Warn("ops extract: skipping entry outside package dir", "entry", hdr.Name)
+			continue
+		}
 		// A lexically safe path can still resolve outside dir once an earlier
 		// entry has planted a symlink along the way, so re-check the real chain.
 		if traversesSymlink(dir, target) {

@@ -265,6 +265,14 @@ func (s *Store) Extract(pkg Package) (err error) {
 		if !ok {
 			return fmt.Errorf("package extract: path %q escapes extraction directory", hdr.Name)
 		}
+		// Inline containment check on the exact path value used at the sinks below.
+		// safePath already enforces this, but taint trackers only recognize a
+		// HasPrefix barrier guard within the function that writes the file, so the
+		// guard is repeated here rather than trusted across the safePath boundary.
+		cleanBase := filepath.Clean(filesDir)
+		if target != cleanBase && !strings.HasPrefix(target, cleanBase+string(os.PathSeparator)) {
+			return fmt.Errorf("package extract: path %q escapes extraction directory", hdr.Name)
+		}
 		// A lexically safe path can still resolve outside filesDir if an earlier
 		// entry planted a symlink along the way, so check the real chain.
 		if traversesSymlink(filesDir, target) {
