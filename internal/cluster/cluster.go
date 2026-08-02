@@ -77,7 +77,7 @@ func sanitizeForLog(e memberEntry) (id, addr string) {
 	if err != nil || host == "" || port == "" {
 		return stripLogControl(e.ID), "[invalid]"
 	}
-	return stripLogControl(e.ID), net.JoinHostPort(host, port)
+	return stripLogControl(e.ID), stripLogControl(net.JoinHostPort(host, port))
 }
 
 // stripLogControl removes carriage returns and newlines so a value cannot forge

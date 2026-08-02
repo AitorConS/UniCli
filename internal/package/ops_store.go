@@ -252,16 +252,16 @@ func (s *OpsStore) Extract(namespace, name, version string) (err error) {
 		// Defend against archive path traversal ("Zip Slip"): an entry whose name
 		// contains ".." could otherwise resolve outside the package directory and
 		// overwrite arbitrary files. Skip any entry that escapes dir.
-		target, ok := safePath(dir, entryName)
-		if !ok {
+		if _, ok := safePath(dir, entryName); !ok {
 			slog.Warn("ops extract: skipping entry outside package dir", "entry", hdr.Name)
 			continue
 		}
-		// Inline containment check on the exact path value used at the sinks below.
-		// safePath already enforces this, but taint trackers only recognize a
-		// HasPrefix barrier guard within the function that writes the file, so the
-		// guard is repeated here rather than trusted across the safePath boundary.
+		// Canonical zip-slip guard: build the write target inline from the cleaned
+		// entry name and confirm it stays within dir. safePath enforces the same
+		// invariant, but taint trackers only credit a HasPrefix barrier computed in
+		// the function that performs the write, so target is derived and checked here.
 		cleanDir := filepath.Clean(dir)
+		target := filepath.Join(cleanDir, filepath.Clean(filepath.FromSlash(entryName)))
 		if target != cleanDir && !strings.HasPrefix(target, cleanDir+string(os.PathSeparator)) {
 			slog.Warn("ops extract: skipping entry outside package dir", "entry", hdr.Name)
 			continue
