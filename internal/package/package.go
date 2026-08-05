@@ -214,7 +214,7 @@ func (s *Store) RemoveAll(name string) error {
 
 // Extract decompresses the package archive into a files subdirectory.
 // After extraction the individual files can be listed with ExtractedFiles.
-func (s *Store) Extract(pkg Package) error {
+func (s *Store) Extract(pkg Package) (err error) {
 	if err := validatePackageRef(pkg.Name, pkg.Version); err != nil {
 		return err
 	}
@@ -225,6 +225,15 @@ func (s *Store) Extract(pkg Package) error {
 	if s.IsExtracted(pkg.Name, pkg.Version) {
 		return nil
 	}
+
+	// A failed extraction must not leave a half-written tree behind:
+	// IsExtracted only checks that files/ is non-empty, so the next call would
+	// report the truncated -- or attacker-shaped -- result as complete.
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(filesDir)
+		}
+	}()
 
 	f, err := os.Open(archivePath)
 	if err != nil {
@@ -239,6 +248,7 @@ func (s *Store) Extract(pkg Package) error {
 	defer func() { _ = gz.Close() }()
 
 	tr := tar.NewReader(gz)
+	budget := maxExtractedBytes
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -248,34 +258,59 @@ func (s *Store) Extract(pkg Package) error {
 			return fmt.Errorf("package extract tar %s: %w", pkg.Name, err)
 		}
 
-		cleanName := filepath.Clean(hdr.Name)
-		if strings.HasPrefix(cleanName, "..") || strings.HasPrefix(cleanName, "/") {
-			return fmt.Errorf("package extract: insecure path %q in archive", hdr.Name)
+		// tar -C dir . prepends a "." / "./" root entry that maps to filesDir
+		// itself; it needs no extraction and would otherwise trip the containment
+		// guard below, so skip it while still validating every child entry.
+		if filepath.Clean(filepath.FromSlash(hdr.Name)) == "." {
+			continue
 		}
-		target := filepath.Join(filesDir, cleanName)
-		if !strings.HasPrefix(filepath.Clean(target), filepath.Clean(filesDir)+string(os.PathSeparator)) && cleanName != "." {
+
+		// Defend against archive path traversal ("Zip Slip"). safePath cleans
+		// and validates the entry name, rejecting entries that would escape
+		// filesDir via ".." or other path tricks.
+		if !safePath(filesDir, hdr.Name) {
 			return fmt.Errorf("package extract: path %q escapes extraction directory", hdr.Name)
+		}
+		// Canonical zip-slip guard: filepath.Join cleans the entry name (resolving
+		// any ".."), then HasPrefix confirms the result stays within filesDir.
+		// safePath enforces the same invariant, but taint trackers only credit a
+		// HasPrefix barrier computed in the function that performs the write.
+		target := filepath.Join(filesDir, hdr.Name)
+		if !strings.HasPrefix(target, filepath.Clean(filesDir)+string(os.PathSeparator)) {
+			return fmt.Errorf("package extract: path %q escapes extraction directory", hdr.Name)
+		}
+		// A lexically safe path can still resolve outside filesDir if an earlier
+		// entry planted a symlink along the way, so check the real chain.
+		if traversesSymlink(filesDir, target) {
+			return fmt.Errorf("package extract: path %q resolves through a symlink", hdr.Name)
 		}
 
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, fs.FileMode(hdr.Mode)); err != nil {
+			// Force owner rwx: a 0o555 (or 0o000) directory entry would
+			// otherwise make every later write beneath it fail with EACCES.
+			if err := os.MkdirAll(target, fs.FileMode(hdr.Mode).Perm()|0o700); err != nil {
 				return fmt.Errorf("package extract mkdir %s: %w", target, err)
 			}
 		case tar.TypeReg:
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return fmt.Errorf("package extract mkdir %s: %w", filepath.Dir(target), err)
 			}
-			out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, fs.FileMode(hdr.Mode))
+			out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, fs.FileMode(hdr.Mode).Perm())
 			if err != nil {
 				return fmt.Errorf("package extract create %s: %w", target, err)
 			}
-			if _, err := io.Copy(out, tr); err != nil {
+			n, err := io.Copy(out, io.LimitReader(tr, budget+1))
+			budget -= n
+			if err != nil {
 				_ = out.Close()
 				return fmt.Errorf("package extract write %s: %w", target, err)
 			}
 			if err := out.Close(); err != nil {
 				return fmt.Errorf("package extract close %s: %w", target, err)
+			}
+			if budget < 0 {
+				return fmt.Errorf("package extract %s: archive expands beyond %d bytes", pkg.Name, maxExtractedBytes)
 			}
 		}
 	}
