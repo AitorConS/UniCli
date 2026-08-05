@@ -191,6 +191,35 @@ func TestTraversesSymlink(t *testing.T) {
 	require.True(t, traversesSymlink(dir, filepath.Join(dir, "escape", "authorized_keys")))
 }
 
+// TestResolvesWithinDir covers the EvalSymlinks-based containment check used
+// before creating a symlink. It must follow real links (a path leading through
+// an escaping link is rejected), tolerate a not-yet-extracted trailing
+// component, and keep ordinary in-tree paths.
+func TestResolvesWithinDir(t *testing.T) {
+	dir := t.TempDir()
+	outside := t.TempDir()
+
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "sysroot", "lib"), 0o755))
+	if err := os.Symlink(outside, filepath.Join(dir, "escape")); err != nil {
+		t.Skipf("symlink creation unavailable: %v", err)
+	}
+
+	// Plain in-tree paths stay contained, whether or not the leaf exists yet.
+	require.True(t, resolvesWithinDir(dir, filepath.Join(dir, "sysroot", "lib")))
+	require.True(t, resolvesWithinDir(dir, filepath.Join(dir, "sysroot", "lib", "libc.so.6")))
+	require.True(t, resolvesWithinDir(dir, filepath.Join(dir, "not", "created", "yet")))
+
+	// A path whose parent is an escaping symlink resolves outside dir.
+	require.False(t, resolvesWithinDir(dir, filepath.Join(dir, "escape")))
+	require.False(t, resolvesWithinDir(dir, filepath.Join(dir, "escape", "authorized_keys")))
+
+	// evalSymlinksLenient resolves the longest existing prefix and re-appends the
+	// missing tail rather than failing outright.
+	resolved, err := evalSymlinksLenient(filepath.Join(dir, "sysroot", "lib", "does", "not", "exist"))
+	require.NoError(t, err)
+	require.True(t, withinDir(dir, resolved))
+}
+
 // TestStore_Extract_CleansUpAfterFailure checks that an aborted extraction
 // leaves nothing behind. IsExtracted only tests that files/ is non-empty, so a
 // half-written tree would be served to the next caller as if it were complete.
