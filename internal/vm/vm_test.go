@@ -66,8 +66,10 @@ func TestVM_transition_invalid(t *testing.T) {
 	}
 	for _, tc := range cases {
 		v := &VM{ID: "test", State: tc.from, done: make(chan struct{})}
-		require.Error(t, v.transition(tc.to))
-		require.Equal(t, tc.from, v.GetState())
+		err := v.transition(tc.to)
+		require.ErrorIs(t, err, ErrInvalidTransition,
+			"transition %s → %s must be rejected as invalid", tc.from, tc.to)
+		require.Equal(t, tc.from, v.GetState(), "a rejected transition must not change state")
 	}
 }
 

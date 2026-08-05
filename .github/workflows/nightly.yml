@@ -33,7 +33,7 @@ jobs:
           cache: false
 
       - name: Run unit tests
-        run: go test ./cmd/... ./internal/... -race -count=1 -coverprofile=coverage.out -covermode=atomic
+        run: go test ./cmd/... ./internal/... -race -shuffle=on -count=1 -coverprofile=coverage.out -covermode=atomic
 
   kernel-tests:
     name: Full Kernel Test Suite
@@ -284,6 +284,41 @@ jobs:
           name: image-benchmarks-${{ github.run_id }}
           path: bench-image.json
 
+  fuzz-extended:
+    name: Fuzz (extended)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.25.12'
+          cache: true
+
+      - name: Fuzz every target for several minutes
+        # A deeper nightly counterpart to the per-PR fuzz-smoke job: each parser
+        # target gets a long burst to find crashers the 20s PR budget misses.
+        run: |
+          set -euo pipefail
+          for pkg in $(go list ./cmd/... ./internal/...); do
+            for fn in $(go test -list '^Fuzz' "$pkg" 2>/dev/null | grep '^Fuzz' || true); do
+              echo "::group::fuzz ${fn} (${pkg})"
+              go test -run '^$' -fuzz "^${fn}$" -fuzztime=3m "$pkg"
+              echo "::endgroup::"
+            done
+          done
+
+      - name: Upload any fuzz crashers
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-crashers-${{ github.run_id }}
+          path: '**/testdata/fuzz/**'
+          if-no-files-found: ignore
+
   security-scan:
     name: Security Scan
     runs-on: ubuntu-latest
@@ -315,7 +350,7 @@ jobs:
   notify-on-failure:
     name: Notify on Failure
     runs-on: ubuntu-latest
-    needs: [unit-tests, kernel-tests, integration-tests, benchmarks, security-scan, image-benchmarks]
+    needs: [unit-tests, kernel-tests, integration-tests, benchmarks, security-scan, image-benchmarks, fuzz-extended]
     if: failure()
     steps:
       - name: Notify

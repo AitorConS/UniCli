@@ -78,7 +78,10 @@ jobs:
           cache: true
 
       - name: Run unit tests
-        run: go test ./cmd/... ./internal/... -race -count=1 -coverprofile=coverage.out -covermode=atomic
+        # -shuffle=on randomises test/package order each run so an accidental
+        # dependency between tests (shared global, execution-order coupling)
+        # surfaces here instead of intermittently in production.
+        run: go test ./cmd/... ./internal/... -race -shuffle=on -count=1 -coverprofile=coverage.out -covermode=atomic
 
       - name: Coverage summary
         run: go tool cover -func=coverage.out | tail -1
@@ -116,6 +119,41 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.5.0
           govulncheck ./...
+
+  fuzz-smoke:
+    name: Fuzz Smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.25.12'
+          cache: true
+
+      - name: Fuzz every target for a short burst
+        # Fuzz targets guard the parsers on the untrusted RPC/CLI surface
+        # (frame reader, resource-name validator, port-spec parser). A brief
+        # burst per PR catches newly introduced crashers and property
+        # violations; nightly.yml runs the same targets for much longer.
+        run: |
+          set -euo pipefail
+          found=0
+          for pkg in $(go list ./cmd/... ./internal/...); do
+            for fn in $(go test -list '^Fuzz' "$pkg" 2>/dev/null | grep '^Fuzz' || true); do
+              found=1
+              echo "::group::fuzz ${fn} (${pkg})"
+              go test -run '^$' -fuzz "^${fn}$" -fuzztime=20s "$pkg"
+              echo "::endgroup::"
+            done
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "::error::no fuzz targets found — expected FuzzFrameReader, FuzzValidateResourceName, etc."
+            exit 1
+          fi
 
   kernel-build:
     name: Kernel Build

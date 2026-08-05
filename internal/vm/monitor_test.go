@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 )
 
 func TestQEMUManager_Start_AttachMode(t *testing.T) {
@@ -214,6 +215,8 @@ func TestQEMUManager_Start_FailsLaunch(t *testing.T) {
 }
 
 func TestHealthChecker_Run_DoneStops(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	hc := NewHealthChecker()
 	done := make(chan struct{})
 	p := &healthProbe{
@@ -223,20 +226,22 @@ func TestHealthChecker_Run_DoneStops(t *testing.T) {
 			State: StateRunning,
 			done:  make(chan struct{}),
 		},
-		cfg:  HealthCheckConfig{Type: "tcp", Port: 1, Interval: 50 * time.Millisecond, Timeout: 50 * time.Millisecond, Retries: 1},
+		cfg:  HealthCheckConfig{Type: "tcp", Port: 1, Interval: 10 * time.Millisecond, Timeout: 10 * time.Millisecond, Retries: 1},
 		done: done,
 	}
 	hc.mu.Lock()
 	hc.probes["done-stop"] = p
 	hc.mu.Unlock()
-	ctx := context.Background()
+
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		hc.run(ctx, p)
+		hc.run(context.Background(), p)
 	}()
-	time.Sleep(100 * time.Millisecond)
+
+	// Closing the probe's done channel must stop the run goroutine. The explicit
+	// timeout turns a stuck goroutine into a clear failure instead of a hang.
 	close(done)
-	wg.Wait()
+	waitOrTimeout(t, &wg, 2*time.Second)
 }

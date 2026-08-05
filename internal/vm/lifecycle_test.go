@@ -64,8 +64,8 @@ func TestQEMUManager_Kill_WrongState(t *testing.T) {
 	v, err := mgr.Create(context.Background(), Config{ImagePath: "test.img", Memory: "256M"})
 	require.NoError(t, err)
 	err = mgr.Kill(context.Background(), v.ID)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "invalid transition")
+	require.ErrorIs(t, err, ErrInvalidTransition,
+		"killing a VM in the wrong state must surface an invalid-transition error")
 }
 
 func TestQEMUManager_Kill_NoProcess(t *testing.T) {

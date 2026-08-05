@@ -167,14 +167,14 @@ func (s *Store) Download(pkg Package) error {
 
 	if pkg.Size > 0 && size != pkg.Size {
 		_ = os.Remove(archivePath)
-		return fmt.Errorf("package download: size mismatch (got %d, want %d)", size, pkg.Size)
+		return fmt.Errorf("package download: %w (got %d, want %d)", ErrSizeMismatch, size, pkg.Size)
 	}
 
 	if pkg.SHA256 != "" {
 		got := hex.EncodeToString(hash.Sum(nil))
 		if !strings.EqualFold(got, pkg.SHA256) {
 			_ = os.Remove(archivePath)
-			return fmt.Errorf("package download: sha256 mismatch (got %s, want %s)", got, pkg.SHA256)
+			return fmt.Errorf("package download: %w (got %s, want %s)", ErrChecksumMismatch, got, pkg.SHA256)
 		}
 	}
 

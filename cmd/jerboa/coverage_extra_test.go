@@ -1,7 +1,6 @@
 package main
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -28,6 +27,14 @@ func TestNeedsDaemon(t *testing.T) {
 }
 
 func TestSigningStorePath(t *testing.T) {
-	require.True(t, strings.HasSuffix(signingStorePath(), ".jerboa"),
-		"signing store lives under the user's .jerboa directory")
+	// Fake the home directory so we can assert the full resolved path rather than
+	// a loose suffix (the old check passed for any path ending in ".jerboa",
+	// including a bare "/.jerboa"). os.UserHomeDir reads USERPROFILE on Windows
+	// and HOME elsewhere, so set both for portability.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	require.Equal(t, home+"/.jerboa", signingStorePath(),
+		"signing store must resolve to <home>/.jerboa")
 }
