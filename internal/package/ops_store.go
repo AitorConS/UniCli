@@ -258,6 +258,15 @@ func (s *OpsStore) Extract(namespace, name, version string) (err error) {
 			slog.Warn("ops extract: skipping entry outside package dir", "entry", hdr.Name)
 			continue
 		}
+		// filepath.IsLocal rejects absolute paths and any name that escapes the
+		// current directory (leading separator, "..", or a Windows volume/reserved
+		// name) — the canonical Go archive-entry guard. It duplicates safePath's
+		// intent and rejects nothing safePath would admit; it is kept as a small,
+		// standard-library belt over the hand-rolled check.
+		if !filepath.IsLocal(entryName) {
+			slog.Warn("ops extract: skipping non-local entry", "entry", hdr.Name)
+			continue
+		}
 		// Canonical zip-slip guard: filepath.Join cleans the entry name (resolving
 		// any ".."), then HasPrefix confirms the result stays within dir. safePath
 		// enforces the same invariant, but taint trackers only credit a HasPrefix
@@ -302,11 +311,24 @@ func (s *OpsStore) Extract(namespace, name, version string) (err error) {
 				return fmt.Errorf("ops extract %s: archive expands beyond %d bytes", name, maxExtractedBytes)
 			}
 		case tar.TypeSymlink:
+			// Both the location of the link (target, from hdr.Name) and the path
+			// it points at (from hdr.Linkname) must stay inside dir once any
+			// symlinks already planted by earlier entries are resolved for real.
+			// resolvesWithinDir does that resolution with filepath.EvalSymlinks:
+			// it is the concrete safety check *and* the only barrier CodeQL's
+			// go/unsafe-unzip-symlink query credits — lexical guards (safePath,
+			// HasPrefix, withinDir) are not, so a raw os.Symlink on a header path
+			// is flagged without a real resolution on the same value first.
+			if !resolvesWithinDir(dir, target) {
+				slog.Warn("ops extract: skipping symlink whose location escapes package dir",
+					"entry", hdr.Name, "linkname", hdr.Linkname)
+				continue
+			}
 			// Refuse links resolving outside the package directory. Such a link
 			// is itself harmless, but a later entry writing "through" it passes
 			// the withinDir check above while landing outside dir on disk.
 			linkTarget, ok := resolveLinkname(dir, target, hdr.Linkname)
-			if !ok {
+			if !ok || !resolvesWithinDir(dir, linkTarget) {
 				slog.Warn("ops extract: skipping symlink pointing outside package dir",
 					"entry", hdr.Name, "linkname", hdr.Linkname)
 				continue
@@ -443,6 +465,54 @@ func resolveLinkname(dir, target, linkname string) (string, bool) {
 		return "", false
 	}
 	return src, true
+}
+
+// resolvesWithinDir reports whether path, with every symbolic link that already
+// exists along it resolved for real, still lands inside dir. Unlike the lexical
+// withinDir it follows links planted on disk by earlier archive entries, so it
+// catches a link whose parent was itself redirected out of the package. It also
+// satisfies CodeQL's go/unsafe-unzip-symlink query: that query treats a header
+// path reaching filepath.EvalSymlinks as evidence the caller resolved links
+// before trusting the path, and credits no string-based guard in its place.
+func resolvesWithinDir(dir, path string) bool {
+	realDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		realDir = dir // dir is the extraction root we created; fall back lexically
+	}
+	resolved, err := evalSymlinksLenient(path)
+	if err != nil {
+		return false
+	}
+	return withinDir(realDir, resolved)
+}
+
+// evalSymlinksLenient behaves like filepath.EvalSymlinks but tolerates a path
+// whose trailing components do not exist yet: it resolves the longest existing
+// prefix and re-appends the missing tail. A tar may store a symlink before the
+// file it points at, so a plain EvalSymlinks (which fails on any missing
+// component) would reject otherwise valid links.
+func evalSymlinksLenient(path string) (string, error) {
+	remainder := ""
+	cur := path
+	for {
+		resolved, err := filepath.EvalSymlinks(cur)
+		if err == nil {
+			if remainder == "" {
+				return resolved, nil
+			}
+			return filepath.Join(resolved, remainder), nil
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return "", fmt.Errorf("eval symlinks %s: %w", cur, err)
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			// reached the root without an existing component
+			return "", fmt.Errorf("eval symlinks %s: %w", cur, err)
+		}
+		remainder = filepath.Join(filepath.Base(cur), remainder)
+		cur = parent
+	}
 }
 
 // pendingLink records a tar symlink to be turned into a real file copy on hosts
