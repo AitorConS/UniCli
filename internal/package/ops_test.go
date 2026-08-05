@@ -256,12 +256,17 @@ func TestMaterializeLinks(t *testing.T) {
 
 	// libpq.so.5 -> libpq.so.5.11 (soname link), and libpq.so -> libpq.so.5
 	// (a link pointing at another link, to exercise the multi-pass resolution).
-	links := []pendingLink{
-		{path: filepath.Join(libDir, "libpq.so"), linkname: "libpq.so.5"},
-		{path: filepath.Join(libDir, "libpq.so.5"), linkname: "libpq.so.5.11"},
+	var links []pendingLink
+	for _, l := range []struct{ path, linkname string }{
+		{filepath.Join(libDir, "libpq.so"), "libpq.so.5"},
+		{filepath.Join(libDir, "libpq.so.5"), "libpq.so.5.11"},
+	} {
+		resolved, ok := resolveLinkname(dir, l.path, l.linkname)
+		require.True(t, ok, "soname link %q should resolve inside the package dir", l.linkname)
+		links = append(links, pendingLink{path: l.path, resolved: resolved, linkname: l.linkname})
 	}
 
-	materializeLinks(dir, links)
+	materializeLinks(links)
 
 	for _, name := range []string{"libpq.so.5", "libpq.so"} {
 		got, err := os.ReadFile(filepath.Join(libDir, name))
@@ -270,23 +275,22 @@ func TestMaterializeLinks(t *testing.T) {
 	}
 }
 
-func TestMaterializeLinks_RejectsTraversalTarget(t *testing.T) {
-	dir := t.TempDir()
+func TestResolveLinkname_RejectsEscapingTarget(t *testing.T) {
+	dir := filepath.FromSlash("/pkgs/foo")
 	libDir := filepath.Join(dir, "lib")
-	require.NoError(t, os.MkdirAll(libDir, 0o755))
 
-	// A secret outside the package dir that a malicious symlink target points at.
-	outside := filepath.Join(filepath.Dir(dir), "secret.txt")
-	require.NoError(t, os.WriteFile(outside, []byte("top-secret"), 0o600))
+	// A relative soname link inside the package resolves normally.
+	got, ok := resolveLinkname(dir, filepath.Join(libDir, "libpq.so"), "libpq.so.5")
+	require.True(t, ok)
+	require.Equal(t, filepath.Join(libDir, "libpq.so.5"), got)
 
-	// evil.so -> ../../secret.txt would copy a file from outside the package dir.
-	links := []pendingLink{
-		{path: filepath.Join(libDir, "evil.so"), linkname: "../../secret.txt"},
+	// Anything reaching outside the package dir is refused: "../../secret.txt"
+	// would read a host file, and an absolute target would let a later archive
+	// entry write through the link.
+	for _, linkname := range []string{"../../secret.txt", "/etc/shadow", ""} {
+		_, ok := resolveLinkname(dir, filepath.Join(libDir, "evil.so"), linkname)
+		require.False(t, ok, "link target %q must be refused", linkname)
 	}
-	materializeLinks(dir, links)
-
-	_, err := os.Stat(filepath.Join(libDir, "evil.so"))
-	require.True(t, os.IsNotExist(err), "link with an escaping target must not be materialized")
 }
 
 func TestWithinDir(t *testing.T) {

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +33,62 @@ type Member struct {
 	CPUCap   int          `json:"cpu_capacity"`
 	MemCap   int64        `json:"mem_capacity_bytes"`
 	LastSeen time.Time    `json:"last_seen"`
+}
+
+// memberIDPattern is the shape a gossiped member ID must have to be merged:
+// the hex quartets generateID produces, plus the punctuation operators use for
+// hand-set node names. Anything else — control characters that would forge log
+// lines, or an unbounded blob that would bloat the member table — is dropped.
+var memberIDPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
+
+// maxGossipBody bounds the request body accepted by the gossip handler, which
+// is unauthenticated unless a cluster token is configured.
+const maxGossipBody = 1 << 20 // 1 MiB
+
+// validEntry reports whether a member entry received over gossip is well-formed
+// enough to merge into the member table.
+func validEntry(e memberEntry) bool {
+	if !memberIDPattern.MatchString(e.ID) {
+		return false
+	}
+	// SplitHostPort accepts "10.0.0.2:" (empty port) without an error, and that
+	// address would be dialed for gossip, so check both halves explicitly.
+	host, port, err := net.SplitHostPort(e.Addr)
+	if err != nil || host == "" || port == "" {
+		return false
+	}
+	switch e.Status {
+	case StatusAlive, StatusSuspect, StatusDead, StatusLeft:
+	default:
+		return false
+	}
+	return true
+}
+
+// sanitizeForLog returns a copy of the entry with fields sanitized for safe logging.
+// This function is called AFTER validEntry has accepted the entry, so the values
+// already match memberIDPattern and are valid host:port pairs. The explicit copy
+// ensures static analyzers recognize the sanitization boundary.
+func sanitizeForLog(e memberEntry) (id, addr string) {
+	if !memberIDPattern.MatchString(e.ID) {
+		return "[invalid]", "[invalid]"
+	}
+	host, port, err := net.SplitHostPort(e.Addr)
+	if err != nil || host == "" || port == "" {
+		return stripLogControl(e.ID), "[invalid]"
+	}
+	return stripLogControl(e.ID), stripLogControl(net.JoinHostPort(host, port))
+}
+
+// stripLogControl removes carriage returns and newlines so a value cannot forge
+// or split log lines (log injection). It is a plain string transformation rather
+// than a regex guard: taint trackers model strings.ReplaceAll as a sanitizer that
+// crosses function boundaries, whereas a MatchString guard only clears taint
+// inside the function that performs it.
+func stripLogControl(s string) string {
+	s = strings.ReplaceAll(s, "\r", "")
+	s = strings.ReplaceAll(s, "\n", "")
+	return s
 }
 
 type gossipPayload struct {
@@ -348,6 +405,12 @@ func (c *SwimCluster) mergeEntriesLocked(entries []memberEntry) {
 		if e.ID == c.local.ID {
 			continue
 		}
+		if !validEntry(e) {
+			// Dropped rather than logged verbatim: the entry is unauthenticated
+			// wire data unless a cluster token is configured.
+			slog.Warn("cluster: dropping malformed gossip entry")
+			continue
+		}
 		existing, ok := c.members[e.ID]
 		entryTime, _ := time.Parse(time.RFC3339, e.LastSeen)
 
@@ -361,7 +424,8 @@ func (c *SwimCluster) mergeEntriesLocked(entries []memberEntry) {
 				MemCap:   e.MemCap,
 				LastSeen: entryTime,
 			}
-			slog.Info("cluster member discovered", "member", e.ID, "addr", e.Addr)
+			safeID, safeAddr := sanitizeForLog(e)
+			slog.Info("cluster member discovered", "member", safeID, "addr", safeAddr)
 			continue
 		}
 
@@ -423,7 +487,7 @@ func RegisterGossipHandler(mux *http.ServeMux, cluster *SwimCluster) {
 			return
 		}
 		var payload gossipPayload
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxGossipBody)).Decode(&payload); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
