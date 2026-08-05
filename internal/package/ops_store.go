@@ -252,7 +252,7 @@ func (s *OpsStore) Extract(namespace, name, version string) (err error) {
 		// Defend against archive path traversal ("Zip Slip"): an entry whose name
 		// contains ".." could otherwise resolve outside the package directory and
 		// overwrite arbitrary files. Skip any entry that escapes dir.
-		if _, ok := safePath(dir, entryName); !ok {
+		if !safePath(dir, entryName) {
 			slog.Warn("ops extract: skipping entry outside package dir", "entry", hdr.Name)
 			continue
 		}
@@ -363,19 +363,20 @@ func withinDir(dir, path string) bool {
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
 }
 
-// safePath sanitizes an archive entry name and returns the absolute path within
-// baseDir. It returns ("", false) if the entry would escape baseDir. This function
-// uses a pattern that static analyzers (CodeQL) recognize as a Zip Slip mitigation:
-// filepath.Clean on the untrusted name, followed by strings.HasPrefix on the result.
-func safePath(baseDir, entryName string) (string, bool) {
+// safePath reports whether an archive entry name resolves to a path contained
+// within baseDir. It returns false if the entry would escape baseDir via ".." or
+// other path tricks. Callers compute the sink path themselves so that static
+// analyzers (CodeQL) credit the HasPrefix barrier at the write site; safePath is
+// the lexical pre-check that guards the loop.
+func safePath(baseDir, entryName string) bool {
 	// Clean the entry name to resolve any ".." or other path tricks
 	cleanName := filepath.Clean(filepath.FromSlash(entryName))
 	if cleanName == "." {
-		return "", false
+		return false
 	}
 	// Reject entries that start with ".." after cleaning
 	if strings.HasPrefix(cleanName, ".."+string(os.PathSeparator)) || cleanName == ".." {
-		return "", false
+		return false
 	}
 	// Join with base directory and verify the result is contained
 	target := filepath.Join(baseDir, cleanName)
@@ -383,9 +384,9 @@ func safePath(baseDir, entryName string) (string, bool) {
 	cleanTarget := filepath.Clean(target)
 	// The target must start with the base directory path
 	if !strings.HasPrefix(cleanTarget, cleanBase+string(os.PathSeparator)) && cleanTarget != cleanBase {
-		return "", false
+		return false
 	}
-	return cleanTarget, true
+	return true
 }
 
 // traversesSymlink reports whether any component of path, from dir down to the

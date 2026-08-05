@@ -261,7 +261,7 @@ func (s *Store) Extract(pkg Package) (err error) {
 		// Defend against archive path traversal ("Zip Slip"). safePath cleans
 		// and validates the entry name, rejecting entries that would escape
 		// filesDir via ".." or other path tricks.
-		if _, ok := safePath(filesDir, hdr.Name); !ok {
+		if !safePath(filesDir, hdr.Name) {
 			return fmt.Errorf("package extract: path %q escapes extraction directory", hdr.Name)
 		}
 		// Canonical zip-slip guard: filepath.Join cleans the entry name (resolving
