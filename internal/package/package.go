@@ -258,6 +258,13 @@ func (s *Store) Extract(pkg Package) (err error) {
 			return fmt.Errorf("package extract tar %s: %w", pkg.Name, err)
 		}
 
+		// tar -C dir . prepends a "." / "./" root entry that maps to filesDir
+		// itself; it needs no extraction and would otherwise trip the containment
+		// guard below, so skip it while still validating every child entry.
+		if filepath.Clean(filepath.FromSlash(hdr.Name)) == "." {
+			continue
+		}
+
 		// Defend against archive path traversal ("Zip Slip"). safePath cleans
 		// and validates the entry name, rejecting entries that would escape
 		// filesDir via ".." or other path tricks.

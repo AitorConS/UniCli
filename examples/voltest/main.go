@@ -91,7 +91,7 @@ func handleWrite(w http.ResponseWriter, r *http.Request) {
 	// still answer 200. Report whichever occurred, or both.
 	_, writeErr := f.WriteString(line)
 	if err := errors.Join(writeErr, f.Close()); err != nil {
-		http.Error(w, fmt.Sprintf("write error: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("write/close error: %v", err), http.StatusInternalServerError)
 		return
 	}
 	fmt.Fprintf(w, "written: %s", line)

@@ -245,7 +245,9 @@ func (s *OpsStore) Extract(namespace, name, version string) (err error) {
 		if stripPrefix != "" {
 			entryName = strings.TrimPrefix(hdr.Name, stripPrefix)
 		}
-		if entryName == "" || entryName == "/" {
+		// Skip empty names and the "." / "./" archive root entry (which tar -C dir .
+		// prepends): it maps to dir itself and would otherwise trip the guard below.
+		if entryName == "" || entryName == "/" || filepath.Clean(filepath.FromSlash(entryName)) == "." {
 			continue
 		}
 
