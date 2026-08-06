@@ -78,17 +78,32 @@ func TestQEMUManager_Stop_SIGTERMFails(t *testing.T) {
 }
 
 func TestMonitor_ExplicitStop_NoRestart(t *testing.T) {
-	mgr := fakeManager(false)
+	// Use a blocking fake process so the VM stays running until we explicitly
+	// stop it. A non-blocking fake exits on its own, which the monitor treats as
+	// a crash and — under RestartAlways with no retry cap — restarts forever,
+	// leaking a perpetual chain of backoff-sleeping restart goroutines into
+	// later tests (which -shuffle=on then attributes to an unrelated test's
+	// goleak check).
+	mgr := fakeManager(true)
 	ctx := context.Background()
-	v, err := mgr.Create(context.Background(), Config{
+	v, err := mgr.Create(ctx, Config{
 		ImagePath: "test.img",
 		Memory:    "256M",
 		Restart:   RestartConfig{Policy: RestartAlways},
 	})
 	require.NoError(t, err)
 	require.NoError(t, mgr.Start(ctx, v.ID))
-	<-v.Done()
+
+	// An explicit Stop sets the explicit-stop flag the monitor checks, so the
+	// RestartAlways policy is overridden and no replacement is spawned.
+	require.NoError(t, mgr.Stop(ctx, v.ID))
+	select {
+	case <-v.Done():
+	case <-time.After(10 * time.Second):
+		t.Fatal("VM did not stop")
+	}
 	require.Equal(t, StateStopped, v.GetState())
+	require.Equal(t, 0, v.GetRestartCount(), "explicitly stopped VM must not restart")
 }
 
 func TestMonitor_RestartAlways(t *testing.T) {
@@ -215,7 +230,10 @@ func TestQEMUManager_Start_FailsLaunch(t *testing.T) {
 }
 
 func TestHealthChecker_Run_DoneStops(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	// Scope the leak check to the run goroutine this test starts below, so a
+	// goroutine leaked by an unrelated test under -shuffle=on is not
+	// misattributed here.
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
 
 	hc := NewHealthChecker()
 	done := make(chan struct{})

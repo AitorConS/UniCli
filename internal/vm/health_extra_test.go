@@ -138,7 +138,11 @@ func TestHealthChecker_Probe_UnknownType(t *testing.T) {
 }
 
 func TestHealthChecker_Start_NilHealthCheck(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	// IgnoreCurrent snapshots goroutines that already exist so the check is
+	// scoped to goroutines THIS test spawns (started below, after the snapshot).
+	// Under -shuffle=on an unrelated test may leave a background goroutine
+	// running; that is not this test's leak to report.
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
 	hc := NewHealthChecker()
 	v := &VM{
 		ID:    "no-check",
@@ -158,7 +162,9 @@ func TestHealthChecker_Start_NilHealthCheck(t *testing.T) {
 }
 
 func TestHealthChecker_Stop_NoProbe(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	// Scope the leak check to this test's own goroutines (see the note in
+	// TestHealthChecker_Start_NilHealthCheck).
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
 	hc := NewHealthChecker()
 
 	// Stop on an unknown id must be a safe no-op (idempotent), not a panic on a
@@ -179,7 +185,11 @@ func TestHealthChecker_Run_ContextCancelled(t *testing.T) {
 	// goroutine observes the canceled context and exits. Previously this test
 	// slept and asserted nothing, so a checker that ignored cancellation (a
 	// leaked goroutine) would still pass.
-	defer goleak.VerifyNone(t)
+	//
+	// IgnoreCurrent scopes the check to the run goroutine this test starts
+	// (below, after the snapshot), so a goroutine leaked by an unrelated test
+	// under -shuffle=on is not misattributed here.
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
 
 	hc := NewHealthChecker()
 	ctx, cancel := context.WithCancel(context.Background())
