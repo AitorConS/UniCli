@@ -3,6 +3,7 @@
 package vm
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,6 +15,11 @@ import (
 
 	"github.com/AitorConS/jerboa/internal/network"
 )
+
+// ErrInvalidTransition is returned by (*VM).transition when the requested state
+// edge is not allowed. It is a sentinel so callers and tests can classify an
+// illegal transition with errors.Is instead of matching on message text.
+var ErrInvalidTransition = errors.New("invalid transition")
 
 // State represents a VM lifecycle state.
 type State string
@@ -427,7 +433,7 @@ func (v *VM) transition(to State) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if !slices.Contains(validTransitions[v.State], to) {
-		return fmt.Errorf("invalid transition %s → %s", v.State, to)
+		return fmt.Errorf("%w %s → %s", ErrInvalidTransition, v.State, to)
 	}
 	from := v.State
 	v.State = to

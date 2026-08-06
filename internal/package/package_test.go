@@ -305,8 +305,7 @@ func TestStore_Download_SHA256Mismatch(t *testing.T) {
 		URL:     ts.URL + "/badpkg-1.0.0.tar.gz",
 	}
 	err = store.Download(pkg)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "sha256 mismatch")
+	require.ErrorIs(t, err, ErrChecksumMismatch)
 
 	archivePath := filepath.Join(dir, "badpkg", "1.0.0", "files.tar.gz")
 	_, statErr := os.Stat(archivePath)
@@ -583,8 +582,7 @@ func TestStore_Download_SizeMismatch(t *testing.T) {
 		URL:     ts.URL + "/bigpkg-1.0.0.tar.gz",
 	}
 	err = store.Download(pkg)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "size mismatch")
+	require.ErrorIs(t, err, ErrSizeMismatch)
 
 	archivePath := filepath.Join(dir, "bigpkg", "1.0.0", "files.tar.gz")
 	_, statErr := os.Stat(archivePath)

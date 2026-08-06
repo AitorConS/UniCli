@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 )
@@ -10,6 +11,11 @@ import (
 // hostile length header. Build-context chunks are written in small pieces
 // (io.Copy uses 32 KiB), so this ceiling is never reached in practice.
 const maxFrameSize = 64 << 20 // 64 MiB
+
+// ErrFrameTooLarge is returned when a frame's length header exceeds
+// maxFrameSize. It is a sentinel so callers on the untrusted RPC surface can
+// distinguish a hostile length prefix from a transport error with errors.Is.
+var ErrFrameTooLarge = errors.New("frame too large")
 
 // frameWriter writes a byte stream as length-prefixed frames. Each Write emits
 // one frame (a 4-byte big-endian length followed by the payload). Close emits a
@@ -75,7 +81,7 @@ func (fr *frameReader) Read(p []byte) (int, error) {
 			return 0, io.EOF
 		}
 		if n > maxFrameSize {
-			return 0, fmt.Errorf("frame too large: %d bytes (max %d)", n, maxFrameSize)
+			return 0, fmt.Errorf("%w: %d bytes (max %d)", ErrFrameTooLarge, n, maxFrameSize)
 		}
 		fr.remaining = n
 	}

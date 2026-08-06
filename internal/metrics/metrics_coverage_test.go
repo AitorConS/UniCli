@@ -4,6 +4,7 @@ package metrics
 
 import (
 	"context"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,35 @@ import (
 	"github.com/AitorConS/jerboa/internal/image"
 	"github.com/AitorConS/jerboa/internal/vm"
 )
+
+// awaitServerReady polls the always-open /health endpoint until the server is
+// accepting connections, or fails the test. It replaces fixed time.Sleep calls,
+// which raced the server's startup: on a slow/loaded machine the old tests
+// either flaked or (worse) silently skipped their assertions behind `if err == nil`.
+func awaitServerReady(t *testing.T, addr string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	// Bind every request to the readiness deadline. A bare http.Get has no
+	// request context or client timeout, so a listener that accepts the
+	// connection but never sends response headers would block the loop past its
+	// deadline instead of failing fast.
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+	url := "http://" + addr + "/health"
+	for time.Now().Before(deadline) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		require.NoError(t, err)
+		resp, err := http.DefaultClient.Do(req)
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("server at %s did not become ready within 3s", addr)
+}
 
 type mockManager struct {
 	vms []*vm.VM
@@ -66,22 +96,22 @@ func TestServe_StartAndShutdown(t *testing.T) {
 		doneCh <- Serve(ctx, addr, "", c)
 	}()
 
-	time.Sleep(100 * time.Millisecond)
+	awaitServerReady(t, addr)
 
+	// /metrics is served. The assertion is unconditional now: previously it was
+	// wrapped in `if err == nil`, so a startup-race failure passed silently.
 	resp, err := http.Get("http://" + addr + "/metrics")
-	if err == nil {
-		require.Equal(t, http.StatusOK, resp.StatusCode)
-		resp.Body.Close()
-	}
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	resp.Body.Close()
 
 	resp, err = http.Get("http://" + addr + "/health")
-	if err == nil {
-		require.Equal(t, http.StatusOK, resp.StatusCode)
-		body := make([]byte, 2)
-		resp.Body.Read(body)
-		resp.Body.Close()
-		require.Equal(t, "ok", string(body))
-	}
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	resp.Body.Close()
+	require.Equal(t, "ok", string(body))
 
 	cancel()
 
@@ -103,7 +133,7 @@ func TestServe_TokenAuth(t *testing.T) {
 	go func() {
 		doneCh <- Serve(ctx, addr, "s3cret", c)
 	}()
-	time.Sleep(100 * time.Millisecond)
+	awaitServerReady(t, addr)
 
 	// /metrics without a token is rejected.
 	resp, err := http.Get("http://" + addr + "/metrics")
@@ -243,7 +273,8 @@ func TestVMStateUpdater_RunStopsOnContextCancel(t *testing.T) {
 		close(doneCh)
 	}()
 
-	time.Sleep(120 * time.Millisecond)
+	// Run must stop promptly on cancellation regardless of where it is in its
+	// tick loop; no fixed sleep is needed to "let it start" first.
 	cancel()
 
 	select {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 )
 
 func TestHealthChecker_ProbeLoop_TCP_BecomesHealthy(t *testing.T) {
@@ -137,6 +138,11 @@ func TestHealthChecker_Probe_UnknownType(t *testing.T) {
 }
 
 func TestHealthChecker_Start_NilHealthCheck(t *testing.T) {
+	// IgnoreCurrent snapshots goroutines that already exist so the check is
+	// scoped to goroutines THIS test spawns (started below, after the snapshot).
+	// Under -shuffle=on an unrelated test may leave a background goroutine
+	// running; that is not this test's leak to report.
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
 	hc := NewHealthChecker()
 	v := &VM{
 		ID:    "no-check",
@@ -146,12 +152,25 @@ func TestHealthChecker_Start_NilHealthCheck(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
 	hc.Start(ctx, v)
+
+	// A VM without a health check must register no probe and start no goroutine
+	// (the latter is asserted by the deferred goleak check).
+	require.Equal(t, 0, probeCount(hc), "nil health check must not register a probe")
+	require.NotEqual(t, HealthStarting, v.GetHealthStatus(), "status must not be touched")
 }
 
 func TestHealthChecker_Stop_NoProbe(t *testing.T) {
+	// Scope the leak check to this test's own goroutines (see the note in
+	// TestHealthChecker_Start_NilHealthCheck).
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
 	hc := NewHealthChecker()
-	hc.Stop("nonexistent")
+
+	// Stop on an unknown id must be a safe no-op (idempotent), not a panic on a
+	// nil/closed channel.
+	require.NotPanics(t, func() { hc.Stop("nonexistent") })
+	require.Equal(t, 0, probeCount(hc))
 }
 
 func TestProbeTarget_HTTPEmptyPath(t *testing.T) {
@@ -162,6 +181,16 @@ func TestProbeTarget_HTTPEmptyPath(t *testing.T) {
 }
 
 func TestHealthChecker_Run_ContextCancelled(t *testing.T) {
+	// The deferred goleak check is the real assertion: it fails unless the run
+	// goroutine observes the canceled context and exits. Previously this test
+	// slept and asserted nothing, so a checker that ignored cancellation (a
+	// leaked goroutine) would still pass.
+	//
+	// IgnoreCurrent scopes the check to the run goroutine this test starts
+	// (below, after the snapshot), so a goroutine leaked by an unrelated test
+	// under -shuffle=on is not misattributed here.
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+
 	hc := NewHealthChecker()
 	ctx, cancel := context.WithCancel(context.Background())
 	v := &VM{
@@ -173,12 +202,15 @@ func TestHealthChecker_Run_ContextCancelled(t *testing.T) {
 	v.Cfg.HealthCheck = &HealthCheckConfig{
 		Type:     "tcp",
 		Port:     1,
-		Interval: 50 * time.Millisecond,
-		Timeout:  50 * time.Millisecond,
+		Interval: 10 * time.Millisecond,
+		Timeout:  10 * time.Millisecond,
 		Retries:  3,
 	}
+
 	hc.Start(ctx, v)
-	time.Sleep(100 * time.Millisecond)
+	require.Equal(t, 1, probeCount(hc), "Start must register the probe")
+	require.Equal(t, HealthStarting, v.GetHealthStatus(), "Start must mark the VM as starting")
+
 	cancel()
-	time.Sleep(200 * time.Millisecond)
+	// goleak (deferred) polls until the goroutine exits or fails the test.
 }

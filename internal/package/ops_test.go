@@ -318,8 +318,7 @@ func TestOpsStore_Download_SHA256Mismatch(t *testing.T) {
 	require.NoError(t, err)
 
 	err = store.Download("eyberg", "badpkg", "1.0.0", "0000000000000000000000000000000000000000000000000000000000000000")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "sha256 mismatch")
+	require.ErrorIs(t, err, ErrChecksumMismatch)
 
 	require.False(t, store.IsDownloaded("eyberg", "badpkg", "1.0.0"))
 }

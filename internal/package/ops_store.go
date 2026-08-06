@@ -172,7 +172,7 @@ func (s *OpsStore) Download(namespace, name, version string, expectedSHA256 stri
 		got := hex.EncodeToString(hash.Sum(nil))
 		if !strings.EqualFold(got, expectedSHA256) {
 			_ = os.Remove(archivePath)
-			return fmt.Errorf("ops download: sha256 mismatch (got %s, want %s)", got, expectedSHA256)
+			return fmt.Errorf("ops download: %w (got %s, want %s)", ErrChecksumMismatch, got, expectedSHA256)
 		}
 	}
 

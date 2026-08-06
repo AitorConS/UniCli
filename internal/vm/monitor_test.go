@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 )
 
 func TestQEMUManager_Start_AttachMode(t *testing.T) {
@@ -77,17 +78,46 @@ func TestQEMUManager_Stop_SIGTERMFails(t *testing.T) {
 }
 
 func TestMonitor_ExplicitStop_NoRestart(t *testing.T) {
-	mgr := fakeManager(false)
+	// Use a blocking fake process so the VM stays running until we explicitly
+	// stop it. A non-blocking fake exits on its own, which the monitor treats as
+	// a crash and — under RestartAlways with no retry cap — restarts forever,
+	// leaking a perpetual chain of backoff-sleeping restart goroutines into
+	// later tests (which -shuffle=on then attributes to an unrelated test's
+	// goleak check).
+	mgr := fakeManager(true)
 	ctx := context.Background()
-	v, err := mgr.Create(context.Background(), Config{
+	v, err := mgr.Create(ctx, Config{
 		ImagePath: "test.img",
 		Memory:    "256M",
 		Restart:   RestartConfig{Policy: RestartAlways},
 	})
 	require.NoError(t, err)
 	require.NoError(t, mgr.Start(ctx, v.ID))
-	<-v.Done()
+	// Safety net: if the explicit Stop below errors or the Done wait times out,
+	// the test aborts while this blocking VM is still under RestartAlways (no
+	// retry cap), which would leak restart goroutines into later shuffled tests.
+	// Stop it on the way out unless it already stopped.
+	t.Cleanup(func() {
+		select {
+		case <-v.Done():
+			return
+		default:
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = mgr.Stop(cleanupCtx, v.ID)
+	})
+
+	// An explicit Stop sets the explicit-stop flag the monitor checks, so the
+	// RestartAlways policy is overridden and no replacement is spawned.
+	require.NoError(t, mgr.Stop(ctx, v.ID))
+	select {
+	case <-v.Done():
+	case <-time.After(10 * time.Second):
+		t.Fatal("VM did not stop")
+	}
 	require.Equal(t, StateStopped, v.GetState())
+	require.Equal(t, 0, v.GetRestartCount(), "explicitly stopped VM must not restart")
 }
 
 func TestMonitor_RestartAlways(t *testing.T) {
@@ -214,6 +244,11 @@ func TestQEMUManager_Start_FailsLaunch(t *testing.T) {
 }
 
 func TestHealthChecker_Run_DoneStops(t *testing.T) {
+	// Scope the leak check to the run goroutine this test starts below, so a
+	// goroutine leaked by an unrelated test under -shuffle=on is not
+	// misattributed here.
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+
 	hc := NewHealthChecker()
 	done := make(chan struct{})
 	p := &healthProbe{
@@ -223,20 +258,22 @@ func TestHealthChecker_Run_DoneStops(t *testing.T) {
 			State: StateRunning,
 			done:  make(chan struct{}),
 		},
-		cfg:  HealthCheckConfig{Type: "tcp", Port: 1, Interval: 50 * time.Millisecond, Timeout: 50 * time.Millisecond, Retries: 1},
+		cfg:  HealthCheckConfig{Type: "tcp", Port: 1, Interval: 10 * time.Millisecond, Timeout: 10 * time.Millisecond, Retries: 1},
 		done: done,
 	}
 	hc.mu.Lock()
 	hc.probes["done-stop"] = p
 	hc.mu.Unlock()
-	ctx := context.Background()
+
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		hc.run(ctx, p)
+		hc.run(context.Background(), p)
 	}()
-	time.Sleep(100 * time.Millisecond)
+
+	// Closing the probe's done channel must stop the run goroutine. The explicit
+	// timeout turns a stuck goroutine into a clear failure instead of a hang.
 	close(done)
-	wg.Wait()
+	waitOrTimeout(t, &wg, 2*time.Second)
 }
