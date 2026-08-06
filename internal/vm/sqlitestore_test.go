@@ -260,7 +260,7 @@ func TestSQLiteStore_Restore_HealthStatus(t *testing.T) {
 }
 
 // TestSQLiteStore_ConcurrentAccess exercises the store from many goroutines at
-// once — creating, reading, listing, saving, and removing — to give the race
+// once — creating, reading, listing, and saving — to give the race
 // detector (`go test -race`, which CI runs) something real to inspect. The
 // daemon serves RPCs concurrently against a single store, so this mirrors
 // production. The store's contract is that every operation is individually safe

@@ -93,6 +93,20 @@ func TestMonitor_ExplicitStop_NoRestart(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NoError(t, mgr.Start(ctx, v.ID))
+	// Safety net: if the explicit Stop below errors or the Done wait times out,
+	// the test aborts while this blocking VM is still under RestartAlways (no
+	// retry cap), which would leak restart goroutines into later shuffled tests.
+	// Stop it on the way out unless it already stopped.
+	t.Cleanup(func() {
+		select {
+		case <-v.Done():
+			return
+		default:
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = mgr.Stop(cleanupCtx, v.ID)
+	})
 
 	// An explicit Stop sets the explicit-stop flag the monitor checks, so the
 	// RestartAlways policy is overridden and no replacement is spawned.
