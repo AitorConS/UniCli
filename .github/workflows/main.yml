@@ -1,16 +1,32 @@
 name: CI
 
+# The workflow itself always triggers on pushes/PRs to main (no workflow-level
+# paths filter). Doc-only changes are filtered per-job instead: the `changes`
+# job below decides whether non-doc files changed, and the build/test jobs skip
+# when they did not.
+#
+# Why not paths-ignore here? Branch protection marks several of these jobs as
+# required (go mod tidy, Lint, Unit Tests, Vulnerability Scan, Kernel Build). A
+# workflow-level paths filter SKIPS THE WHOLE WORKFLOW for doc-only PRs, so those
+# required checks are never reported and the PR is stuck forever on
+# "Expected — Waiting for status to be reported". Skipping at the job level
+# instead still emits a "skipped" conclusion for each required check, which
+# branch protection accepts as passing — so doc-only PRs stay mergeable.
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - 'docs/**'
-      - '**.md'
   pull_request:
     branches: [main]
-    paths-ignore:
-      - 'docs/**'
-      - '**.md'
+  # Manual publish escape hatch: run the workflow from the Actions tab with
+  # `publish: true` to build and push a release to R2 without a VERSION bump
+  # (e.g. a dry run, or re-publishing after an infra fix). Left false it runs
+  # CI only, exactly like a normal push whose VERSION didn't change.
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Build + publish a release to R2 even without a VERSION bump'
+        type: boolean
+        default: false
 
 # Least privilege by default; jobs that publish elevate explicitly.
 permissions:
@@ -22,8 +38,88 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Detect whether any non-documentation files changed. Doc-only changes
+  # (docs/**, **.md) leave `code` == 'false', which makes every build/test job
+  # below skip. The skipped jobs still report a "skipped" check to branch
+  # protection (accepted as passing), so doc PRs merge without a code CI run.
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+      version: ${{ steps.filter.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Determine whether non-doc files changed
+        id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # Mirror the retired workflow-level paths-ignore: docs/** and **.md are
+          # the only paths that do NOT warrant a code CI run.
+          #
+          # Indeterminate diff → run the FULL CI pipeline (so the required checks
+          # still report and the branch stays mergeable) but never publish. Used
+          # both for a new branch (all-zero before-SHA) and as the fallback when
+          # we can't compute a reliable file list below.
+          indeterminate() {
+            echo "code=true"     >> "$GITHUB_OUTPUT"
+            echo "version=false" >> "$GITHUB_OUTPUT"
+            echo "Indeterminate diff for range '${RANGE:-<none>}': running full CI, not publishing."
+            exit 0
+          }
+          if [ "$EVENT" = "pull_request" ]; then
+            RANGE="${PR_BASE}...${PR_HEAD}"
+          elif [ -n "${PUSH_BEFORE:-}" ] && ! printf '%s' "$PUSH_BEFORE" | grep -qE '^0+$'; then
+            RANGE="${PUSH_BEFORE} ${PUSH_AFTER}"
+          else
+            indeterminate   # new branch / unknown (all-zero) base
+          fi
+          # A force-push can rewrite history so the base SHA is no longer
+          # reachable, making `git diff` error out. Under `set -e` that would
+          # fail the whole job and wedge the required checks, so guard it: any
+          # diff failure (or an empty file list we can't classify) falls back to
+          # the indeterminate path instead of skipping code CI.
+          if ! FILES="$(git diff --name-only $RANGE)"; then
+            echo "::warning::git diff failed for range '$RANGE' (unreachable base?)"
+            indeterminate
+          fi
+          if [ -z "$FILES" ]; then
+            echo "::warning::git diff produced no file list for range '$RANGE'"
+            indeterminate
+          fi
+          echo "Changed files:"; echo "$FILES"
+          CODE=false
+          # Whether the VERSION file (the source of the release version — see the
+          # publish-r2 job's `cat VERSION`) changed in this push. Gates the
+          # build/publish-release chain so it only runs on a version bump.
+          VERSION_CHANGED=false
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            case "$f" in
+              docs/*|*.md) ;;   # documentation only — no code CI needed
+              *) CODE=true ;;
+            esac
+            if [ "$f" = "VERSION" ]; then VERSION_CHANGED=true; fi
+          done <<< "$FILES"
+          echo "code=${CODE}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION_CHANGED}" >> "$GITHUB_OUTPUT"
+          echo "Non-doc changes: ${CODE}; VERSION changed: ${VERSION_CHANGED}"
+
   tidy-check:
     name: go mod tidy
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -46,6 +142,8 @@ jobs:
 
   lint:
     name: Lint
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -65,6 +163,8 @@ jobs:
 
   unit-tests:
     name: Unit Tests
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -103,6 +203,8 @@ jobs:
 
   vuln-check:
     name: Vulnerability Scan
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -122,6 +224,8 @@ jobs:
 
   fuzz-smoke:
     name: Fuzz Smoke
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -157,6 +261,8 @@ jobs:
 
   kernel-build:
     name: Kernel Build
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -426,8 +532,10 @@ jobs:
   build-distro:
     name: Build WSL2 Distro Rootfs
     runs-on: ubuntu-latest
-    needs: [lint, unit-tests]
-    if: github.event_name == 'push'
+    needs: [changes, lint, unit-tests]
+    if: >-
+      (github.event_name == 'push' && needs.changes.outputs.version == 'true') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true')
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -459,8 +567,10 @@ jobs:
   build-release:
     name: Build Release Binaries
     runs-on: ubuntu-latest
-    needs: [lint, unit-tests, integration-tests, e2e-tests]
-    if: github.event_name == 'push'
+    needs: [changes, lint, unit-tests, integration-tests, e2e-tests]
+    if: >-
+      (github.event_name == 'push' && needs.changes.outputs.version == 'true') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true')
     timeout-minutes: 15
     outputs:
       version: ${{ steps.read-version.outputs.version }}
@@ -524,8 +634,10 @@ jobs:
   publish-r2:
     name: Publish to R2
     runs-on: ubuntu-latest
-    needs: [build-release, build-distro]
-    if: github.event_name == 'push'
+    needs: [changes, build-release, build-distro]
+    if: >-
+      (github.event_name == 'push' && needs.changes.outputs.version == 'true') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true')
     timeout-minutes: 15
     # Publishes the freshly built cli/daemon/distro (and the current desktop
     # release) straight to the R2 origin as a minisign-signed channel manifest —
