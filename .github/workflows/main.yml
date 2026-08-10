@@ -67,18 +67,37 @@ jobs:
           set -euo pipefail
           # Mirror the retired workflow-level paths-ignore: docs/** and **.md are
           # the only paths that do NOT warrant a code CI run.
+          #
+          # Indeterminate diff → run the FULL CI pipeline (so the required checks
+          # still report and the branch stays mergeable) but never publish. Used
+          # both for a new branch (all-zero before-SHA) and as the fallback when
+          # we can't compute a reliable file list below.
+          indeterminate() {
+            echo "code=true"     >> "$GITHUB_OUTPUT"
+            echo "version=false" >> "$GITHUB_OUTPUT"
+            echo "Indeterminate diff for range '${RANGE:-<none>}': running full CI, not publishing."
+            exit 0
+          }
           if [ "$EVENT" = "pull_request" ]; then
             RANGE="${PR_BASE}...${PR_HEAD}"
           elif [ -n "${PUSH_BEFORE:-}" ] && ! printf '%s' "$PUSH_BEFORE" | grep -qE '^0+$'; then
             RANGE="${PUSH_BEFORE} ${PUSH_AFTER}"
           else
-            # New branch or unknown base: run the full pipeline to be safe, but
-            # do NOT publish — an indeterminate diff must never trigger a release.
-            echo "code=true" >> "$GITHUB_OUTPUT"
-            echo "version=false" >> "$GITHUB_OUTPUT"
-            exit 0
+            indeterminate   # new branch / unknown (all-zero) base
           fi
-          FILES="$(git diff --name-only $RANGE)"
+          # A force-push can rewrite history so the base SHA is no longer
+          # reachable, making `git diff` error out. Under `set -e` that would
+          # fail the whole job and wedge the required checks, so guard it: any
+          # diff failure (or an empty file list we can't classify) falls back to
+          # the indeterminate path instead of skipping code CI.
+          if ! FILES="$(git diff --name-only $RANGE)"; then
+            echo "::warning::git diff failed for range '$RANGE' (unreachable base?)"
+            indeterminate
+          fi
+          if [ -z "$FILES" ]; then
+            echo "::warning::git diff produced no file list for range '$RANGE'"
+            indeterminate
+          fi
           echo "Changed files:"; echo "$FILES"
           CODE=false
           # Whether the VERSION file (the source of the release version — see the
