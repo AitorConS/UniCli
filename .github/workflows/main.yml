@@ -17,6 +17,16 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Manual publish escape hatch: run the workflow from the Actions tab with
+  # `publish: true` to build and push a release to R2 without a VERSION bump
+  # (e.g. a dry run, or re-publishing after an infra fix). Left false it runs
+  # CI only, exactly like a normal push whose VERSION didn't change.
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Build + publish a release to R2 even without a VERSION bump'
+        type: boolean
+        default: false
 
 # Least privilege by default; jobs that publish elevate explicitly.
 permissions:
@@ -504,7 +514,9 @@ jobs:
     name: Build WSL2 Distro Rootfs
     runs-on: ubuntu-latest
     needs: [changes, lint, unit-tests]
-    if: github.event_name == 'push' && needs.changes.outputs.version == 'true'
+    if: >-
+      (github.event_name == 'push' && needs.changes.outputs.version == 'true') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true')
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -537,7 +549,9 @@ jobs:
     name: Build Release Binaries
     runs-on: ubuntu-latest
     needs: [changes, lint, unit-tests, integration-tests, e2e-tests]
-    if: github.event_name == 'push' && needs.changes.outputs.version == 'true'
+    if: >-
+      (github.event_name == 'push' && needs.changes.outputs.version == 'true') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true')
     timeout-minutes: 15
     outputs:
       version: ${{ steps.read-version.outputs.version }}
@@ -602,7 +616,9 @@ jobs:
     name: Publish to R2
     runs-on: ubuntu-latest
     needs: [changes, build-release, build-distro]
-    if: github.event_name == 'push' && needs.changes.outputs.version == 'true'
+    if: >-
+      (github.event_name == 'push' && needs.changes.outputs.version == 'true') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true')
     timeout-minutes: 15
     # Publishes the freshly built cli/daemon/distro (and the current desktop
     # release) straight to the R2 origin as a minisign-signed channel manifest —
