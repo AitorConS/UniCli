@@ -1,16 +1,22 @@
 name: CI
 
+# The workflow itself always triggers on pushes/PRs to main (no workflow-level
+# paths filter). Doc-only changes are filtered per-job instead: the `changes`
+# job below decides whether non-doc files changed, and the build/test jobs skip
+# when they did not.
+#
+# Why not paths-ignore here? Branch protection marks several of these jobs as
+# required (go mod tidy, Lint, Unit Tests, Vulnerability Scan, Kernel Build). A
+# workflow-level paths filter SKIPS THE WHOLE WORKFLOW for doc-only PRs, so those
+# required checks are never reported and the PR is stuck forever on
+# "Expected — Waiting for status to be reported". Skipping at the job level
+# instead still emits a "skipped" conclusion for each required check, which
+# branch protection accepts as passing — so doc-only PRs stay mergeable.
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - 'docs/**'
-      - '**.md'
   pull_request:
     branches: [main]
-    paths-ignore:
-      - 'docs/**'
-      - '**.md'
 
 # Least privilege by default; jobs that publish elevate explicitly.
 permissions:
@@ -22,8 +28,60 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Detect whether any non-documentation files changed. Doc-only changes
+  # (docs/**, **.md) leave `code` == 'false', which makes every build/test job
+  # below skip. The skipped jobs still report a "skipped" check to branch
+  # protection (accepted as passing), so doc PRs merge without a code CI run.
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Determine whether non-doc files changed
+        id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # Mirror the retired workflow-level paths-ignore: docs/** and **.md are
+          # the only paths that do NOT warrant a code CI run.
+          if [ "$EVENT" = "pull_request" ]; then
+            RANGE="${PR_BASE}...${PR_HEAD}"
+          elif [ -n "${PUSH_BEFORE:-}" ] && ! printf '%s' "$PUSH_BEFORE" | grep -qE '^0+$'; then
+            RANGE="${PUSH_BEFORE} ${PUSH_AFTER}"
+          else
+            # New branch or unknown base: run the full pipeline to be safe.
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          FILES="$(git diff --name-only $RANGE)"
+          echo "Changed files:"; echo "$FILES"
+          CODE=false
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            case "$f" in
+              docs/*|*.md) ;;   # documentation only — no code CI needed
+              *) CODE=true; break ;;
+            esac
+          done <<< "$FILES"
+          echo "code=${CODE}" >> "$GITHUB_OUTPUT"
+          echo "Non-doc changes: ${CODE}"
+
   tidy-check:
     name: go mod tidy
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -46,6 +104,8 @@ jobs:
 
   lint:
     name: Lint
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -65,6 +125,8 @@ jobs:
 
   unit-tests:
     name: Unit Tests
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -103,6 +165,8 @@ jobs:
 
   vuln-check:
     name: Vulnerability Scan
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -122,6 +186,8 @@ jobs:
 
   fuzz-smoke:
     name: Fuzz Smoke
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -157,6 +223,8 @@ jobs:
 
   kernel-build:
     name: Kernel Build
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
