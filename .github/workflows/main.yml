@@ -38,6 +38,7 @@ jobs:
     timeout-minutes: 3
     outputs:
       code: ${{ steps.filter.outputs.code }}
+      version: ${{ steps.filter.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -61,22 +62,30 @@ jobs:
           elif [ -n "${PUSH_BEFORE:-}" ] && ! printf '%s' "$PUSH_BEFORE" | grep -qE '^0+$'; then
             RANGE="${PUSH_BEFORE} ${PUSH_AFTER}"
           else
-            # New branch or unknown base: run the full pipeline to be safe.
+            # New branch or unknown base: run the full pipeline to be safe, but
+            # do NOT publish — an indeterminate diff must never trigger a release.
             echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "version=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           FILES="$(git diff --name-only $RANGE)"
           echo "Changed files:"; echo "$FILES"
           CODE=false
+          # Whether the VERSION file (the source of the release version — see the
+          # publish-r2 job's `cat VERSION`) changed in this push. Gates the
+          # build/publish-release chain so it only runs on a version bump.
+          VERSION_CHANGED=false
           while IFS= read -r f; do
             [ -z "$f" ] && continue
             case "$f" in
               docs/*|*.md) ;;   # documentation only — no code CI needed
-              *) CODE=true; break ;;
+              *) CODE=true ;;
             esac
+            if [ "$f" = "VERSION" ]; then VERSION_CHANGED=true; fi
           done <<< "$FILES"
           echo "code=${CODE}" >> "$GITHUB_OUTPUT"
-          echo "Non-doc changes: ${CODE}"
+          echo "version=${VERSION_CHANGED}" >> "$GITHUB_OUTPUT"
+          echo "Non-doc changes: ${CODE}; VERSION changed: ${VERSION_CHANGED}"
 
   tidy-check:
     name: go mod tidy
@@ -494,8 +503,8 @@ jobs:
   build-distro:
     name: Build WSL2 Distro Rootfs
     runs-on: ubuntu-latest
-    needs: [lint, unit-tests]
-    if: github.event_name == 'push'
+    needs: [changes, lint, unit-tests]
+    if: github.event_name == 'push' && needs.changes.outputs.version == 'true'
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -527,8 +536,8 @@ jobs:
   build-release:
     name: Build Release Binaries
     runs-on: ubuntu-latest
-    needs: [lint, unit-tests, integration-tests, e2e-tests]
-    if: github.event_name == 'push'
+    needs: [changes, lint, unit-tests, integration-tests, e2e-tests]
+    if: github.event_name == 'push' && needs.changes.outputs.version == 'true'
     timeout-minutes: 15
     outputs:
       version: ${{ steps.read-version.outputs.version }}
@@ -592,8 +601,8 @@ jobs:
   publish-r2:
     name: Publish to R2
     runs-on: ubuntu-latest
-    needs: [build-release, build-distro]
-    if: github.event_name == 'push'
+    needs: [changes, build-release, build-distro]
+    if: github.event_name == 'push' && needs.changes.outputs.version == 'true'
     timeout-minutes: 15
     # Publishes the freshly built cli/daemon/distro (and the current desktop
     # release) straight to the R2 origin as a minisign-signed channel manifest —
