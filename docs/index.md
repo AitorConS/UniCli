@@ -71,10 +71,10 @@ The daemon is Linux-only. On Windows, the CLI runs on the host and boots the dae
 - CLI version source: `VERSION`
 - Kernel version source: `kernel/VERSION`
 
-At the time of this documentation update:
+Current released versions (regenerated from those files on every docs deploy):
 
-- CLI version: `v0.48.0`
-- Kernel version: `v0.1.2`
+- CLI version: `v{{ site.data.versions.cli }}`
+- Kernel version: `v{{ site.data.versions.kernel }}`
 
 ## Next
 

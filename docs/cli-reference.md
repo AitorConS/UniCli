@@ -430,6 +430,8 @@ Requires the daemon to run with `--cluster-addr`.
 ### `jerboa kernel check`
 ### `jerboa kernel update`
 
+`kernel update` accepts `-y, --yes` to skip the confirmation prompt.
+
 These manage the cached toolchain (`mkfs`, `boot.img`, `kernel.img`) independently of the CLI version. Both resolve the latest kernel from the signed release manifest at `releases.jerboa.dev` and verify each artifact against its recorded SHA-256; there is no GitHub fallback and no historical version selection.
 
 ---
@@ -572,4 +574,5 @@ Root commands currently exposed by the built CLI:
 - `status`
 - `stop`
 - `verify`
+- `version`
 - `volume`
