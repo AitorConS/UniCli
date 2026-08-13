@@ -3,6 +3,7 @@ package pkg
 import (
 	"archive/tar"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -133,12 +134,17 @@ func (s *OpsStore) Download(namespace, name, version string, expectedSHA256 stri
 
 	slog.Info("downloading ops package", "namespace", namespace, "name", name, "version", version)
 
-	req, err := http.NewRequest(http.MethodGet, downloadURL, nil) //nolint:noctx // callers don't thread ctx yet
+	// Ops runtime packages are large (a Node.js runtime is ~190 MiB), so the body
+	// is streamed with no total deadline; the stall watchdog aborts only a dead
+	// connection. cancel unblocks a Read stuck on a silent socket.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
 		return fmt.Errorf("ops download request: %w", err)
 	}
 
-	resp, err := httpclient.Default.Do(req)
+	resp, err := httpclient.Streaming.Do(req)
 	if err != nil {
 		return fmt.Errorf("ops download %s/%s: %w", namespace, name, err)
 	}
@@ -156,7 +162,7 @@ func (s *OpsStore) Download(namespace, name, version string, expectedSHA256 stri
 	hash := sha256.New()
 	mw := io.MultiWriter(f, hash)
 
-	size, err := io.Copy(mw, resp.Body)
+	size, err := httpclient.CopyWithStall(mw, resp.Body, httpclient.DefaultStallTimeout, cancel)
 	if err != nil {
 		_ = f.Close()
 		_ = os.Remove(archivePath)

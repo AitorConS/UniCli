@@ -10,6 +10,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"debug/elf"
 	"encoding/hex"
@@ -130,12 +131,17 @@ func (s *Store) Download(pkg Package) error {
 
 	slog.Info("downloading package", "name", pkg.Name, "version", pkg.Version)
 
-	req, err := http.NewRequest(http.MethodGet, pkg.URL, nil) //nolint:noctx // callers don't thread ctx yet
+	// A package archive can be hundreds of MiB (e.g. a language runtime), so it
+	// is streamed with no total deadline; the stall watchdog below aborts only a
+	// dead connection. The cancel unblocks a Read stuck on a silent socket.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, pkg.URL, nil)
 	if err != nil {
 		return fmt.Errorf("package download request: %w", err)
 	}
 
-	resp, err := httpclient.Default.Do(req)
+	resp, err := httpclient.Streaming.Do(req)
 	if err != nil {
 		return fmt.Errorf("package download %s: %w", pkg.Name, err)
 	}
@@ -153,7 +159,7 @@ func (s *Store) Download(pkg Package) error {
 	hash := sha256.New()
 	mw := io.MultiWriter(f, hash)
 
-	size, err := io.Copy(mw, resp.Body)
+	size, err := httpclient.CopyWithStall(mw, resp.Body, httpclient.DefaultStallTimeout, cancel)
 	if err != nil {
 		_ = f.Close()
 		_ = os.Remove(archivePath)

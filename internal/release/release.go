@@ -26,6 +26,11 @@ import (
 // DefaultBaseURL is the public read origin backed by the R2 bucket.
 const DefaultBaseURL = "https://releases.jerboa.dev"
 
+// StallTimeout is how long an artifact download may make no progress before it
+// is aborted. It bounds a dead connection without capping a healthy transfer's
+// total duration. A var so tests can shrink it; defaults to the shared value.
+var StallTimeout = httpclient.DefaultStallTimeout
+
 // Channel names.
 const (
 	ChannelStable = "stable"
@@ -60,6 +65,17 @@ func (c *Client) httpClient() *http.Client {
 		return c.HTTP
 	}
 	return httpclient.Default
+}
+
+// streamingClient is the client used for large artifact bodies. It has no total
+// deadline (which would abort a big but healthy download); liveness is enforced
+// by the stall watchdog in DownloadArtifact instead. Tests may still override
+// c.HTTP to inject a client, in which case it is honored for streaming too.
+func (c *Client) streamingClient() *http.Client {
+	if c.HTTP != nil {
+		return c.HTTP
+	}
+	return httpclient.Streaming
 }
 
 func (c *Client) base() string {
@@ -101,11 +117,18 @@ func (c *Client) DownloadArtifact(ctx context.Context, a Asset, dest string) err
 		return fmt.Errorf("release: create dest dir: %w", err)
 	}
 
+	// A large artifact is streamed with no total deadline: a healthy transfer of
+	// any size must complete. The per-request cancel wired below lets the stall
+	// watchdog abort a dead connection (a Read stuck on a silent socket only
+	// unblocks when the request context is canceled).
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.URL, nil)
 	if err != nil {
 		return fmt.Errorf("release: build request: %w", err)
 	}
-	resp, err := c.httpClient().Do(req)
+	resp, err := c.streamingClient().Do(req)
 	if err != nil {
 		return fmt.Errorf("release: download %s: %w", a.URL, err)
 	}
@@ -137,7 +160,9 @@ func (c *Client) DownloadArtifact(ctx context.Context, a Asset, dest string) err
 		// silently truncated to exactly a.Size bytes.
 		reader = io.LimitReader(reader, a.Size+1)
 	}
-	written, err := io.Copy(f, reader)
+	// CopyWithStall aborts only if the transfer goes idle for StallTimeout — a
+	// slow but progressing download of any size still completes.
+	written, err := httpclient.CopyWithStall(f, reader, StallTimeout, cancel)
 	if err != nil {
 		return fmt.Errorf("release: write %s: %w", tmp, err)
 	}

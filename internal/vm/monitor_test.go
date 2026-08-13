@@ -166,9 +166,13 @@ func TestMonitor_RestartOnFailure_CrashExit(t *testing.T) {
 	cmdFunc := func(_ context.Context, _ string, _ ...string) *exec.Cmd {
 		crashCount++
 		if crashCount <= 1 {
-			return exec.Command("false")
+			// A guest crash: with isa-debug-exit QEMU exits (guestCode<<1)|1, so a
+			// guest exit(3) surfaces as process status 7. on-failure must restart.
+			return guestExitCmd(3)
 		}
-		return exec.Command("true")
+		// A clean guest exit(0) surfaces as process status 1; on-failure must NOT
+		// restart again, so the chain settles after the single restart above.
+		return guestExitCmd(0)
 	}
 	mgr := NewQEMUManager("fake-qemu", WithCommandFunc(cmdFunc))
 	v, err := mgr.Create(context.Background(), Config{

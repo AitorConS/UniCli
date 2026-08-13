@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -66,6 +67,30 @@ type Server struct {
 	collectors   *metrics.Collectors
 	startingMu   sync.Mutex
 	starting     map[string]struct{}
+	// nameMu serializes the VM-name uniqueness check with VM creation so two
+	// concurrent runs cannot both register the same name.
+	nameMu sync.Mutex
+}
+
+// createUnique registers a VM, rejecting a name already held by another VM
+// (Docker-like semantics). A duplicate name makes name-based addressing
+// ambiguous and breaks DNS resolution of that name entirely, so it must be
+// refused at run time. The check and the create are done under nameMu so
+// concurrent same-name runs cannot race past it. Internal restart/replace paths
+// create replacements directly on the store and intentionally bypass this, so a
+// legitimate same-name replacement of a stopped VM still works.
+func (s *Server) createUnique(ctx context.Context, cfg vm.Config) (*vm.VM, error) {
+	if cfg.Name == "" {
+		return s.mgr.Create(ctx, cfg)
+	}
+	s.nameMu.Lock()
+	defer s.nameMu.Unlock()
+	for _, existing := range s.mgr.List() {
+		if existing.Cfg.Name == cfg.Name {
+			return nil, fmt.Errorf("vm name %q is already in use", cfg.Name)
+		}
+	}
+	return s.mgr.Create(ctx, cfg)
 }
 
 // SetCollectors attaches Prometheus collectors so VM start/stop/kill RPCs
@@ -350,34 +375,55 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 		return nil, rerr
 	}
 
-	// A networked run without a guest IP can never work: the guest configures
-	// no address, the tap is never bridged, and the port forwarder has no dial
-	// target. The CLI allocates the IP before calling Run, but other clients
-	// (the desktop GUI, direct API users) send only the network name — resolve
-	// the network here and allocate server-side, filling gateway/bridge/mask
-	// from the store when the client left them unset too. Requests that already
-	// carry an IP skip the lookup entirely, so ad-hoc networks not registered
-	// in the store keep working when specified in full.
-	allocatedIP := ""
-	if p.NetworkName != "" && p.IPAddress == "" {
+	// Reconcile the request's IP with the network's IPAM. A networked run without
+	// a guest IP can never work (the guest configures no address, the tap is never
+	// bridged, the forwarder has no dial target), so the daemon allocates one when
+	// the client left it empty. When the client DID supply an IP, it is reserved
+	// so a duplicate static address is rejected instead of silently colliding on
+	// the bridge — unless it is an address the client already pre-allocated from
+	// this same IPAM (StaticIP=false), which is expected to be reserved already.
+	//
+	// assignedIP tracks an address the daemon added to the pool for this run so it
+	// can be returned if Create fails. Ad-hoc networks not registered in the store
+	// keep working when specified in full: the store lookup fails and IPAM is
+	// skipped entirely.
+	assignedIP := ""
+	if p.NetworkName != "" {
 		n, nerr := s.netStore.Get(p.NetworkName)
 		if nerr != nil {
-			return nil, &api.RPCError{Code: -32000, Message: nerr.Error()}
-		}
-		ip, aerr := s.netStore.AllocateIP(p.NetworkName)
-		if aerr != nil {
-			return nil, &api.RPCError{Code: -32000, Message: "allocate ip: " + aerr.Error()}
-		}
-		p.IPAddress = ip.String()
-		allocatedIP = p.IPAddress
-		if p.GatewayIP == "" {
-			p.GatewayIP = n.Gateway
-		}
-		if p.BridgeName == "" {
-			p.BridgeName = n.Bridge
-		}
-		if p.SubnetMask == "" {
-			p.SubnetMask = maskFromCIDR(n.Subnet)
+			// Unknown (ad-hoc) network. It can only work if the client fully
+			// specified the addressing itself; without an IP the guest configures
+			// no address and the tap is never usable, so fail with the store's
+			// "not found" rather than booting a VM that can never reach the network.
+			if p.IPAddress == "" {
+				return nil, &api.RPCError{Code: -32000, Message: nerr.Error()}
+			}
+		} else {
+			if p.IPAddress == "" {
+				ip, aerr := s.netStore.AllocateIP(p.NetworkName)
+				if aerr != nil {
+					return nil, &api.RPCError{Code: -32000, Message: "allocate ip: " + aerr.Error()}
+				}
+				p.IPAddress = ip.String()
+				assignedIP = p.IPAddress
+			} else if rerr := s.netStore.ReserveIP(p.NetworkName, p.IPAddress); rerr != nil {
+				// A client-pre-allocated dynamic IP is already reserved — accept it.
+				// A duplicate static IP, or one outside the subnet, fails the run.
+				if !(errors.Is(rerr, network.ErrIPAlreadyAllocated) && !p.StaticIP) {
+					return nil, &api.RPCError{Code: -32000, Message: "reserve ip: " + rerr.Error()}
+				}
+			} else {
+				assignedIP = p.IPAddress
+			}
+			if p.GatewayIP == "" {
+				p.GatewayIP = n.Gateway
+			}
+			if p.BridgeName == "" {
+				p.BridgeName = n.Bridge
+			}
+			if p.SubnetMask == "" {
+				p.SubnetMask = maskFromCIDR(n.Subnet)
+			}
 		}
 	}
 
@@ -448,15 +494,15 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 			MaxRetries: p.Restart.MaxRetries,
 		}
 	}
-	v, err := s.mgr.Create(ctx, cfg)
+	v, err := s.createUnique(ctx, cfg)
 	if err != nil {
-		// The VM was never registered, so nothing references the IP the daemon
-		// allocated above; return it to the pool. Client-supplied IPs are left
-		// alone. After Create succeeds the IP stays allocated even if Start
-		// fails: the stopped VM keeps it in its config for a later VM.Start.
-		if allocatedIP != "" {
-			if relErr := s.netStore.ReleaseIP(p.NetworkName, allocatedIP); relErr != nil {
-				slog.Debug("run: release ip after create failure", "network", p.NetworkName, "ip", allocatedIP, "err", relErr)
+		// The VM was never registered, so nothing references any IP the daemon
+		// assigned above (allocated or reserved); return it to the pool. After
+		// Create succeeds the IP stays allocated even if Start fails: the stopped
+		// VM keeps it in its config for a later VM.Start.
+		if assignedIP != "" {
+			if relErr := s.netStore.ReleaseIP(p.NetworkName, assignedIP); relErr != nil {
+				slog.Debug("run: release ip after create failure", "network", p.NetworkName, "ip", assignedIP, "err", relErr)
 			}
 		}
 		s.recordVMError()
@@ -757,6 +803,7 @@ func toDetail(v *vm.VM) api.VMDetail {
 		RestartPolicy:   string(v.Cfg.Restart.Policy),
 		DiskIOPS:        v.Cfg.DiskIOPS,
 		DiskBPS:         v.Cfg.DiskBPS,
+		Warnings:        v.Warnings(),
 	}
 	startedAt, stoppedAt := v.GetTimes()
 	if startedAt != nil {
@@ -798,6 +845,20 @@ func (s *Server) ensureVolumesFormatted(ctx context.Context, specs []api.VolumeM
 			continue // bare block device with no mount point; nothing to format
 		}
 		if sp.ReadOnly {
+			// Read-only volumes are never formatted at attach time (they must
+			// already hold a filesystem). A freshly created, still-raw volume
+			// mounted read-only therefore fails deep in the guest with a cryptic
+			// "tfs magic mismatch". Detect the empty/unformatted case here and
+			// fail the run with an actionable message instead.
+			formatted, err := volume.IsFormatted(sp.DiskPath)
+			if err != nil {
+				return &api.RPCError{Code: -32000, Message: "volume probe: " + err.Error()}
+			}
+			if !formatted {
+				return &api.RPCError{Code: -32000, Message: fmt.Sprintf(
+					"read-only volume mounted at %s is empty (no filesystem): a read-only volume is never formatted at attach time, so seed it first (e.g. jerboa volume create --seed-pkg / jerboa volume seed) before mounting it :ro",
+					sp.GuestPath)}
+			}
 			continue
 		}
 		formatted, err := volume.IsFormatted(sp.DiskPath)
@@ -981,6 +1042,19 @@ func (s *Server) handleNetworkRemove(params json.RawMessage) (any, *api.RPCError
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+	}
+	// Refuse to remove a network that running VMs still use: Store.Remove now
+	// tears down the Linux bridge, and doing that under a live VM would sever its
+	// connectivity. Stopped VMs have already had their taps deleted, so only
+	// running ones block removal.
+	inUse := 0
+	for _, v := range s.mgr.List() {
+		if v.Cfg.NetworkName == p.Name && v.GetState() == vm.StateRunning {
+			inUse++
+		}
+	}
+	if inUse > 0 {
+		return nil, &api.RPCError{Code: -32000, Message: fmt.Sprintf("network %q is in use by %d running VM(s); stop them first", p.Name, inUse)}
 	}
 	if err := s.netStore.Remove(p.Name); err != nil {
 		return nil, &api.RPCError{Code: -32000, Message: err.Error()}

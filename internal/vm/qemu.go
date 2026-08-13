@@ -50,15 +50,20 @@ type QEMUManager struct {
 	mkCmd    CommandFunc
 	hchecker *HealthChecker
 	metrics  MetricsSink
+	// applyLimits places the hypervisor process into a per-VM cgroup with the
+	// requested CPU/memory limits, returning an error the caller turns into a
+	// failed Start. Defaults to defaultApplyLimits; tests override it.
+	applyLimits func(v *VM, pid int) error
 }
 
 // NewQEMUManager returns a QEMUManager using qemuBin as the QEMU executable.
 func NewQEMUManager(qemuBin string, opts ...Option) *QEMUManager {
 	m := &QEMUManager{
-		store:    NewMemoryStore(),
-		qemuBin:  qemuBin,
-		mkCmd:    defaultCommandFunc,
-		hchecker: NewHealthChecker(),
+		store:       NewMemoryStore(),
+		qemuBin:     qemuBin,
+		mkCmd:       defaultCommandFunc,
+		hchecker:    NewHealthChecker(),
+		applyLimits: defaultApplyLimits,
 	}
 	for _, o := range opts {
 		o(m)
@@ -154,20 +159,25 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 			return newStatsCollector(cmd.Process.Pid, v).Collect()
 		})
 	}
+
+	// abort tears down a process whose post-launch setup failed, before the VM is
+	// committed as a monitored "running" instance. It reuses the normal monitor
+	// with the explicit-stop flag set so teardown (tap, cgroup) and
+	// restart-suppression match a clean stop; the failure is returned to the
+	// caller instead of being swallowed as a WARN.
+	abort := func() {
+		v.SetExplicitStop()
+		_ = cmd.Process.Kill()
+		go m.monitor(v, cmd)
+	}
+
+	// Resource limits are applied only when explicitly requested. If they cannot
+	// be honored the run FAILS rather than launching a VM without the isolation
+	// the user asked for (a silent over-commit that can starve the host).
 	if v.Cfg.CPUShares > 0 || v.Cfg.MemoryMax > 0 {
-		if IsCgroupV2Available() {
-			cg := NewCgroupManager(v.ID)
-			if err := cg.Apply(cmd.Process.Pid, CgroupLimit{
-				CPUShares: v.Cfg.CPUShares,
-				MemoryMax: v.Cfg.MemoryMax,
-			}); err != nil {
-				slog.Warn("qemu start: cgroup apply failed", "vm_id", id, "err", err)
-			}
-			v.mu.Lock()
-			v.cgroupMgr = cg
-			v.mu.Unlock()
-		} else {
-			slog.Warn("qemu start: cgroup v2 not available, skipping resource limits", "vm_id", id)
+		if err := m.applyLimits(v, cmd.Process.Pid); err != nil {
+			abort()
+			return fmt.Errorf("qemu start %s: %w", id, err)
 		}
 	}
 	if err := v.transition(StateRunning); err != nil {
@@ -175,18 +185,29 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 		return fmt.Errorf("qemu start %s: %w", id, err)
 	}
 	_ = m.store.Save(v)
+
+	// A published port that never binds is a broken run, so a port-forwarder
+	// start failure (host port already in use, permission denied, …) FAILS the
+	// run instead of leaving a "running" VM whose published port silently does
+	// not work.
 	if len(v.Cfg.PortMaps) > 0 {
 		fwd, fwdErr := network.StartForwarder(v.Cfg.IPAddress, toNetworkPortForwards(v.Cfg.PortMaps))
 		if fwdErr != nil {
-			slog.Warn("qemu start: failed to start port forwarder", "vm_id", id, "err", fwdErr)
-		} else {
-			v.mu.Lock()
-			v.portFwd = fwd
-			v.mu.Unlock()
+			abort()
+			return fmt.Errorf("qemu start %s: publish ports: %w", id, fwdErr)
 		}
+		v.mu.Lock()
+		v.portFwd = fwd
+		v.mu.Unlock()
 	}
+
 	go m.monitor(v, cmd)
 	m.hchecker.Start(ctx, v)
+	// Watch the boot log for a volume that fails to mount, so the silent
+	// data-loss case surfaces as a visible warning instead of vanishing writes.
+	if len(v.Cfg.Volumes) > 0 {
+		go watchVolumeMounts(ctx, v)
+	}
 	return nil
 }
 
@@ -356,6 +377,13 @@ func (m *QEMUManager) buildCmd(ctx context.Context, cfg Config, qmpAddr string) 
 		"-drive", driveArg,
 		"-nographic",
 		"-no-reboot",
+		// isa-debug-exit surfaces the GUEST's exit code to the host. Nanos writes
+		// the process exit status to port 0x501 (QEMU_HALT) on shutdown; with this
+		// device QEMU then terminates with process status (guestCode<<1)|1, so the
+		// monitor can tell a clean guest exit from a crash. Without it a guest
+		// exit(N) just powers the VM off and QEMU exits 0, hiding the crash and
+		// making --restart on-failure never fire. See guestExitCode.
+		"-device", "isa-debug-exit,iobase=0x501,iosize=1",
 	}
 	args = append(args, kvmAccelArgs()...)
 	if cfg.CPUs > 0 {
@@ -570,9 +598,7 @@ func (m *QEMUManager) monitor(v *VM, cmd *exec.Cmd) {
 	case RestartAlways:
 		shouldRestart = true
 	case RestartOnFailure:
-		if exitErr != nil {
-			shouldRestart = true
-		}
+		shouldRestart = isFailureExit(exitErr)
 	}
 	if !shouldRestart {
 		slog.Info("monitor: vm exited normally, not restarting", "vm_id", v.ID, "policy", v.Cfg.Restart.Policy)

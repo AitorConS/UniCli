@@ -64,6 +64,12 @@ type RunParams struct {
 	Volumes     []VolumeMountSpec `json:"volumes,omitempty"`
 	Attach      bool              `json:"attach,omitempty"`
 	IPAddress   string            `json:"ip_address,omitempty"`
+	// StaticIP marks IPAddress as a user-requested static address (the --ip flag),
+	// as opposed to one the client pre-allocated from the daemon's IPAM. The
+	// daemon reserves and conflict-checks static IPs; a pre-allocated address is
+	// already reserved, so it is accepted as-is. Distinguishing them lets the
+	// daemon reject a duplicate static IP without rejecting the normal flow.
+	StaticIP    bool              `json:"static_ip,omitempty"`
 	GatewayIP   string            `json:"gateway_ip,omitempty"`
 	BridgeName  string            `json:"bridge_name,omitempty"`
 	SubnetMask  string            `json:"subnet_mask,omitempty"`
@@ -138,6 +144,9 @@ type VMDetail struct {
 	RestartPolicy   string            `json:"restart_policy,omitempty"`
 	DiskIOPS        uint64            `json:"disk_iops,omitempty"`
 	DiskBPS         int64             `json:"disk_bps,omitempty"`
+	// Warnings are non-fatal runtime conditions detected after start, e.g. a
+	// volume whose mount point does not exist in the image (so it never mounted).
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // LogsResponse carries the captured serial console output for a VM.
