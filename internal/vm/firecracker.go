@@ -223,7 +223,10 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 	}
 
 	if err := v.transition(StateRunning); err != nil {
-		_ = cmd.Process.Kill()
+		// Tear down through monitor like the other post-launch failures: a bare
+		// Kill would leave cmd.Wait unrun (zombie) and leak the rootfs copy, the
+		// config file, the VMM log, the API socket, and the tap device.
+		abort()
 		return fmt.Errorf("firecracker start %s: %w", id, err)
 	}
 	_ = m.store.Save(v)

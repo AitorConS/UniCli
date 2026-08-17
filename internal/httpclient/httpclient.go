@@ -81,7 +81,10 @@ func (p *progressReader) Read(b []byte) (int, error) {
 	if n > 0 && p.onRead != nil {
 		p.onRead(n)
 	}
-	return n, err
+	// Return the underlying error verbatim: progressReader is an io.Reader and
+	// io.Copy detects end-of-stream by comparing the error to io.EOF by identity
+	// (==), so wrapping it would make io.Copy treat a healthy EOF as a failure.
+	return n, err //nolint:wrapcheck // io.EOF sentinel must reach io.Copy unwrapped
 }
 
 // CopyWithStall copies src into dst and aborts the transfer if no bytes arrive
@@ -90,7 +93,7 @@ func (p *progressReader) Read(b []byte) (int, error) {
 //
 // cancel MUST abort src's underlying read — pass the CancelFunc of the context
 // used to build the *http.Request whose Body is src. A read blocked on a dead
-// TCP socket does not return on its own; cancelling the request context is what
+// TCP socket does not return on its own; canceling the request context is what
 // unblocks it so io.Copy can return. When the abort is triggered by a stall,
 // CopyWithStall returns a *StallError (not the resulting "context canceled").
 func CopyWithStall(dst io.Writer, src io.Reader, idle time.Duration, cancel context.CancelFunc) (int64, error) {
@@ -134,5 +137,8 @@ func CopyWithStall(dst io.Writer, src io.Reader, idle time.Duration, cancel cont
 	if stalled.Load() {
 		return n, &StallError{Idle: idle}
 	}
-	return n, err
+	if err != nil {
+		return n, fmt.Errorf("copy download stream: %w", err)
+	}
+	return n, nil
 }

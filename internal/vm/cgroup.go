@@ -87,7 +87,7 @@ func IsCgroupV2Available() bool {
 // It returns an error — rather than logging and continuing — when the limit
 // cannot be applied. Callers surface that as a failed Start: a user who asked
 // for isolation must not silently get a VM with none (which can let one guest
-// starve the host or its neighbours). The error text points at the usual WSL2
+// starve the host or its neighbors). The error text points at the usual WSL2
 // cause (cgroup v2 delegation not set up for the daemon).
 func defaultApplyLimits(v *VM, pid int) error {
 	if !IsCgroupV2Available() {

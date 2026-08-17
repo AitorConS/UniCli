@@ -69,16 +69,16 @@ type RunParams struct {
 	// daemon reserves and conflict-checks static IPs; a pre-allocated address is
 	// already reserved, so it is accepted as-is. Distinguishing them lets the
 	// daemon reject a duplicate static IP without rejecting the normal flow.
-	StaticIP    bool              `json:"static_ip,omitempty"`
-	GatewayIP   string            `json:"gateway_ip,omitempty"`
-	BridgeName  string            `json:"bridge_name,omitempty"`
-	SubnetMask  string            `json:"subnet_mask,omitempty"`
-	HealthCheck *HealthCheckSpec  `json:"health_check,omitempty"`
-	Restart     *RestartSpec      `json:"restart,omitempty"`
-	CPUShares   uint64            `json:"cpu_shares,omitempty"`
-	MemoryMax   int64             `json:"memory_max,omitempty"`
-	DiskIOPS    uint64            `json:"disk_iops,omitempty"`
-	DiskBPS     int64             `json:"disk_bps,omitempty"`
+	StaticIP    bool             `json:"static_ip,omitempty"`
+	GatewayIP   string           `json:"gateway_ip,omitempty"`
+	BridgeName  string           `json:"bridge_name,omitempty"`
+	SubnetMask  string           `json:"subnet_mask,omitempty"`
+	HealthCheck *HealthCheckSpec `json:"health_check,omitempty"`
+	Restart     *RestartSpec     `json:"restart,omitempty"`
+	CPUShares   uint64           `json:"cpu_shares,omitempty"`
+	MemoryMax   int64            `json:"memory_max,omitempty"`
+	DiskIOPS    uint64           `json:"disk_iops,omitempty"`
+	DiskBPS     int64            `json:"disk_bps,omitempty"`
 }
 
 // HealthCheckSpec is the wire representation of a health check configuration.

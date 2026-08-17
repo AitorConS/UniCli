@@ -181,7 +181,10 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 		}
 	}
 	if err := v.transition(StateRunning); err != nil {
-		_ = cmd.Process.Kill()
+		// Tear the process down through the same monitor path as the other
+		// post-launch failures: a bare Kill would leave cmd.Wait unrun (zombie)
+		// and leak the QMP socket, the tap device, and the cgroup applied above.
+		abort()
 		return fmt.Errorf("qemu start %s: %w", id, err)
 	}
 	_ = m.store.Save(v)

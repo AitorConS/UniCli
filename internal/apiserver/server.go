@@ -409,7 +409,7 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 			} else if rerr := s.netStore.ReserveIP(p.NetworkName, p.IPAddress); rerr != nil {
 				// A client-pre-allocated dynamic IP is already reserved — accept it.
 				// A duplicate static IP, or one outside the subnet, fails the run.
-				if !(errors.Is(rerr, network.ErrIPAlreadyAllocated) && !p.StaticIP) {
+				if p.StaticIP || !errors.Is(rerr, network.ErrIPAlreadyAllocated) {
 					return nil, &api.RPCError{Code: -32000, Message: "reserve ip: " + rerr.Error()}
 				}
 			} else {

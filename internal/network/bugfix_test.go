@@ -3,7 +3,6 @@
 package network
 
 import (
-	"errors"
 	"net"
 	"testing"
 
@@ -69,7 +68,28 @@ func TestReserveIP_RejectsOutOfSubnet(t *testing.T) {
 
 	err = s.ReserveIP("testnet", "10.100.5.50") // outside the /24
 	require.Error(t, err)
-	require.False(t, errors.Is(err, ErrIPAlreadyAllocated), "out-of-range is a distinct error, not a duplicate")
+	require.NotErrorIs(t, err, ErrIPAlreadyAllocated, "out-of-range is a distinct error, not a duplicate")
+}
+
+func TestReserveIP_RejectsNetworkAndBroadcast(t *testing.T) {
+	s, err := NewStore(t.TempDir())
+	require.NoError(t, err)
+	_, err = s.Create("testnet", "10.100.0.0/24", "bridge")
+	require.NoError(t, err)
+
+	// The subnet (network) address and the directed broadcast address are inside
+	// the CIDR but are not assignable to a host: reserving either must fail, and
+	// with a distinct error (not the duplicate sentinel).
+	err = s.ReserveIP("testnet", "10.100.0.0")
+	require.Error(t, err)
+	require.NotErrorIs(t, err, ErrIPAlreadyAllocated, "network address is a distinct error, not a duplicate")
+
+	err = s.ReserveIP("testnet", "10.100.0.255")
+	require.Error(t, err)
+	require.NotErrorIs(t, err, ErrIPAlreadyAllocated, "broadcast address is a distinct error, not a duplicate")
+
+	// A normal host address in the same subnet is still accepted.
+	require.NoError(t, s.ReserveIP("testnet", "10.100.0.50"))
 }
 
 func TestReserveIP_UnknownNetwork(t *testing.T) {

@@ -242,6 +242,12 @@ func (s *Store) ReserveIP(name, ip string) error {
 	if !ipNet.Contains(parsed) {
 		return fmt.Errorf("reserve ip: %s is outside network %q subnet %s", ip, name, n.Subnet)
 	}
+	// The subnet (network) address and the directed broadcast address are not
+	// assignable to a host: a guest configured with either cannot communicate.
+	// Reject them so a bad --ip fails fast instead of booting an unreachable VM.
+	if networkOrBroadcast(ipNet, parsed) {
+		return fmt.Errorf("reserve ip: %s is the network or broadcast address of %q subnet %s", ip, name, n.Subnet)
+	}
 
 	st, err := s.readState(name)
 	if err != nil {
@@ -263,6 +269,24 @@ func (s *Store) ReserveIP(name, ip string) error {
 		return fmt.Errorf("reserve ip write state: %w", err)
 	}
 	return nil
+}
+
+// networkOrBroadcast reports whether ip is the IPv4 subnet (network) address or
+// the directed broadcast address of ipNet — neither is a usable host address.
+func networkOrBroadcast(ipNet *net.IPNet, ip net.IP) bool {
+	base := ipNet.IP.To4()
+	v4 := ip.To4()
+	if base == nil || v4 == nil || len(ipNet.Mask) != net.IPv4len {
+		return false
+	}
+	if v4.Equal(base) {
+		return true // network address
+	}
+	bcast := make(net.IP, net.IPv4len)
+	for i := 0; i < net.IPv4len; i++ {
+		bcast[i] = base[i] | ^ipNet.Mask[i]
+	}
+	return v4.Equal(bcast)
 }
 
 func (s *Store) AllocateIP(name string) (net.IP, error) {
