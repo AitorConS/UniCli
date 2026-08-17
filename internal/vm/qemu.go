@@ -140,7 +140,13 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 	}
 
 	cmd.Stdout = stdout
-	cmd.Stderr = stdout
+	// Keep QEMU's own stderr in a dedicated buffer so the monitor can tell a
+	// clean guest exit(0) from QEMU's own exit(1) — both surface as process
+	// status 1 because isa-debug-exit calls exit((code<<1)|1) directly, with no
+	// QMP SHUTDOWN event, so only QEMU's error diagnostic on stderr distinguishes
+	// them. Still tee stderr into the shared log/attach stream so the diagnostics
+	// stay visible to `jerboa logs` and `--attach` exactly as before.
+	cmd.Stderr = io.MultiWriter(stdout, &v.qemuErrBuf)
 	if err := cmd.Start(); err != nil {
 		if tErr := v.transition(StateStopped); tErr != nil {
 			return fmt.Errorf("qemu start %s: launch: %w; also failed to stop: %w", id, err, tErr)
@@ -601,7 +607,9 @@ func (m *QEMUManager) monitor(v *VM, cmd *exec.Cmd) {
 	case RestartAlways:
 		shouldRestart = true
 	case RestartOnFailure:
-		shouldRestart = isFailureExit(exitErr)
+		// qemuErrBuf holds QEMU's own stderr, used to disambiguate a guest
+		// exit(0) from QEMU's own exit(1) (both surface as process status 1).
+		shouldRestart = isFailureExit(exitErr, string(v.qemuErrBuf.Bytes()))
 	}
 	if !shouldRestart {
 		slog.Info("monitor: vm exited normally, not restarting", "vm_id", v.ID, "policy", v.Cfg.Restart.Policy)
