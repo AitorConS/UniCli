@@ -458,12 +458,14 @@ func (m *FirecrackerManager) monitor(v *VM, cmd *exec.Cmd, sockPath, cfgPath, vm
 	if v.Cfg.Restart.Policy == RestartNever || v.Cfg.Restart.Policy == "" {
 		return
 	}
-	// Firecracker has no isa-debug-exit channel, so guestExitCode cannot recover
-	// the guest's own code and isFailureExit falls back to the raw hypervisor
-	// result (any abnormal exit is a failure). QEMU, wired with isa-debug-exit,
-	// gets a precise clean-vs-crash decision from the same helper.
+	// Firecracker has no isa-debug-exit channel, so there is no guest-exit-code
+	// encoding to recover (that decoding is QEMU-specific — applying it here would
+	// misread a plain Firecracker exit(1) as a clean guest exit(0)). The failure
+	// signal is simply the raw hypervisor result: any abnormal (non-nil) exit is a
+	// failure. QEMU, wired with isa-debug-exit, gets the precise clean-vs-crash
+	// decision from isFailureExit instead.
 	shouldRestart := v.Cfg.Restart.Policy == RestartAlways ||
-		(v.Cfg.Restart.Policy == RestartOnFailure && isFailureExit(exitErr))
+		(v.Cfg.Restart.Policy == RestartOnFailure && exitErr != nil)
 	if !shouldRestart {
 		return
 	}

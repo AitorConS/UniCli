@@ -85,10 +85,38 @@ func TestGuestExitCode_Signaled(t *testing.T) {
 }
 
 func TestIsFailureExit(t *testing.T) {
-	require.False(t, isFailureExit(nil), "qemu exit 0 (no debug-exit write) is treated as clean")
-	require.False(t, isFailureExit(waitStatus(t, 1)), "guest exit(0) is a clean shutdown")
-	require.True(t, isFailureExit(waitStatus(t, 7)), "guest exit(3) is a crash")
-	require.True(t, isFailureExit(waitStatus(t, 3)), "guest exit(1) is a crash")
+	require.False(t, isFailureExit(nil, ""), "qemu exit 0 (no debug-exit write) is treated as clean")
+	require.False(t, isFailureExit(waitStatus(t, 1), ""), "guest exit(0) with clean stderr is a clean shutdown")
+	require.True(t, isFailureExit(waitStatus(t, 7), ""), "guest exit(3) is a crash")
+	require.True(t, isFailureExit(waitStatus(t, 3), ""), "guest exit(1) is a crash")
+	// The status-1 collision: QEMU's own exit(1) also surfaces as status 1, but
+	// it prints a diagnostic to stderr. That must be classified as a failure so
+	// on-failure restarts it, not mistaken for a clean guest exit(0).
+	require.True(t, isFailureExit(waitStatus(t, 1), "qemu-system-x86_64: -drive: Could not open 'disk.img'"),
+		"a QEMU error masquerading as status 1 must be a failure")
+	require.False(t, isFailureExit(waitStatus(t, 1), "qemu-system-x86_64: warning: TCG doesn't support requested feature"),
+		"a QEMU warning alongside a clean guest exit(0) is not a failure")
+}
+
+func TestQemuErrored(t *testing.T) {
+	cases := []struct {
+		name   string
+		stderr string
+		want   bool
+	}{
+		{"empty stderr is clean", "", false},
+		{"fatal drive error", "qemu-system-x86_64: -drive file=disk.img: Could not open 'disk.img': No such file or directory", true},
+		{"fatal device init error", "qemu-system-x86_64: Initialization of device virtio-blk-pci failed", true},
+		{"warning only is not an error", "qemu-system-x86_64: warning: TCG doesn't support requested feature", false},
+		{"warning line then error line is an error", "qemu-system-x86_64: warning: foo\nqemu-system-x86_64: fatal: bar", true},
+		{"non-qemu output is ignored", "hello from the guest\ngoodbye", false},
+		{"whitespace only is clean", "   \n\t\n", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, qemuErrored(tc.stderr))
+		})
+	}
 }
 
 func TestMonitor_RestartOnFailure_CleanExit_NoRestart(t *testing.T) {
@@ -118,6 +146,44 @@ func TestMonitor_RestartOnFailure_CleanExit_NoRestart(t *testing.T) {
 		}
 		return false
 	}, 2*time.Second, 200*time.Millisecond)
+}
+
+// qemuErrorExitCmd returns a fake hypervisor that prints a QEMU-style diagnostic
+// to stderr and exits 1 — mimicking QEMU failing on its own (bad -drive, no KVM,
+// …). isa-debug-exit makes that collide with a clean guest exit(0) on process
+// status 1; the separated stderr is what tells them apart.
+func qemuErrorExitCmd() *exec.Cmd {
+	return exec.Command("sh", "-c", "echo 'qemu-system-x86_64: -drive: Could not open disk.img' >&2; exit 1")
+}
+
+func TestMonitor_RestartOnFailure_QemuErrorExit1_Restarts(t *testing.T) {
+	// QEMU's own exit(1) surfaces as process status 1, exactly like a clean guest
+	// exit(0). The diagnostic QEMU writes to stderr is the tie-breaker: on-failure
+	// MUST restart it. The restart then exits cleanly so the chain settles.
+	attempt := 0
+	cmdFunc := func(_ context.Context, _ string, _ ...string) *exec.Cmd {
+		attempt++
+		if attempt <= 1 {
+			return qemuErrorExitCmd()
+		}
+		return guestExitCmd(0) // clean guest exit(0): no further restart
+	}
+	mgr := NewQEMUManager("fake-qemu", WithCommandFunc(cmdFunc))
+	v, err := mgr.Create(context.Background(), Config{
+		ImagePath: "test.img",
+		Memory:    "256M",
+		Restart:   RestartConfig{Policy: RestartOnFailure, MaxRetries: 1},
+	})
+	require.NoError(t, err)
+	require.NoError(t, mgr.Start(context.Background(), v.ID))
+	require.Eventually(t, func() bool {
+		for _, vm := range mgr.List() {
+			if vm.GetRestartCount() >= 1 {
+				return true
+			}
+		}
+		return false
+	}, 10*time.Second, 200*time.Millisecond, "a QEMU error exiting 1 must restart under on-failure")
 }
 
 // ---------------------------------------------------------------------------
