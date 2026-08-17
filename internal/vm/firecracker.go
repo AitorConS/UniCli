@@ -67,6 +67,10 @@ type FirecrackerManager struct {
 	vmmLogPath         func(id string) string            // path for Firecracker's --log-path arg
 	readVMMLog         func(path string) ([]byte, error) // reads VMM log (may use wsl on Windows)
 	metrics            MetricsSink
+	// applyLimits places the firecracker process into a per-VM cgroup with the
+	// requested CPU/memory limits, returning an error the caller turns into a
+	// failed Start. Defaults to defaultApplyLimits; tests override it.
+	applyLimits func(v *VM, pid int) error
 }
 
 // NewFirecrackerManager returns a FirecrackerManager.
@@ -85,6 +89,7 @@ func NewFirecrackerManager(fcBin, kernelImage string, opts ...FCOption) *Firecra
 		rewriteConfigPaths: func(*fcVMConfig) {},
 		vmmLogPath:         func(id string) string { return filepath.Join(os.TempDir(), "fc-"+id+"-vmm.log") },
 		readVMMLog:         os.ReadFile,
+		applyLimits:        defaultApplyLimits,
 	}
 	platformInitFC(m)
 	for _, o := range opts {
@@ -197,25 +202,56 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 	v.StartedAt = &now
 	v.mu.Unlock()
 
-	if err := v.transition(StateRunning); err != nil {
+	// abort tears down a process whose post-launch setup failed, before the VM is
+	// committed as a monitored "running" instance. It reuses the normal monitor
+	// with explicit-stop set so teardown (tap, temp files) and restart-suppression
+	// match a clean stop; the failure is returned to the caller, not swallowed.
+	abort := func() {
+		v.SetExplicitStop()
 		_ = cmd.Process.Kill()
+		go m.monitor(v, cmd, sockPath, cfgPath, vmmLog, rootfs)
+	}
+
+	// Resource limits are applied only when explicitly requested. If they cannot
+	// be honored the run FAILS rather than launching a VM without the isolation
+	// the user asked for.
+	if v.Cfg.CPUShares > 0 || v.Cfg.MemoryMax > 0 {
+		if err := m.applyLimits(v, cmd.Process.Pid); err != nil {
+			abort()
+			return fmt.Errorf("firecracker start %s: %w", id, err)
+		}
+	}
+
+	if err := v.transition(StateRunning); err != nil {
+		// Tear down through monitor like the other post-launch failures: a bare
+		// Kill would leave cmd.Wait unrun (zombie) and leak the rootfs copy, the
+		// config file, the VMM log, the API socket, and the tap device.
+		abort()
 		return fmt.Errorf("firecracker start %s: %w", id, err)
 	}
 	_ = m.store.Save(v)
 
+	// A published port that never binds is a broken run, so a port-forwarder start
+	// failure FAILS the run instead of leaving a "running" VM whose published port
+	// silently does not work.
 	if len(v.Cfg.PortMaps) > 0 {
 		fwd, fwdErr := network.StartForwarder(v.Cfg.IPAddress, toNetworkPortForwards(v.Cfg.PortMaps))
 		if fwdErr != nil {
-			slog.Warn("firecracker start: failed to start port forwarder", "vm_id", id, "err", fwdErr)
-		} else {
-			v.mu.Lock()
-			v.portFwd = fwd
-			v.mu.Unlock()
+			abort()
+			return fmt.Errorf("firecracker start %s: publish ports: %w", id, fwdErr)
 		}
+		v.mu.Lock()
+		v.portFwd = fwd
+		v.mu.Unlock()
 	}
 
 	go m.monitor(v, cmd, sockPath, cfgPath, vmmLog, rootfs)
 	m.hchecker.Start(ctx, v)
+	// Watch the boot log for a volume that fails to mount, so the silent
+	// data-loss case surfaces as a visible warning instead of vanishing writes.
+	if len(v.Cfg.Volumes) > 0 {
+		go watchVolumeMounts(ctx, v)
+	}
 	return nil
 }
 
@@ -422,8 +458,12 @@ func (m *FirecrackerManager) monitor(v *VM, cmd *exec.Cmd, sockPath, cfgPath, vm
 	if v.Cfg.Restart.Policy == RestartNever || v.Cfg.Restart.Policy == "" {
 		return
 	}
+	// Firecracker has no isa-debug-exit channel, so guestExitCode cannot recover
+	// the guest's own code and isFailureExit falls back to the raw hypervisor
+	// result (any abnormal exit is a failure). QEMU, wired with isa-debug-exit,
+	// gets a precise clean-vs-crash decision from the same helper.
 	shouldRestart := v.Cfg.Restart.Policy == RestartAlways ||
-		(v.Cfg.Restart.Policy == RestartOnFailure && exitErr != nil)
+		(v.Cfg.Restart.Policy == RestartOnFailure && isFailureExit(exitErr))
 	if !shouldRestart {
 		return
 	}

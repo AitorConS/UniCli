@@ -347,6 +347,7 @@ type VM struct {
 	RestartCount int
 
 	mu            sync.RWMutex
+	warnings      []string // non-fatal runtime warnings surfaced by inspect (e.g. a volume that failed to mount)
 	proc          process
 	pid           int // OS pid of the hypervisor process; persisted for crash recovery
 	done          chan struct{}
@@ -411,6 +412,31 @@ func (v *VM) GetRestartCount() int {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 	return v.RestartCount
+}
+
+// AddWarning records a non-fatal runtime warning about the VM, de-duplicating
+// repeats so a repeatedly-observed condition is reported once.
+func (v *VM) AddWarning(w string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for _, existing := range v.warnings {
+		if existing == w {
+			return
+		}
+	}
+	v.warnings = append(v.warnings, w)
+}
+
+// Warnings returns a snapshot of the VM's non-fatal runtime warnings.
+func (v *VM) Warnings() []string {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	if len(v.warnings) == 0 {
+		return nil
+	}
+	out := make([]string, len(v.warnings))
+	copy(out, v.warnings)
+	return out
 }
 
 // SetExplicitStop marks the VM as explicitly stopped by the user.

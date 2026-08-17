@@ -1,0 +1,20 @@
+# Build + run spec for voltest — an HTTP server that persists to a volume.
+#
+#   jerboa build ./examples/voltest --name voltest
+#
+# A TFS volume can only be mounted onto a directory that already EXISTS in the
+# root image: Nanos resolves the mount point at boot, before the program runs, so
+# the app's own os.MkdirAll("/data") happens too late. Declaring the mount point
+# here bakes an empty /data into the image so `-v testdata:/data` actually mounts
+# and data persists across VM instances. Without this the volume silently fails
+# to mount and every write is lost when the VM stops.
+
+[build]
+lang = "go"
+
+# Create the empty volume mount point in the image.
+dirs = ["/data"]
+
+[run]
+memory = "256M"
+ports = ["8080:8080"]

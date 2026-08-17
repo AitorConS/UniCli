@@ -79,3 +79,26 @@ func IsCgroupV2Available() bool {
 	_, err := os.Stat(filepath.Join(cgroupBase, "cgroup.controllers"))
 	return err == nil
 }
+
+// defaultApplyLimits places the hypervisor process (pid) into a per-VM cgroup v2
+// subtree carrying the requested CPU weight / memory cap, and records the
+// manager on v so the limits are torn down when the VM stops.
+//
+// It returns an error — rather than logging and continuing — when the limit
+// cannot be applied. Callers surface that as a failed Start: a user who asked
+// for isolation must not silently get a VM with none (which can let one guest
+// starve the host or its neighbors). The error text points at the usual WSL2
+// cause (cgroup v2 delegation not set up for the daemon).
+func defaultApplyLimits(v *VM, pid int) error {
+	if !IsCgroupV2Available() {
+		return fmt.Errorf("resource limits (--cpu-shares/--memory-max) require cgroup v2, which is not available on this host")
+	}
+	cg := NewCgroupManager(v.ID)
+	if err := cg.Apply(pid, CgroupLimit{CPUShares: v.Cfg.CPUShares, MemoryMax: v.Cfg.MemoryMax}); err != nil {
+		return fmt.Errorf("apply resource limits: %w (on WSL2 this usually means cgroup v2 delegation is not set up for the daemon)", err)
+	}
+	v.mu.Lock()
+	v.cgroupMgr = cg
+	v.mu.Unlock()
+	return nil
+}

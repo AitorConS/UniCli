@@ -4,9 +4,9 @@ package vm
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -137,10 +137,36 @@ func (h *HealthChecker) probe(p *healthProbe) {
 	}
 }
 
+// probeTarget builds the address the health checker dials for v. The health
+// check port (cfg.Port) is the GUEST service port, so when the VM has a routable
+// guest IP the probe goes straight to guestIP:guestPort — the address the
+// service actually listens on, reachable from the daemon over the bridge. This
+// is independent of how (or whether) the port is published on the host.
+//
+// Dialing the host-published loopback port instead (the previous behavior) was
+// wrong in two ways: a VM published with host≠guest (e.g. -p 18080:8080,
+// --health-check tcp:8080) probed 127.0.0.1:8080 where nothing of that VM
+// listened → permanently unhealthy; and when two VMs collided on a host port the
+// probe reached whichever VM won the bind, not the one being checked.
+//
+// Only when the VM has no guest IP (no TAP networking) does it fall back to the
+// host loopback, mapping the guest port to its published host port when one
+// exists, so a purely local port can still be checked.
 func probeTarget(v *VM, cfg *HealthCheckConfig) string {
 	if len(v.Cfg.PortMaps) == 0 && cfg.Port == 0 {
 		return ""
 	}
+	if v.Cfg.IPAddress != "" {
+		guestPort := cfg.Port
+		if guestPort == 0 && len(v.Cfg.PortMaps) > 0 {
+			guestPort = int(v.Cfg.PortMaps[0].GuestPort)
+		}
+		if guestPort != 0 {
+			return formatProbeTarget(cfg, v.Cfg.IPAddress, guestPort)
+		}
+	}
+	// No routable guest IP: fall back to the host side. cfg.Port names the
+	// loopback port to dial; when unset, use the first port map's host port.
 	hostPort := cfg.Port
 	if hostPort == 0 && len(v.Cfg.PortMaps) > 0 {
 		hostPort = int(v.Cfg.PortMaps[0].HostPort)
@@ -148,17 +174,23 @@ func probeTarget(v *VM, cfg *HealthCheckConfig) string {
 	if hostPort == 0 {
 		return ""
 	}
+	return formatProbeTarget(cfg, "127.0.0.1", hostPort)
+}
+
+// formatProbeTarget renders host+port as the probe address for cfg's type: a
+// bare host:port for tcp, or an http URL (with a normalized path) for http.
+func formatProbeTarget(cfg *HealthCheckConfig, host string, port int) string {
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	if cfg.Type == "http" {
 		path := cfg.Path
-		if path != "" && !strings.HasPrefix(path, "/") {
-			path = "/" + path
-		}
 		if path == "" {
 			path = "/"
+		} else if !strings.HasPrefix(path, "/") {
+			path = "/" + path
 		}
-		return fmt.Sprintf("http://127.0.0.1:%d%s", hostPort, path)
+		return "http://" + addr + path
 	}
-	return fmt.Sprintf("127.0.0.1:%d", hostPort)
+	return addr
 }
 
 func probeTCP(ctx context.Context, addr string) bool {

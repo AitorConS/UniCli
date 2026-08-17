@@ -6,7 +6,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -15,6 +17,11 @@ import (
 
 	"github.com/AitorConS/jerboa/internal/naming"
 )
+
+// ErrIPAlreadyAllocated is returned by ReserveIP when the requested address is
+// already assigned within the network. It is a sentinel so callers can tell a
+// genuine conflict from an out-of-range or unknown-network error.
+var ErrIPAlreadyAllocated = errors.New("ip already allocated")
 
 const (
 	metaFile          = "meta.json"
@@ -87,24 +94,32 @@ func (s *Store) Create(name, subnet, driver string) (*Network, error) {
 		driver = "bridge"
 	}
 
+	// Existing subnets are needed by both branches: the auto-allocator must skip
+	// them, and an explicit subnet must be rejected if it overlaps one. Two
+	// networks sharing (or overlapping) a subnet produce duplicate kernel routes
+	// to the same range on different bridges, so traffic is routed ambiguously and
+	// published ports / inter-VM connectivity silently break.
+	allocated, err := s.allocatedSubnetsLocked()
+	if err != nil {
+		return nil, fmt.Errorf("read existing subnets: %w", err)
+	}
+
 	var ipNet *net.IPNet
 	var gatewayIP net.IP
 
 	if subnet == "" {
-		allocated, err := s.allocatedSubnetsLocked()
-		if err != nil {
-			return nil, fmt.Errorf("find available subnet: %w", err)
-		}
 		_, defIPNet, _ := net.ParseCIDR(defaultSubnetCIDR)
 		ipNet, gatewayIP, err = allocateSubnet(defIPNet, allocated)
 		if err != nil {
 			return nil, fmt.Errorf("allocate subnet: %w", err)
 		}
 	} else {
-		var err error
 		ipNet, gatewayIP, err = parseSubnet(subnet)
 		if err != nil {
 			return nil, fmt.Errorf("invalid subnet %q: %w", subnet, err)
+		}
+		if conflict := overlappingSubnet(ipNet, allocated); conflict != "" {
+			return nil, fmt.Errorf("subnet %s overlaps existing network %q", ipNet.String(), conflict)
 		}
 	}
 
@@ -180,10 +195,98 @@ func (s *Store) Remove(name string) error {
 	if _, statErr := os.Stat(dir); os.IsNotExist(statErr) {
 		return fmt.Errorf("network %q not found", name)
 	}
+	// Capture the bridge before deleting the record so the Linux bridge (and the
+	// kernel route bound to it) is torn down too. Removing only the on-disk record
+	// leaked the bridge: its route kept competing with any later network that
+	// reused the subnet, silently breaking that network's connectivity until the
+	// orphan bridge was deleted by hand.
+	bridge := ""
+	if n, readErr := s.readMeta(name); readErr == nil {
+		bridge = n.Bridge
+	}
 	if err := os.RemoveAll(dir); err != nil {
 		return fmt.Errorf("network remove %s: %w", name, err)
 	}
+	if bridge != "" {
+		if err := DestroyBridge(bridge); err != nil {
+			// Best-effort: the bridge may never have been created (no VM ever
+			// joined this network) or may already be gone. Neither is fatal to
+			// removing the logical network.
+			slog.Debug("network remove: destroy bridge", "network", name, "bridge", bridge, "err", err)
+		}
+	}
 	return nil
+}
+
+// ReserveIP records ip as allocated within the named network, failing if it is
+// already assigned (ErrIPAlreadyAllocated) or falls outside the subnet. It backs
+// static-IP validation: a user-supplied --ip must be reserved so a second VM
+// cannot be given the same address (which collides on the bridge and breaks
+// both VMs' connectivity), and so the dynamic allocator skips it.
+func (s *Store) ReserveIP(name, ip string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	n, err := s.readMeta(name)
+	if err != nil {
+		return fmt.Errorf("reserve ip: %w", err)
+	}
+	parsed := net.ParseIP(ip)
+	if parsed == nil || parsed.To4() == nil {
+		return fmt.Errorf("reserve ip: %q is not a valid IPv4 address", ip)
+	}
+	_, ipNet, err := net.ParseCIDR(n.Subnet)
+	if err != nil {
+		return fmt.Errorf("reserve ip parse subnet: %w", err)
+	}
+	if !ipNet.Contains(parsed) {
+		return fmt.Errorf("reserve ip: %s is outside network %q subnet %s", ip, name, n.Subnet)
+	}
+	// The subnet (network) address and the directed broadcast address are not
+	// assignable to a host: a guest configured with either cannot communicate.
+	// Reject them so a bad --ip fails fast instead of booting an unreachable VM.
+	if networkOrBroadcast(ipNet, parsed) {
+		return fmt.Errorf("reserve ip: %s is the network or broadcast address of %q subnet %s", ip, name, n.Subnet)
+	}
+
+	st, err := s.readState(name)
+	if err != nil {
+		return fmt.Errorf("reserve ip read state: %w", err)
+	}
+	want := parsed.String()
+	for _, aip := range st.AllocatedIPs {
+		if aip == want {
+			return fmt.Errorf("%w: %s in network %q", ErrIPAlreadyAllocated, want, name)
+		}
+	}
+	st.AllocatedIPs = append(st.AllocatedIPs, want)
+
+	dir, err := s.networkDir(name)
+	if err != nil {
+		return err
+	}
+	if err := writeNetworkState(dir, st); err != nil {
+		return fmt.Errorf("reserve ip write state: %w", err)
+	}
+	return nil
+}
+
+// networkOrBroadcast reports whether ip is the IPv4 subnet (network) address or
+// the directed broadcast address of ipNet — neither is a usable host address.
+func networkOrBroadcast(ipNet *net.IPNet, ip net.IP) bool {
+	base := ipNet.IP.To4()
+	v4 := ip.To4()
+	if base == nil || v4 == nil || len(ipNet.Mask) != net.IPv4len {
+		return false
+	}
+	if v4.Equal(base) {
+		return true // network address
+	}
+	bcast := make(net.IP, net.IPv4len)
+	for i := 0; i < net.IPv4len; i++ {
+		bcast[i] = base[i] | ^ipNet.Mask[i]
+	}
+	return v4.Equal(bcast)
 }
 
 func (s *Store) AllocateIP(name string) (net.IP, error) {
@@ -205,13 +308,29 @@ func (s *Store) AllocateIP(name string) (net.IP, error) {
 		return nil, fmt.Errorf("allocate ip parse subnet: %w", err)
 	}
 
-	ip := nextIP(ipNet, st.NextIndex)
-	if ip == nil {
-		return nil, fmt.Errorf("network %q: no available IPs in subnet %s", name, n.Subnet)
+	// Skip any address already assigned — the gateway, previously allocated IPs,
+	// and reserved static IPs (see ReserveIP). A plain monotonic counter would
+	// otherwise re-hand-out a static address that happens to fall inside the
+	// dynamic range, producing the very duplicate-IP collision static reservation
+	// is meant to prevent.
+	allocated := make(map[string]bool, len(st.AllocatedIPs))
+	for _, a := range st.AllocatedIPs {
+		allocated[a] = true
+	}
+	var ip net.IP
+	for {
+		candidate := nextIP(ipNet, st.NextIndex)
+		if candidate == nil {
+			return nil, fmt.Errorf("network %q: no available IPs in subnet %s", name, n.Subnet)
+		}
+		st.NextIndex++
+		if !allocated[candidate.String()] {
+			ip = candidate
+			break
+		}
 	}
 
 	st.AllocatedIPs = append(st.AllocatedIPs, ip.String())
-	st.NextIndex++
 
 	dir, err := s.networkDir(name)
 	if err != nil {
@@ -300,12 +419,19 @@ func (s *Store) readState(name string) (*networkState, error) {
 	return &st, nil
 }
 
-func (s *Store) allocatedSubnetsLocked() (map[string]bool, error) {
+// allocatedNet pairs a parsed subnet with the network that owns it, so overlap
+// errors can name the conflicting network.
+type allocatedNet struct {
+	ipNet *net.IPNet
+	name  string
+}
+
+func (s *Store) allocatedSubnetsLocked() ([]allocatedNet, error) {
 	entries, err := os.ReadDir(s.root)
 	if err != nil {
 		return nil, fmt.Errorf("read network dirs: %w", err)
 	}
-	result := make(map[string]bool)
+	var result []allocatedNet
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
@@ -314,9 +440,31 @@ func (s *Store) allocatedSubnetsLocked() (map[string]bool, error) {
 		if err != nil {
 			continue
 		}
-		result[n.Subnet] = true
+		_, ipNet, err := net.ParseCIDR(n.Subnet)
+		if err != nil {
+			continue
+		}
+		result = append(result, allocatedNet{ipNet: ipNet, name: n.Name})
 	}
 	return result, nil
+}
+
+// subnetsOverlap reports whether two IPv4 networks share any address. Either
+// network containing the other's base address is sufficient: for CIDR ranges
+// that implies the smaller is wholly inside the larger.
+func subnetsOverlap(a, b *net.IPNet) bool {
+	return a.Contains(b.IP) || b.Contains(a.IP)
+}
+
+// overlappingSubnet returns the name of the first allocated network whose subnet
+// overlaps candidate, or "" when none does.
+func overlappingSubnet(candidate *net.IPNet, allocated []allocatedNet) string {
+	for _, a := range allocated {
+		if subnetsOverlap(candidate, a.ipNet) {
+			return a.name
+		}
+	}
+	return ""
 }
 
 func (s *Store) ensureBridgeAvailableLocked(name, bridge string) error {
@@ -379,7 +527,7 @@ func parseSubnet(cidr string) (*net.IPNet, net.IP, error) {
 	return ipNet, gw, nil
 }
 
-func allocateSubnet(baseNet *net.IPNet, allocated map[string]bool) (*net.IPNet, net.IP, error) {
+func allocateSubnet(baseNet *net.IPNet, allocated []allocatedNet) (*net.IPNet, net.IP, error) {
 	baseIP := baseNet.IP.To4()
 	if baseIP == nil {
 		return nil, nil, fmt.Errorf("base subnet must be IPv4")
@@ -391,7 +539,10 @@ func allocateSubnet(baseNet *net.IPNet, allocated map[string]bool) (*net.IPNet, 
 		subnetIP[2] = byte(i)
 		subnetIP[3] = 0
 		cidr := &net.IPNet{IP: subnetIP, Mask: mask}
-		if !allocated[cidr.String()] {
+		// Skip any candidate that overlaps an existing network, not just an exact
+		// string match: an operator-created network with a wider or offset mask
+		// must not be silently re-used under a different /24.
+		if overlappingSubnet(cidr, allocated) == "" {
 			gw := make(net.IP, 4)
 			copy(gw, subnetIP)
 			gw[3] = 1
