@@ -152,6 +152,9 @@ func newComposeUpCmd(socketPath, storePath *string) *cobra.Command {
 						return fmt.Errorf("compose up: service %q static ip: %w", name, err)
 					}
 					params.IPAddress = ip
+					// A compose-declared static IP is reserved and conflict-checked
+					// by the daemon; a dynamically allocated one is already reserved.
+					params.StaticIP = svc.IP != ""
 					state.ServiceNetworks[name] = netName
 					state.ServiceIPs[name] = ip
 				}

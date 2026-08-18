@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/AitorConS/jerboa/internal/api"
@@ -36,9 +35,13 @@ func TestDNSResolveAndList(t *testing.T) {
 	require.Contains(t, out, "frontend")
 }
 
-func TestDNSResolveAmbiguous(t *testing.T) {
-	client, socketPath := startDaemon(t)
-	storePath := t.TempDir()
+// A duplicate VM name across two networks is exactly what makes a bare DNS name
+// ambiguous. BUG-004 now refuses the second same-name run, so the ambiguous
+// condition can no longer be created through the daemon at all. Here we assert
+// that guarantee end-to-end; the resolver's own handling of an already-ambiguous
+// set of records is unit-tested in internal/scheduler (TestResolverResolveAmbiguous).
+func TestDNSResolveDuplicateNameRejected(t *testing.T) {
+	client, _ := startDaemon(t)
 
 	_, err := client.NetworkCreate(context.Background(), "app-a", "10.100.11.0/24", "bridge")
 	require.NoError(t, err)
@@ -55,6 +58,9 @@ func TestDNSResolveAmbiguous(t *testing.T) {
 		SubnetMask:  "24",
 	})
 	require.NoError(t, err)
+
+	// The second VM reusing the name "api" must be rejected, not booted into an
+	// ambiguous DNS state.
 	_, err = client.Run(context.Background(), api.RunParams{
 		ImagePath:   "test.img",
 		Memory:      "256M",
@@ -64,8 +70,6 @@ func TestDNSResolveAmbiguous(t *testing.T) {
 		GatewayIP:   "10.100.12.1",
 		SubnetMask:  "24",
 	})
-	require.NoError(t, err)
-
-	msg := execRootExpectError(t, socketPath, storePath, "dns", "resolve", "api")
-	require.True(t, strings.Contains(msg, "ambiguous") || strings.Contains(msg, "rpc error"))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "already in use")
 }

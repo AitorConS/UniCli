@@ -347,6 +347,7 @@ type VM struct {
 	RestartCount int
 
 	mu            sync.RWMutex
+	warnings      []string // non-fatal runtime warnings surfaced by inspect (e.g. a volume that failed to mount)
 	proc          process
 	pid           int // OS pid of the hypervisor process; persisted for crash recovery
 	done          chan struct{}
@@ -358,6 +359,12 @@ type VM struct {
 	cgroupMgr     *CgroupManager
 	portFwd       *network.Forwarder // userspace host→guest port publisher; nil when no PortMaps
 	qmpAddr       string             // QMP socket address ("unix:<path>" or "tcp:host:port"); set at start, cleared when stopped
+	// qemuErrBuf captures QEMU's OWN stderr, kept separate from the guest serial
+	// console (which lands on stdout/logBuf). The monitor reads it to tell a
+	// clean guest exit(0) from QEMU's own exit(1): both surface as process status
+	// 1 via isa-debug-exit, and only QEMU's error prints a diagnostic here. See
+	// isFailureExit / qemuErrored.
+	qemuErrBuf safeBuffer
 }
 
 // Done returns a channel that is closed when the VM reaches StateStopped.
@@ -411,6 +418,31 @@ func (v *VM) GetRestartCount() int {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 	return v.RestartCount
+}
+
+// AddWarning records a non-fatal runtime warning about the VM, de-duplicating
+// repeats so a repeatedly-observed condition is reported once.
+func (v *VM) AddWarning(w string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for _, existing := range v.warnings {
+		if existing == w {
+			return
+		}
+	}
+	v.warnings = append(v.warnings, w)
+}
+
+// Warnings returns a snapshot of the VM's non-fatal runtime warnings.
+func (v *VM) Warnings() []string {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	if len(v.warnings) == 0 {
+		return nil
+	}
+	out := make([]string, len(v.warnings))
+	copy(out, v.warnings)
+	return out
 }
 
 // SetExplicitStop marks the VM as explicitly stopped by the user.

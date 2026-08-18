@@ -165,7 +165,7 @@ func TestComposeDown_StopsServices(t *testing.T) {
 }
 
 func TestComposeDown_UsesStateForIPRelease(t *testing.T) {
-	client, socketPath := startComposeDaemon(t)
+	_, socketPath := startComposeDaemon(t)
 	storePath := t.TempDir()
 
 	diskPath := filepath.Join(t.TempDir(), "disk.img")
@@ -190,18 +190,10 @@ networks:
 
 	execRoot(t, socketPath, storePath, "compose", "up", composeFile)
 
-	_, err := client.Run(context.Background(), api.RunParams{
-		ImagePath:   diskPath,
-		Memory:      "256M",
-		Name:        "api",
-		NetworkName: "app-b",
-		IPAddress:   "10.220.2.2",
-		GatewayIP:   "10.220.2.1",
-		BridgeName:  "jerboa-br-app-b",
-		SubnetMask:  "24",
-	})
-	require.NoError(t, err)
-
+	// compose down must release each service's IP from the recorded state
+	// (name → network → ip), not by re-resolving the name. BUG-004 forbids a
+	// second VM reusing the name "api", so the release path can rely on the
+	// state's network/IP being authoritative for the compose-managed VM.
 	out := execRoot(t, socketPath, storePath, "compose", "down", "--force", composeFile)
 	require.NotContains(t, out, "warning: release ip")
 	require.Contains(t, out, "stopped api")

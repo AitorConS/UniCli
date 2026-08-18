@@ -341,13 +341,13 @@ func TestNextIP(t *testing.T) {
 func TestAllocateSubnet(t *testing.T) {
 	_, baseNet, _ := net.ParseCIDR("10.100.0.0/16")
 
-	allocated := map[string]bool{}
+	var allocated []allocatedNet
 	ipNet, gw, err := allocateSubnet(baseNet, allocated)
 	require.NoError(t, err)
 	require.Equal(t, "10.100.0.0/24", ipNet.String())
 	require.Equal(t, "10.100.0.1", gw.String())
 
-	allocated[ipNet.String()] = true
+	allocated = append(allocated, allocatedNet{ipNet: ipNet, name: "net0"})
 	ipNet2, gw2, err := allocateSubnet(baseNet, allocated)
 	require.NoError(t, err)
 	require.Equal(t, "10.100.1.0/24", ipNet2.String())

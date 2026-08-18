@@ -164,9 +164,13 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 				Volumes:     volSpecs,
 				Attach:      !detach,
 				IPAddress:   ipAddr,
-				GatewayIP:   gwIP,
-				BridgeName:  bridgeNm,
-				SubnetMask:  subnetMsk,
+				// A user-supplied --ip is a static address the daemon must reserve
+				// and conflict-check; an address the client pre-allocated above is
+				// already reserved and must not be re-flagged as static.
+				StaticIP:   cmd.Flags().Changed("ip"),
+				GatewayIP:  gwIP,
+				BridgeName: bridgeNm,
+				SubnetMask: subnetMsk,
 			}
 			if cpuShares > 0 {
 				params.CPUShares = cpuShares

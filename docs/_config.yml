@@ -13,7 +13,7 @@ aux_links:
 
 aux_links_new_tab: true
 
-footer_content: "Released under the MIT License."
+footer_content: "Released under the Apache-2.0 License."
 
 search_enabled: true
 search:
