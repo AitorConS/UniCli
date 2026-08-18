@@ -359,6 +359,12 @@ type VM struct {
 	cgroupMgr     *CgroupManager
 	portFwd       *network.Forwarder // userspace host→guest port publisher; nil when no PortMaps
 	qmpAddr       string             // QMP socket address ("unix:<path>" or "tcp:host:port"); set at start, cleared when stopped
+	// qemuErrBuf captures QEMU's OWN stderr, kept separate from the guest serial
+	// console (which lands on stdout/logBuf). The monitor reads it to tell a
+	// clean guest exit(0) from QEMU's own exit(1): both surface as process status
+	// 1 via isa-debug-exit, and only QEMU's error prints a diagnostic here. See
+	// isFailureExit / qemuErrored.
+	qemuErrBuf safeBuffer
 }
 
 // Done returns a channel that is closed when the VM reaches StateStopped.
