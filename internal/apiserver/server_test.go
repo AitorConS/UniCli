@@ -5,6 +5,7 @@ package apiserver_test
 import (
 	"context"
 	"net"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sync"
@@ -609,11 +610,18 @@ func TestServer_Run_WithHealthCheckAndRestart(t *testing.T) {
 func TestServer_Run_WithVolumes(t *testing.T) {
 	client, _ := startTestServer(t)
 
+	// A read-only volume must already carry a filesystem; use a disk stamped with
+	// the TFS magic so the daemon's read-only-formatted check passes. (A raw,
+	// unformatted read-only volume is now rejected up front — see
+	// TestEnsureVolumesFormatted_ReadOnlyUnformatted_ClearError.)
+	diskPath := filepath.Join(t.TempDir(), "disk.img")
+	require.NoError(t, os.WriteFile(diskPath, append([]byte("NVMTFS"), make([]byte, 4096)...), 0o644))
+
 	info, err := client.Run(context.Background(), api.RunParams{
 		ImagePath: "test.img",
 		Memory:    "256M",
 		Volumes: []api.VolumeMountSpec{
-			{DiskPath: "/path/to/disk.img", GuestPath: "/mnt/data", ReadOnly: true},
+			{DiskPath: diskPath, GuestPath: "/mnt/data", ReadOnly: true},
 		},
 	})
 	require.NoError(t, err)
