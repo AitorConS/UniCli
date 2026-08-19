@@ -455,6 +455,22 @@ type stageResult struct {
 	pkgFiles   []pkg.File
 }
 
+// copyFromGuestPath returns the in-image destination for a copy_from artifact.
+// It honors an explicit dst (E2E finding F-032: dst was previously computed then
+// discarded, so the artifact always landed at the source binary's basename),
+// falling back to the source's basename and finally the produced binary's
+// basename. The result is always a clean, slash-relative guest path.
+func copyFromGuestPath(cf builder.CopyFromConfig, prevBinary string) string {
+	dst := cf.Dst
+	if dst == "" {
+		dst = filepath.Base(cf.Src)
+	}
+	if dst == "" || dst == "." || dst == "/" {
+		dst = filepath.Base(prevBinary)
+	}
+	return strings.TrimPrefix(filepath.ToSlash(dst), "/")
+}
+
 // buildStages processes multi-stage builds from unikernel.toml.
 // Each stage is built independently. CopyFrom directives copy artifacts
 // from previous stages. The final stage's output is used as the image binary.
@@ -498,12 +514,10 @@ func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFil
 			if prev.binaryPath == "" {
 				return "", nil, false, fmt.Errorf("build stage %q: copy_from stage %q has no binary output", stage.Name, cf.Stage)
 			}
-			dst := cf.Dst
-			if dst == "" {
-				dst = filepath.Base(cf.Src)
-			}
-			stagePkgs = append(stagePkgs, pkg.File{HostPath: prev.binaryPath, GuestPath: filepath.Base(prev.binaryPath)})
-			_ = dst
+			stagePkgs = append(stagePkgs, pkg.File{
+				HostPath:  prev.binaryPath,
+				GuestPath: copyFromGuestPath(cf, prev.binaryPath),
+			})
 		}
 
 		var driverPkgPaths []string

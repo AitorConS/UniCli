@@ -1,5 +1,15 @@
 [build]
+# raw build: mongod is a prebuilt binary from a package (below), not compiled.
 lang = "raw"
+
+# Provides the `mongod` binary named in [program]. Declared here so
+# `jerboa build examples/mongodb` needs no --pkg flag; pinned to a specific ops
+# build for reproducibility.
+pkgs = ["eyberg/mongodb:4.4.6"]
+
+# Resolve packages from the ops ecosystem (repo.ops.city), the default source.
+pkg_source = "ops"
+
 disk_size = "800M"
 
 # Create the empty data directory in the image. mongod requires --dbpath to

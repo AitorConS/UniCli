@@ -264,17 +264,35 @@ root; mounting the volume at `/db` restores them at the same place.
 ## Importing From Docker Images
 
 `jerboa pkg from-docker` turns a binary inside a Docker image into a local
-package (requires Docker on the build machine):
+package (requires Docker on the build machine). Each file is stored at its real
+absolute path inside the container, so the binary's interpreter (`/lib64/…`) and
+shared libraries (`/lib/…`) land where the ELF references them.
 
 ```sh
-jerboa pkg from-docker redis:7.2 redis:7.2
-jerboa build . --lang raw --pkg redis:7.2 --pkg-source jerboa --name redis
+# redis starts through a shell script (docker-entrypoint.sh), so point --file at
+# the real binary — a unikernel runs exactly one program, with no shell.
+jerboa pkg from-docker redis:7.2 redis:7.2 --file /usr/local/bin/redis-server
+jerboa build . --name redis
 ```
 
-Without `--file`, the binary is derived from the image's own
-`Entrypoint`/`Cmd` and resolved on the container's `PATH`; its shared
-libraries are discovered with `ldd` inside a temporary container and bundled
-automatically. Images that start through a shell script (the common
+The build reads a `unikernel.toml` that names the package and the program to run
+(a from-docker package records no default program, so `[program]` is required):
+
+```toml
+[build]
+lang = "raw"
+pkgs = ["redis:7.2"]
+pkg_source = "jerboa"
+
+[program]
+path = "/usr/local/bin/redis-server"
+```
+
+Without `--file`, the binary is derived from the image's own `Entrypoint`/`Cmd`
+and resolved on the container's `PATH`. The shared-library closure is read
+directly from the image's exported filesystem (no `ldd`/`cat` inside the image),
+so it works even on `scratch` or distroless images that ship no shell or
+coreutils. Images that start through a shell script (the common
 `docker-entrypoint.sh` pattern) cannot be derived automatically — there is no
 shell in a unikernel — so pass `--file` with the real binary the script
 eventually launches.

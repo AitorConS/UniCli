@@ -14,7 +14,7 @@ over the daemon's guest DNS: the web app connects to MongoDB at host `db`
 
 ```bash
 # MongoDB (raw build; mongod initializes an empty /data/db on first start)
-jerboa build ../mongodb --name mongodb --pkg eyberg/mongodb:4.4.6 --pkg-source ops
+jerboa build ../mongodb --name mongodb
 
 # Flask front-end (python build; requirements.txt is pip-installed into the image)
 jerboa build . --name flask-mongo --pkg-source ops --port 8080

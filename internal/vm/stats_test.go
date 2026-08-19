@@ -3,6 +3,9 @@
 package vm
 
 import (
+	"os"
+	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -65,4 +68,56 @@ func TestProcStatsCollector_FallbackOnNonLinux(t *testing.T) {
 	require.Equal(t, "fallback", stats.Source)
 	require.InDelta(t, 0.0, stats.CPUPct, 1e-9)
 	require.Equal(t, int64(0), stats.MemBytes)
+}
+
+// TestReadTapStats_PerVMAndGuestCentric is the F-007 regression: network stats
+// must come from the VM's own tap device (not the shared distro eth0), and be
+// reported from the guest's point of view — the host-side tap rx/tx are flipped.
+func TestReadTapStats_PerVMAndGuestCentric(t *testing.T) {
+	root := t.TempDir()
+	writeTap := func(tap string, rx, tx int64) {
+		dir := filepath.Join(root, tap, "statistics")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "rx_bytes"), []byte(strconv.FormatInt(rx, 10)+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "tx_bytes"), []byte(strconv.FormatInt(tx, 10)+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Two different VMs' taps carry different traffic — the old code returned the
+	// same distro eth0 number for both.
+	writeTap("jerboa-tap-aaa", 100, 900) // host rx=100, tx=900
+	writeTap("jerboa-tap-bbb", 5, 7)
+
+	old := sysClassNet
+	sysClassNet = root
+	defer func() { sysClassNet = old }()
+
+	rx, tx, err := readTapStats("jerboa-tap-aaa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// guest RX = host tx (900), guest TX = host rx (100).
+	if rx != 900 || tx != 100 {
+		t.Fatalf("tap aaa: got guestRx=%d guestTx=%d, want 900/100", rx, tx)
+	}
+
+	rx2, tx2, err := readTapStats("jerboa-tap-bbb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rx2 != 7 || tx2 != 5 {
+		t.Fatalf("tap bbb: got guestRx=%d guestTx=%d, want 7/5", rx2, tx2)
+	}
+	if rx == rx2 {
+		t.Fatal("distinct VMs must report distinct network counters (F-007)")
+	}
+
+	// A missing tap yields an error (caller falls back to zero), never a stale value.
+	if _, _, err := readTapStats("nope"); err == nil {
+		t.Fatal("missing tap should error")
+	}
 }

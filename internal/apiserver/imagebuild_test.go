@@ -309,3 +309,51 @@ func TestVolumeSeed_RejectsMismatchedDiskPath(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "disk_path does not match the requested volume")
 }
+
+// TestVolumeSeed_HostVolumeNotInDaemonStore is the F-012 regression: on Windows
+// the volume lives on the host filesystem and is absent from the daemon's own
+// volume store, so the seed must proceed using the client-supplied,
+// daemon-visible disk path (the same path `run -v` attaches) instead of failing
+// to re-resolve the volume in the daemon store. Here the daemon store is empty
+// and the disk already exists on disk (as `volume create` leaves it).
+func TestVolumeSeed_HostVolumeNotInDaemonStore(t *testing.T) {
+	volStore, err := volume.NewStore(t.TempDir()) // empty: volume created client-side on the host
+	require.NoError(t, err)
+	client := startSeedServer(t, volStore)
+
+	diskPath := filepath.Join(t.TempDir(), "disk.img")
+	require.NoError(t, os.WriteFile(diskPath, make([]byte, 128), 0o600))
+
+	ctxTar := buildContextTar(t, map[string][]byte{"db/PG_VERSION": []byte("16")})
+	res, err := client.VolumeSeed(context.Background(), api.VolumeSeedParams{
+		VolumeName: "pgdata",
+		DiskPath:   diskPath,
+		Label:      "pgdata",
+		SizeBytes:  128,
+	}, ctxTar)
+	require.NoError(t, err)
+	require.Equal(t, diskPath, res.DiskPath)
+
+	data, err := os.ReadFile(diskPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), "PG_VERSION")
+}
+
+// TestVolumeSeed_MissingDiskErrors confirms seeding a disk that does not exist
+// yet fails with an actionable message (seeding writes into a disk created by
+// `volume create`; it never creates the backing file itself).
+func TestVolumeSeed_MissingDiskErrors(t *testing.T) {
+	volStore, err := volume.NewStore(t.TempDir())
+	require.NoError(t, err)
+	client := startSeedServer(t, volStore)
+
+	ctxTar := buildContextTar(t, map[string][]byte{"db/PG_VERSION": []byte("16")})
+	_, err = client.VolumeSeed(context.Background(), api.VolumeSeedParams{
+		VolumeName: "ghost",
+		DiskPath:   filepath.Join(t.TempDir(), "nonexistent.img"),
+		Label:      "ghost",
+		SizeBytes:  128,
+	}, ctxTar)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not found")
+}

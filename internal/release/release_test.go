@@ -275,3 +275,41 @@ func TestDownloadArtifactRejectsHashMismatch(t *testing.T) {
 func base64line(sig []byte, n int) string {
 	return nonEmptyLines(string(sig))[n]
 }
+
+// TestFetchManifest_Unpublished404 is the F-005 regression: a 404 on the channel
+// manifest (channel not published yet) must surface as ErrChannelNotPublished so
+// the CLI can distinguish it from a transport failure.
+func TestFetchManifest_Unpublished404(t *testing.T) {
+	s := newTestSigner(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	c, _ := NewClient(srv.URL, s.publicKey())
+	_, err := c.FetchManifest(context.Background(), ChannelBeta)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrChannelNotPublished)
+}
+
+// TestIsReleaseVersion is the F-001 regression: only real semver builds should be
+// treated as comparable release versions; dev/hash builds must not trigger the
+// "newer version available" nag.
+func TestIsReleaseVersion(t *testing.T) {
+	release := map[string]bool{
+		"0.51.1":       true,
+		"v0.51.1":      true,
+		"1.2":          true,
+		"1.2.3-beta.1": true,
+		"dev":          false,
+		"":             false,
+		"abc123":       false,
+		"v":            false,
+		"1":            false,
+	}
+	for v, want := range release {
+		if got := IsReleaseVersion(v); got != want {
+			t.Errorf("IsReleaseVersion(%q) = %v, want %v", v, got, want)
+		}
+	}
+}

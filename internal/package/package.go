@@ -25,6 +25,7 @@ import (
 	"net/textproto"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -344,13 +345,46 @@ func (s *Store) ExtractedFiles(name, version string) ([]string, error) {
 	}
 	filesDir := filepath.Join(s.PackageDir(name, version), "files")
 	var files []string
-	err := filepath.WalkDir(filesDir, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(filesDir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if !d.IsDir() {
-			files = append(files, path)
+			files = append(files, p)
 		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("package list files %s %s: %w", name, version, err)
+	}
+	return files, nil
+}
+
+// ExtractedFileList returns the package's extracted files as File entries whose
+// GuestPath is the file's destination inside the image, derived from its path
+// under the extraction root. A legacy flat archive (every file at the root)
+// yields basename guest paths — unchanged from before; a structured archive
+// (from CreateFromFiles / from-docker) yields the preserved absolute layout so
+// interpreters and libraries land where the ELF references them. This is the
+// jerboa-store analogue of OpsStore.ExtractedFiles.
+func (s *Store) ExtractedFileList(name, version string) ([]File, error) {
+	if err := validatePackageRef(name, version); err != nil {
+		return nil, err
+	}
+	filesDir := filepath.Join(s.PackageDir(name, version), "files")
+	var files []File
+	err := filepath.WalkDir(filesDir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, relErr := filepath.Rel(filesDir, p)
+		if relErr != nil {
+			return fmt.Errorf("package rel path: %w", relErr)
+		}
+		files = append(files, File{HostPath: p, GuestPath: filepath.ToSlash(rel)})
 		return nil
 	})
 	if err != nil {
@@ -518,10 +552,32 @@ func (idx *Index) Latest(name string) *Package {
 }
 
 // Create builds a local package archive from the given binary and optional
-// extra files. It produces files.tar.gz and meta.json in the package store.
+// extra files, rooting every file at its basename in the image. It produces
+// files.tar.gz and meta.json in the package store. For files that must land at a
+// specific absolute path in the image (a Docker binary's interpreter and shared
+// libraries), use CreateFromFiles instead.
 func (s *Store) Create(name, version, binaryPath string, extraFiles []string, description, runtimeName string) error {
+	files := make([]File, 0, 1+len(extraFiles))
+	files = append(files, File{HostPath: binaryPath, GuestPath: filepath.Base(binaryPath)})
+	for _, p := range extraFiles {
+		files = append(files, File{HostPath: p, GuestPath: filepath.Base(p)})
+	}
+	return s.CreateFromFiles(name, version, files, description, runtimeName)
+}
+
+// CreateFromFiles builds a local package archive from files whose GuestPath is
+// the destination path inside the image (leading slash optional). It preserves
+// the directory layout instead of flattening to basenames, so a dynamically
+// linked binary's interpreter (/lib64/ld-linux-…) and libraries (/lib/…) land
+// where the ELF references them — without this a from-docker package fails
+// preflight for essentially every real Docker image (E2E finding F-024). A
+// File with IsDir set creates an empty directory in the image.
+func (s *Store) CreateFromFiles(name, version string, files []File, description, runtimeName string) error {
 	if err := validatePackageRef(name, version); err != nil {
 		return err
+	}
+	if len(files) == 0 {
+		return fmt.Errorf("pkg create: no files to package")
 	}
 
 	s.mu.Lock()
@@ -537,8 +593,7 @@ func (s *Store) Create(name, version, binaryPath string, extraFiles []string, de
 		return fmt.Errorf("pkg create: package %s:%s already exists (remove it first)", name, version)
 	}
 
-	allFiles := append([]string{binaryPath}, extraFiles...)
-	sha, size, err := s.createArchive(archivePath, allFiles)
+	sha, size, err := createArchive(archivePath, files)
 	if err != nil {
 		return fmt.Errorf("pkg create archive: %w", err)
 	}
@@ -561,7 +616,20 @@ func (s *Store) Create(name, version, binaryPath string, extraFiles []string, de
 	return nil
 }
 
-func (s *Store) createArchive(outPath string, files []string) (string, int64, error) {
+// tarEntryName normalizes a guest path to a clean, forward-slashed, relative tar
+// entry name: no leading slash and no "." / ".." components (which would let a
+// crafted package escape the extraction root). It returns "" for a path that
+// normalizes to nothing.
+func tarEntryName(guest string) string {
+	g := path.Clean("/" + filepath.ToSlash(guest))
+	g = strings.TrimPrefix(g, "/")
+	if g == "" || g == "." {
+		return ""
+	}
+	return g
+}
+
+func createArchive(outPath string, files []File) (string, int64, error) {
 	f, err := os.Create(outPath)
 	if err != nil {
 		return "", 0, fmt.Errorf("create archive file: %w", err)
@@ -579,30 +647,46 @@ func (s *Store) createArchive(outPath string, files []string) (string, int64, er
 	gw := gzip.NewWriter(mw)
 	tw := tar.NewWriter(gw)
 
-	for _, path := range files {
-		info, statErr := os.Stat(path)
+	for _, file := range files {
+		entryName := tarEntryName(file.GuestPath)
+		if entryName == "" {
+			return "", 0, fmt.Errorf("pkg create: file has an empty guest path (host %q)", file.HostPath)
+		}
+
+		if file.IsDir {
+			if writeErr := tw.WriteHeader(&tar.Header{
+				Name:     entryName + "/",
+				Typeflag: tar.TypeDir,
+				Mode:     0o755,
+			}); writeErr != nil {
+				return "", 0, fmt.Errorf("tar write dir header %s: %w", entryName, writeErr)
+			}
+			continue
+		}
+
+		info, statErr := os.Stat(file.HostPath)
 		if statErr != nil {
-			return "", 0, fmt.Errorf("stat %s: %w", path, statErr)
+			return "", 0, fmt.Errorf("stat %s: %w", file.HostPath, statErr)
 		}
 
 		hdr, hdrErr := tar.FileInfoHeader(info, "")
 		if hdrErr != nil {
-			return "", 0, fmt.Errorf("tar header %s: %w", path, hdrErr)
+			return "", 0, fmt.Errorf("tar header %s: %w", file.HostPath, hdrErr)
 		}
-		hdr.Name = filepath.Base(path)
+		hdr.Name = entryName
 
 		if writeErr := tw.WriteHeader(hdr); writeErr != nil {
-			return "", 0, fmt.Errorf("tar write header %s: %w", path, writeErr)
+			return "", 0, fmt.Errorf("tar write header %s: %w", entryName, writeErr)
 		}
 
 		if !info.IsDir() {
-			src, openErr := os.Open(path)
+			src, openErr := os.Open(file.HostPath)
 			if openErr != nil {
-				return "", 0, fmt.Errorf("open %s: %w", path, openErr)
+				return "", 0, fmt.Errorf("open %s: %w", file.HostPath, openErr)
 			}
 			if _, copyErr := io.Copy(tw, src); copyErr != nil {
 				_ = src.Close()
-				return "", 0, fmt.Errorf("tar copy %s: %w", path, copyErr)
+				return "", 0, fmt.Errorf("tar copy %s: %w", file.HostPath, copyErr)
 			}
 			_ = src.Close()
 		}
@@ -684,59 +768,6 @@ func (s *Store) Push(name, version string, indexURL string) error {
 
 	slog.Info("package pushed", "name", name, "version", version, "url", indexURL)
 	return nil
-}
-
-// FromDocker extracts a binary and its shared library dependencies from a Docker
-// image, returning the local file paths. It uses "docker run --rm sh -c cat"
-// to read files directly from the container filesystem, which follows symlinks
-// automatically without creating them on the host — making it work on all
-// platforms including Windows (where docker cp fails with symlinks).
-func FromDocker(image, containerPath string, extraLibs []string) ([]string, error) {
-	tmpDir, err := os.MkdirTemp("", "jerboa-pkg-from-docker-*")
-	if err != nil {
-		return nil, fmt.Errorf("from-docker: temp dir: %w", err)
-	}
-
-	localBinary := filepath.Join(tmpDir, filepath.Base(containerPath))
-	if err := dockerReadFile(image, containerPath, localBinary); err != nil {
-		os.RemoveAll(tmpDir)
-		return nil, fmt.Errorf("from-docker: copy binary: %w", err)
-	}
-	if err := os.Chmod(localBinary, 0o755); err != nil {
-		os.RemoveAll(tmpDir)
-		return nil, fmt.Errorf("from-docker: chmod binary: %w", err)
-	}
-
-	var allFiles []string
-	allFiles = append(allFiles, localBinary)
-
-	libs, err := dockerLdd(image, containerPath)
-	if err != nil {
-		slog.Warn("from-docker: ldd failed, skipping shared libs", "error", err)
-	} else {
-		for _, lib := range libs {
-			if lib == "" || lib == "not found" {
-				continue
-			}
-			localLib := filepath.Join(tmpDir, filepath.Base(lib))
-			if err := dockerReadFile(image, lib, localLib); err != nil {
-				slog.Warn("from-docker: could not copy lib, skipping", "lib", lib, "error", err)
-				continue
-			}
-			allFiles = append(allFiles, localLib)
-		}
-	}
-
-	for _, lib := range extraLibs {
-		localLib := filepath.Join(tmpDir, filepath.Base(lib))
-		if err := dockerReadFile(image, lib, localLib); err != nil {
-			slog.Warn("from-docker: could not copy extra lib, skipping", "lib", lib, "error", err)
-			continue
-		}
-		allFiles = append(allFiles, localLib)
-	}
-
-	return allFiles, nil
 }
 
 // DockerImageConfig is the subset of an OCI image config used to derive a
@@ -1130,64 +1161,9 @@ func trimLddAddress(s string) string {
 	return s
 }
 
-// dockerReadFile runs a temporary container from image and reads containerPath
-// via "sh -c cat", writing the result to localPath. The shell cat follows
-// symlinks automatically inside the container, so no filesystem symlinks are
-// created on the host — making this work on Windows without admin privileges.
-func dockerReadFile(image, containerPath, localPath string) error {
-	cmd := exec.Command("docker", "run", "--rm", "--entrypoint", "sh", image, //nolint:noctx // callers don't thread ctx yet
-		"-c", "cat "+shellescape(containerPath))
-	out, err := cmd.Output()
-	if err != nil {
-		return fmt.Errorf("docker run cat %s: %w", containerPath, err)
-	}
-	if err := os.WriteFile(localPath, out, 0o644); err != nil {
-		return fmt.Errorf("write %s: %w", localPath, err)
-	}
-	return nil
-}
-
 // shellescape single-quote-escapes s for safe use in a POSIX shell command string.
 func shellescape(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
-}
-
-func dockerLdd(image, containerPath string) ([]string, error) {
-	cmd := exec.Command("docker", "run", "--rm", "--entrypoint", "sh", image, "-c", //nolint:noctx // callers don't thread ctx yet
-		fmt.Sprintf("ldd %s", containerPath))
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("docker ldd %s: %w", containerPath, err)
-	}
-
-	var libs []string
-	for _, line := range strings.Split(string(output), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "linux-vdso") {
-			continue
-		}
-		if strings.Contains(line, "=>") {
-			parts := strings.SplitN(line, "=>", 2)
-			if len(parts) == 2 {
-				path := strings.TrimSpace(parts[1])
-				path = trimLddAddress(path)
-				path = strings.TrimSpace(path)
-				if path != "" && path != "not found" {
-					libs = append(libs, path)
-				}
-			}
-		} else if strings.HasPrefix(line, "/") {
-			path := strings.TrimSpace(line)
-			idx := strings.Index(path, " ")
-			if idx > 0 {
-				path = path[:idx]
-			}
-			if path != "" {
-				libs = append(libs, path)
-			}
-		}
-	}
-	return libs, nil
 }
 
 func pushMultipart(metaJSON, archiveData []byte) (*bytes.Buffer, string, error) {

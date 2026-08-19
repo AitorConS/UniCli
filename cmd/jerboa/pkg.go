@@ -488,9 +488,14 @@ func newPkgFromDockerCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "from-docker <name>[:<version>] <image>",
 		Short: "Create a package from a binary inside a Docker image",
-		Long: `Extract a binary and its shared library dependencies from a Docker image
-and create a local package. Runs 'ldd' inside a temporary container to discover
-the shared libraries the binary needs.
+		Long: `Extract a binary and the shared library closure it needs from a Docker
+image and create a local package. Each file is packaged at its real absolute
+path inside the container (its interpreter under /lib64, its libraries under
+/lib, …) so the built image satisfies the binary's dynamic-linking needs.
+
+The image's exported filesystem is read directly, so this works on scratch and
+distroless images with no shell or coreutils, and needs nothing installed in
+the image itself.
 
 Without --file, the binary is derived from the image's own Entrypoint/Cmd and
 resolved on the container's PATH. Images whose entrypoint is a shell script
@@ -510,6 +515,7 @@ Examples:
 			dockerImage := args[1]
 
 			filePath, _ := cmd.Flags().GetString("file")
+			warnMangledImagePath(cmd.ErrOrStderr(), "--file", filePath)
 			if filePath == "" {
 				resolved, err := deriveDockerProgram(cmd, dockerImage)
 				if err != nil {
@@ -527,19 +533,17 @@ Examples:
 				return fmt.Errorf("pkg from-docker: package %s:%s already exists (remove it first)", name, version)
 			}
 
-			fmt.Fprintf(cmd.ErrOrStderr(), "Extracting %s from Docker image %s...\n", filePath, dockerImage)
-			files, err := pkg.FromDocker(dockerImage, filePath, libs)
+			fmt.Fprintf(cmd.ErrOrStderr(), "Extracting %s and its library closure from Docker image %s...\n", filePath, dockerImage)
+			files, cleanup, err := pkg.FromDocker(dockerImage, filePath, libs)
 			if err != nil {
 				return fmt.Errorf("pkg from-docker: %w", err)
 			}
+			defer cleanup()
 			if len(files) == 0 {
 				return fmt.Errorf("pkg from-docker: no files extracted from image")
 			}
 
-			binaryPath := files[0]
-			extraFiles := files[1:]
-
-			if err := store.Create(name, version, binaryPath, extraFiles, description, runtimeName); err != nil {
+			if err := store.CreateFromFiles(name, version, files, description, runtimeName); err != nil {
 				return fmt.Errorf("pkg from-docker: %w", err)
 			}
 

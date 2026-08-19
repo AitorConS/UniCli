@@ -553,8 +553,22 @@ func materializeLinks(links []pendingLink) {
 			progressed = true
 		}
 		if !progressed {
-			for _, l := range next {
-				slog.Warn("ops extract: unresolved symlink", "target", l.path, "linkname", l.linkname)
+			// The remaining links point at targets that never materialize — almost
+			// always documentation/asset symlinks (rdoc fonts, bundled jquery) whose
+			// targets live outside the runtime package tree. They do not affect the
+			// program, so summarize once at WARN and keep the per-link detail at
+			// DEBUG instead of emitting a WARN per link, which was pure noise on
+			// packages with many such assets (E2E finding F-009).
+			if len(next) > 0 {
+				examples := make([]string, 0, 3)
+				for i, l := range next {
+					slog.Debug("ops extract: unresolved symlink", "target", l.path, "linkname", l.linkname)
+					if i < cap(examples) {
+						examples = append(examples, filepath.Base(l.path))
+					}
+				}
+				slog.Warn("ops extract: skipped symlinks whose targets are outside the runtime tree (harmless — typically docs/assets)",
+					"count", len(next), "examples", strings.Join(examples, ", "))
 			}
 			return
 		}

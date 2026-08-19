@@ -1,0 +1,20 @@
+# Build + run spec for webenv — a Go HTTP server that echoes the MESSAGE env var.
+#
+#   jerboa build examples/webenv --name webenv
+#
+# This directory has no go.mod (it is a package within the repo's root module),
+# so language auto-detection can't fire — declare the language explicitly here.
+
+[build]
+# Go build driver: compiles main.go into a static binary baked into the image.
+lang = "go"
+
+[env]
+# The handler reads MESSAGE and echoes it (falling back to "(not set)" when
+# unset). Baked in here as a default; override at run time with
+# `jerboa run webenv -e MESSAGE=...`.
+MESSAGE = "hello from jerboa"
+
+[run]
+# main.go serves HTTP on :4333; publish it host:guest so `jerboa run` maps it.
+ports = ["4333:4333"]

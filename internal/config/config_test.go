@@ -140,3 +140,39 @@ func TestLoad_EmptyHypervisorDefaultsToQEMU(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "qemu", cfg.Hypervisor)
 }
+
+// TestSave_OmitsEmptyDaemonTable is the F-002 regression: setting an unrelated
+// key must not materialize a [daemon] table full of blank endpoint/token strings
+// (which read as "explicitly set to empty" and could shadow the real rendezvous).
+func TestSave_OmitsEmptyDaemonTable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, Save(path, &Config{Hypervisor: "qemu"}))
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	got := string(data)
+	require.Contains(t, got, "hypervisor")
+	require.NotContains(t, got, "[daemon]")
+	require.NotContains(t, got, "endpoint")
+	require.NotContains(t, got, "token")
+}
+
+// TestSave_PreservesNonEmptyDaemonFields confirms omitempty drops only blank
+// fields: a real token round-trips, while its empty siblings are not written.
+func TestSave_PreservesNonEmptyDaemonFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	cfg := &Config{Hypervisor: "firecracker"}
+	cfg.Daemon.Token = "s3cret"
+	require.NoError(t, Save(path, cfg))
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	got := string(data)
+	require.Contains(t, got, "token = 's3cret'")
+	require.NotContains(t, got, "endpoint")
+
+	reloaded, err := Load(path)
+	require.NoError(t, err)
+	require.Equal(t, "s3cret", reloaded.Daemon.Token)
+	require.Equal(t, "firecracker", reloaded.Hypervisor)
+}

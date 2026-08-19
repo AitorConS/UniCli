@@ -154,13 +154,11 @@ func resolvePackages(ctx context.Context, pkgRefs []string) ([]pkg.File, error) 
 				return nil, fmt.Errorf("extract package %s: %w", target.Name, err)
 			}
 		}
-		paths, err := pkgStore.ExtractedFiles(target.Name, target.Version)
+		pkgFiles, err := pkgStore.ExtractedFileList(target.Name, target.Version)
 		if err != nil {
 			return nil, fmt.Errorf("list package files %s: %w", target.Name, err)
 		}
-		for _, p := range paths {
-			files = append(files, pkg.File{HostPath: p, GuestPath: filepath.Base(p)})
-		}
+		files = append(files, pkgFiles...)
 	}
 	return files, nil
 }
@@ -326,13 +324,11 @@ func resolveAutoPackages(ctx context.Context, autoPkgs []string, pkgSource strin
 				return nil, fmt.Errorf("extract package %s: %w", target.Name, err)
 			}
 		}
-		paths, err := pkgStore.ExtractedFiles(target.Name, target.Version)
+		pkgFiles, err := pkgStore.ExtractedFileList(target.Name, target.Version)
 		if err != nil {
 			return nil, fmt.Errorf("list package files %s: %w", target.Name, err)
 		}
-		for _, p := range paths {
-			files = append(files, pkg.File{HostPath: p, GuestPath: filepath.Base(p)})
-		}
+		files = append(files, pkgFiles...)
 	}
 	return files, nil
 }

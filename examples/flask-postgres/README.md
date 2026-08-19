@@ -14,7 +14,7 @@ over the daemon's guest DNS: the web app connects to PostgreSQL at host `db`
 
 ```bash
 # PostgreSQL (raw build; bakes an open pg_hba.conf — see examples/postgresql)
-jerboa build ../postgresql --name postgresql --pkg eyberg/postgresql:11.3.0 --pkg-source ops
+jerboa build ../postgresql --name postgresql
 
 # Flask front-end (python build; requirements.txt is pip-installed into the image)
 jerboa build . --name flask-postgres --pkg-source ops --port 8080

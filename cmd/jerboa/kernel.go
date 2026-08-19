@@ -61,6 +61,7 @@ func newKernelCheckCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			toolsDir := defaultToolsPath()
 			local := tools.LocalVersion(toolsDir)
+			known := tools.HasLocalVersion(toolsDir)
 			fmt.Fprintf(cmd.OutOrStdout(), "Installed kernel: %s\n", local)
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
@@ -73,10 +74,19 @@ func newKernelCheckCmd() *cobra.Command {
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Latest kernel:    %s\n", remote)
 
-			if tools.IsNewer(local, remote) {
+			switch {
+			case !known:
+				// The toolchain came baked into the distro image and carries no
+				// version marker, so its version is genuinely unknown. Claiming
+				// "update available" here was a false alarm on every fresh install
+				// (F-006): report the state honestly instead.
+				fmt.Fprintf(cmd.OutOrStdout(),
+					"The installed kernel toolchain shipped with the distro and is unversioned; "+
+						"the latest published kernel is %s. Run `jerboa kernel update` to install a CLI-managed copy.\n", remote)
+			case tools.IsNewer(local, remote):
 				fmt.Fprintf(cmd.OutOrStdout(),
 					"Update available. Run `jerboa kernel update` to install %s.\n", remote)
-			} else {
+			default:
 				fmt.Fprintln(cmd.OutOrStdout(), "Kernel is up to date.")
 			}
 			return nil

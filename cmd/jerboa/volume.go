@@ -74,6 +74,7 @@ func seedVolumeFromPkgs(cmd *cobra.Command, endpoint *string, storePath *string,
 	if err := builder.ValidatePkgSource(pkgSource); err != nil {
 		return fmt.Errorf("volume seed: %w", err)
 	}
+	warnMangledImagePath(cmd.ErrOrStderr(), "--src", src)
 	sp := newSpinner(cmd.ErrOrStderr(), *verbose)
 
 	store, err := volume.NewStore(volumeStorePath(*storePath))

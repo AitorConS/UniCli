@@ -296,15 +296,19 @@ Supported package sources (`--source`, default `ops`):
 
 - `--file <path>` — the binary inside the image to package. **Optional**: when
   omitted, the program is derived from the image's `Entrypoint`/`Cmd` and
-  resolved on the container's `PATH`; its shared-library closure is discovered
-  with `ldd` inside a temporary container and bundled automatically. Images
-  whose entrypoint is a shell script (`docker-entrypoint.sh` and friends)
-  cannot be derived — there is no shell in a unikernel — so pass `--file` with
-  the real binary the script eventually launches.
+  resolved on the container's `PATH`. The shared-library closure is read from the
+  image's exported filesystem (no `ldd`/`cat` inside the image), so it works on
+  `scratch` and distroless images too, and every file is stored at its real
+  absolute in-image path. Images whose entrypoint is a shell script
+  (`docker-entrypoint.sh` and friends) cannot be derived — there is no shell in a
+  unikernel — so pass `--file` with the real binary the script eventually launches.
 
 ```sh
-jerboa pkg from-docker redis:7.2 redis:7.2
-jerboa build . --lang raw --pkg redis:7.2 --pkg-source jerboa --name redis
+# redis is a shell-launcher image, so name the real binary with --file.
+jerboa pkg from-docker redis:7.2 redis:7.2 --file /usr/local/bin/redis-server
+# unikernel.toml: lang="raw", pkgs=["redis:7.2"], pkg_source="jerboa",
+#                 [program] path="/usr/local/bin/redis-server"
+jerboa build . --name redis
 ```
 
 `pkg create` flags:

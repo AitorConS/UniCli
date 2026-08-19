@@ -18,7 +18,7 @@ var version = "dev"
 
 func main() {
 	if err := newRootCmd().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(1)
 	}
 }
@@ -37,6 +37,14 @@ func newRootCmd() *cobra.Command {
 		Use:     "jerboa",
 		Short:   "Unikernel engine CLI",
 		Version: version,
+		// A command that fails at runtime (VM not found, build error, daemon
+		// unreachable) should print just its error, not the whole Usage/Flags block
+		// — the latter buried the actual message on nearly every error (E2E finding
+		// F-004). Cobra still prints usage for flag/argument PARSE errors, which is
+		// where it helps. SilenceErrors lets main() print the error once, with a
+		// consistent "Error:" prefix, instead of cobra also printing it.
+		SilenceUsage:  true,
+		SilenceErrors: true,
 		// Resolve the daemon endpoint before any subcommand runs:
 		// --host > --socket > JERBOA_HOST > config file > platform default.
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
@@ -124,9 +132,15 @@ func needsDaemon(cmd *cobra.Command) bool {
 	if cmd.Name() == "create" && cmd.Flags().Changed("seed-pkg") {
 		return true
 	}
+	// sign/verify are intentionally NOT excluded here: they resolve the image's
+	// disk digest through the daemon (api.Dial → Image.Get), so on Windows they
+	// must trigger the same distro auto-boot and endpoint/token resolution as any
+	// other daemon-backed command — otherwise they dial the loopback default
+	// (which never reaches the WSL distro) with no auth token and fail with
+	// "connection refused" / "authentication required" (E2E finding F-019).
 	localGroups := map[string]bool{
 		"config": true, "kernel": true, "pkg": true, "volume": true,
-		"sign": true, "verify": true, "completion": true, "help": true,
+		"completion": true, "help": true,
 		"daemon": true, "init": true, "version": true,
 	}
 	for c := cmd; c != nil; c = c.Parent() {
@@ -172,8 +186,10 @@ func ensureDaemon(ctx context.Context, override string) (string, error) {
 	}
 
 	var hypervisor string
+	var obs wslboot.Observability
 	if cfg, cerr := config.Load(config.DefaultPath()); cerr == nil {
 		hypervisor = cfg.Hypervisor
+		obs = observabilityFromConfig(cfg)
 	}
 	if err := wslboot.EnsureDaemon(ctx, wslboot.Config{
 		Endpoint:       dial,
@@ -182,6 +198,7 @@ func ensureDaemon(ctx context.Context, override string) (string, error) {
 		User:           daemonLaunchUser,
 		Token:          token,
 		Hypervisor:     hypervisor,
+		Observability:  obs,
 	}); err != nil {
 		return "", err
 	}
@@ -189,6 +206,18 @@ func ensureDaemon(ctx context.Context, override string) (string, error) {
 	// daemon with the same secret.
 	_ = wslboot.SaveDaemonFile(daemonJSONPath(), token, dial)
 	return dial, nil
+}
+
+// observabilityFromConfig maps the persisted [daemon] observability settings to
+// the wslboot launch config, so every managed-daemon launch (auto-boot and
+// explicit `daemon start`) enables the same metrics/UI/tracing/log-format.
+func observabilityFromConfig(cfg *config.Config) wslboot.Observability {
+	return wslboot.Observability{
+		MetricsAddr: cfg.Daemon.MetricsAddr,
+		UIAddr:      cfg.Daemon.UIAddr,
+		TraceAddr:   cfg.Daemon.TraceAddr,
+		LogFormat:   cfg.Daemon.LogFormat,
+	}
 }
 
 // daemonJSONPath returns the path to the client-owned daemon secret file.

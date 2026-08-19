@@ -1,7 +1,19 @@
 [build]
+# raw build: nothing is compiled. The runtime binary comes from a package
+# (below) and is named by [program]. Use raw for prebuilt runtimes.
 lang = "raw"
 
+# Provides the `ruby` interpreter named in [program]. Declared here so
+# `jerboa build examples/rubyapp` resolves it with no --pkg flag; pinned to a
+# specific ops build for reproducibility.
+pkgs = ["eyberg/ruby:3.1.2"]
+
+# Resolve packages from the ops ecosystem (repo.ops.city), the default source.
+pkg_source = "ops"
+
 [program]
+# The `ruby` interpreter from the eyberg/ruby package. The raw build copies this
+# directory into the image, so app.rb lands at /app.rb.
 path = "ruby"
 args = ["/app.rb"]
 

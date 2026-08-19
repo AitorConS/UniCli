@@ -11,6 +11,11 @@ import (
 
 const versionFileName = "kernel-version.txt"
 
+// UnknownVersion is what LocalVersion reports when no version marker is present —
+// e.g. a toolchain baked into the distro image, which ships no marker. It is not
+// a real version and must not be compared against the manifest as if it were.
+const UnknownVersion = "(unknown)"
+
 // artifactNames are the remote file names that make up the kernel toolset. They
 // remain here only so ClearCachedTools scrubs any legacy on-disk copies.
 var artifactNames = []string{"mkfs-linux-amd64", "kernel.img", "boot.img", "dump-linux-amd64"}
@@ -22,9 +27,22 @@ const fcKernelLocalName = "kernel-fc.img"
 func LocalVersion(toolsDir string) string {
 	data, err := os.ReadFile(filepath.Join(toolsDir, versionFileName))
 	if err != nil {
-		return "(unknown)"
+		return UnknownVersion
 	}
-	return strings.TrimSpace(string(data))
+	v := strings.TrimSpace(string(data))
+	if v == "" {
+		return UnknownVersion
+	}
+	return v
+}
+
+// HasLocalVersion reports whether toolsDir carries a version marker, letting
+// callers tell a known, CLI-managed toolchain from one whose version cannot be
+// determined (a distro-baked toolchain) — which must not be reported as out of
+// date just because its unknown version sorts below the manifest (F-006).
+func HasLocalVersion(toolsDir string) bool {
+	data, err := os.ReadFile(filepath.Join(toolsDir, versionFileName))
+	return err == nil && strings.TrimSpace(string(data)) != ""
 }
 
 // IsNewer reports whether remote is a strictly higher semver than local.
