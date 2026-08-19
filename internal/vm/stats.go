@@ -80,10 +80,17 @@ func (c *ProcStatsCollector) Collect() RuntimeStats {
 		memBytes = memKB * 1024
 	}
 
+	// Read this VM's own tap device, not the hypervisor process's /proc net stats:
+	// the hypervisor shares the distro's network namespace, so /proc/<pid>/net/dev
+	// reported the distro's eth0 — the same large, meaningless number for every VM
+	// (E2E finding F-007). The tap is the per-VM interface, so its counters are the
+	// VM's real traffic.
 	var rxBytes, txBytes int64
-	if rx, tx, err := readProcNetDev(c.pid); err == nil {
-		rxBytes = rx
-		txBytes = tx
+	if tap := c.vm.Cfg.tapDevice(); tap != "" {
+		if rx, tx, err := readTapStats(tap); err == nil {
+			rxBytes = rx
+			txBytes = tx
+		}
 	}
 
 	return RuntimeStats{
@@ -128,24 +135,38 @@ func readProcStatm(pid int) (int64, error) {
 	return rssPages * 4, nil
 }
 
-func readProcNetDev(pid int) (rxBytes, txBytes int64, err error) {
-	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/net/dev", pid))
+// readTapStats returns a VM's guest-centric byte counters read from its host-side
+// tap device statistics. A tap's rx/tx are measured from the host's end of the
+// link, so they are flipped to the guest's point of view: what the host received
+// off the tap is what the guest SENT (guest TX), and what the host transmitted
+// into the tap is what the guest RECEIVED (guest RX).
+// sysClassNet is the sysfs network directory; a var so tests can point it at a
+// fixture instead of the real /sys.
+var sysClassNet = "/sys/class/net"
+
+func readTapStats(tap string) (guestRx, guestTx int64, err error) {
+	base := sysClassNet + "/" + tap + "/statistics/"
+	hostRx, err := readNetCounter(base + "rx_bytes")
 	if err != nil {
-		return 0, 0, fmt.Errorf("read proc net dev: %w", err)
+		return 0, 0, err
 	}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "eth0:") || strings.HasPrefix(line, "en") {
-			fields := strings.Fields(line)
-			if len(fields) < 11 {
-				continue
-			}
-			rx, _ := strconv.ParseInt(fields[1], 10, 64)
-			tx, _ := strconv.ParseInt(fields[9], 10, 64)
-			return rx, tx, nil
-		}
+	hostTx, err := readNetCounter(base + "tx_bytes")
+	if err != nil {
+		return 0, 0, err
 	}
-	return 0, 0, nil
+	return hostTx, hostRx, nil
+}
+
+func readNetCounter(path string) (int64, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, fmt.Errorf("read net counter %s: %w", path, err)
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse net counter %s: %w", path, err)
+	}
+	return n, nil
 }
 
 func numCPU() int {

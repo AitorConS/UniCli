@@ -1,6 +1,9 @@
 package api
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strconv"
+)
 
 // Request is a JSON-RPC 2.0 request envelope.
 type Request struct {
@@ -22,6 +25,25 @@ type Response struct {
 type RPCError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+}
+
+// Error renders the error for a CLI user. The numeric JSON-RPC code is transport
+// plumbing that means nothing to a user, so for application/server failures
+// (the -32000..-32099 range the daemon uses for VM/build/volume errors) only the
+// self-contained message is shown — no "rpc error -32000:" prefix (E2E finding
+// F-004). Protocol-level codes (method not found, invalid params, …) keep the
+// code appended, since those signal a client/daemon mismatch worth reporting.
+func (e *RPCError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if e.Code <= -32000 && e.Code >= -32099 {
+		return e.Message
+	}
+	// Built with strconv rather than fmt.Sprintf on purpose: a %s+%d Sprintf in
+	// this package tripped a panic in the govet "hostport" analyzer (x/tools),
+	// which failed the lint job. Plain concatenation is equivalent and avoids it.
+	return e.Message + " (rpc " + strconv.Itoa(e.Code) + ")"
 }
 
 // PortMapSpec is the wire representation of a host-to-guest port mapping.

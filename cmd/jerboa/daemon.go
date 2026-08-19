@@ -51,17 +51,34 @@ func newDaemonCmd() *cobra.Command {
 
 // daemonOpts are the launch flags shared by start and restart.
 type daemonOpts struct {
-	hypervisor string
+	hypervisor  string
+	metricsAddr string
+	uiAddr      string
+	traceAddr   string
+	logFormat   string
 }
 
 func (o *daemonOpts) bind(c *cobra.Command) {
 	c.Flags().StringVar(&o.hypervisor, "hypervisor", "",
 		"hypervisor to run (qemu or firecracker); defaults to config")
+	// Observability passthrough (E2E finding F-022): these enable the managed
+	// daemon's metrics/UI/tracing/log-format, which previously required
+	// hand-launching jerboad inside the distro. A provided value is persisted so
+	// subsequent auto-boots enable the same endpoints.
+	c.Flags().StringVar(&o.metricsAddr, "metrics-addr", "",
+		"serve Prometheus metrics on this address (e.g. :9090); persisted")
+	c.Flags().StringVar(&o.uiAddr, "ui-addr", "",
+		"serve the dashboard on this address (e.g. :8080); persisted")
+	c.Flags().StringVar(&o.traceAddr, "trace-addr", "",
+		"export OTLP traces to this address; persisted")
+	c.Flags().StringVar(&o.logFormat, "log-format", "",
+		"daemon log format: text or json; persisted")
 }
 
 // resolveDaemonConfig assembles the wslboot launch config: the dedicated distro,
 // run as root, binding 0.0.0.0 while the client dials loopback. It returns the
-// token separately for the daemon-file rendezvous.
+// token separately for the daemon-file rendezvous. Provided observability flags
+// override and are persisted to config so the auto-boot path enables them too.
 func resolveDaemonConfig(o daemonOpts) (wslboot.Config, string, error) {
 	token := config.ResolveToken()
 	if token == "" {
@@ -72,10 +89,37 @@ func resolveDaemonConfig(o daemonOpts) (wslboot.Config, string, error) {
 		token = t
 	}
 
+	cfg, err := config.Load(config.DefaultPath())
+	if err != nil || cfg == nil {
+		cfg = &config.Config{Hypervisor: "qemu"}
+	}
+
 	hyp := o.hypervisor
 	if hyp == "" {
-		if cfg, err := config.Load(config.DefaultPath()); err == nil {
-			hyp = cfg.Hypervisor
+		hyp = cfg.Hypervisor
+	}
+
+	// A provided observability flag overrides the persisted value and is written
+	// back, so a later `jerboa ps` (which auto-boots the daemon) launches it with
+	// the same endpoints enabled. An unset flag leaves the persisted value intact.
+	dirty := false
+	for _, f := range []struct {
+		val string
+		dst *string
+	}{
+		{o.metricsAddr, &cfg.Daemon.MetricsAddr},
+		{o.uiAddr, &cfg.Daemon.UIAddr},
+		{o.traceAddr, &cfg.Daemon.TraceAddr},
+		{o.logFormat, &cfg.Daemon.LogFormat},
+	} {
+		if f.val != "" && f.val != *f.dst {
+			*f.dst = f.val
+			dirty = true
+		}
+	}
+	if dirty {
+		if err := config.Save(config.DefaultPath(), cfg); err != nil {
+			return wslboot.Config{}, "", fmt.Errorf("persist daemon observability config: %w", err)
 		}
 	}
 
@@ -90,6 +134,7 @@ func resolveDaemonConfig(o daemonOpts) (wslboot.Config, string, error) {
 		User:           daemonLaunchUser,
 		Token:          token,
 		Hypervisor:     hyp,
+		Observability:  observabilityFromConfig(cfg),
 	}, token, nil
 }
 

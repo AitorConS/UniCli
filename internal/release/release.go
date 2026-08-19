@@ -13,6 +13,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,6 +23,12 @@ import (
 
 	"github.com/AitorConS/jerboa/internal/httpclient"
 )
+
+// ErrChannelNotPublished indicates the requested release channel's manifest does
+// not exist yet (HTTP 404) — as opposed to a transport failure. Callers use it to
+// tell "the beta channel isn't published" apart from "the network is down" so the
+// message is not misleadingly framed as a fetch error (E2E finding F-005).
+var ErrChannelNotPublished = errors.New("release channel is not published")
 
 // DefaultBaseURL is the public read origin backed by the R2 bucket.
 const DefaultBaseURL = "https://releases.jerboa.dev"
@@ -198,6 +205,9 @@ func (c *Client) get(ctx context.Context, url string) ([]byte, error) {
 		return nil, fmt.Errorf("release: get %s: %w", url, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("%w: HTTP 404 from %s", ErrChannelNotPublished, url)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("HTTP %d from %s", resp.StatusCode, url)
 	}

@@ -132,3 +132,25 @@ func TestClearCachedTools_EmptyDir(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, ClearCachedTools(dir))
 }
+
+// TestHasLocalVersion is the F-006 regression: an unmarked tools dir (a distro-
+// baked toolchain) reports no known version, so callers avoid the false "update
+// available" prompt; a marked dir reports its version.
+func TestHasLocalVersion(t *testing.T) {
+	dir := t.TempDir()
+	if HasLocalVersion(dir) {
+		t.Fatal("empty tools dir should have no known version")
+	}
+	if got := LocalVersion(dir); got != UnknownVersion {
+		t.Fatalf("LocalVersion on empty dir = %q, want %q", got, UnknownVersion)
+	}
+	if err := SaveLocalVersion(dir, "v0.2.0"); err != nil {
+		t.Fatal(err)
+	}
+	if !HasLocalVersion(dir) {
+		t.Fatal("after SaveLocalVersion the version should be known")
+	}
+	if got := LocalVersion(dir); got != "v0.2.0" {
+		t.Fatalf("LocalVersion = %q, want v0.2.0", got)
+	}
+}

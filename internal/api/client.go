@@ -339,7 +339,7 @@ func (c *Client) Attach(_ context.Context, id string, out io.Writer) error {
 		return fmt.Errorf("decode attach response: %w", err)
 	}
 	if resp.Error != nil {
-		return fmt.Errorf("rpc error %d: %s", resp.Error.Code, resp.Error.Message)
+		return resp.Error
 	}
 
 	buf := make([]byte, 4096)
@@ -401,7 +401,7 @@ func (c *Client) ImageBuild(_ context.Context, p BuildParams, contextTar io.Read
 		return ImageManifestResult{}, fmt.Errorf("decode build response: %w", err)
 	}
 	if resp.Error != nil {
-		return ImageManifestResult{}, fmt.Errorf("rpc error %d: %s", resp.Error.Code, resp.Error.Message)
+		return ImageManifestResult{}, resp.Error
 	}
 	var out ImageManifestResult
 	if resp.Result != nil {
@@ -453,7 +453,7 @@ func (c *Client) VolumeSeed(_ context.Context, p VolumeSeedParams, contextTar io
 		return VolumeSeedResult{}, fmt.Errorf("decode seed response: %w", err)
 	}
 	if resp.Error != nil {
-		return VolumeSeedResult{}, fmt.Errorf("rpc error %d: %s", resp.Error.Code, resp.Error.Message)
+		return VolumeSeedResult{}, resp.Error
 	}
 	var out VolumeSeedResult
 	if resp.Result != nil {
@@ -519,7 +519,7 @@ func (c *Client) call(method string, params any, out any) error {
 		return fmt.Errorf("decode response: %w", err)
 	}
 	if resp.Error != nil {
-		return fmt.Errorf("rpc error %d: %s", resp.Error.Code, resp.Error.Message)
+		return resp.Error
 	}
 	if out != nil && resp.Result != nil {
 		if err := json.Unmarshal(resp.Result, out); err != nil {

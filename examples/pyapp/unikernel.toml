@@ -1,0 +1,10 @@
+# Build spec for pyapp — a one-line Python program.
+#
+#   jerboa build examples/pyapp --name pyapp
+#
+# There is no requirements.txt or pyproject.toml in this directory, so the
+# python language can't be auto-detected — declare it explicitly here.
+
+[build]
+# Python build driver: packages main.py with the python runtime.
+lang = "python"

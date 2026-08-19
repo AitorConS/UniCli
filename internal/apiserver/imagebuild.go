@@ -152,18 +152,32 @@ func (s *Server) handleVolumeSeed(ctx context.Context, params json.RawMessage, s
 		return
 	}
 
-	vol, err := s.volStore.Get(p.VolumeName)
-	if err != nil {
+	// The disk to seed is the client-supplied, daemon-visible path — the same path
+	// `jerboa run -v` attaches. On Windows the volume lives on the host filesystem
+	// (reachable by the daemon under /mnt/<drive>/…) and is absent from the
+	// daemon's own volume store, so re-resolving it there fails and made seeding
+	// impossible on the only supported Windows path (E2E finding F-012). When the
+	// daemon DOES own the volume (Linux-native, shared store) the paths are
+	// cross-checked so a client cannot redirect the seed onto another volume's disk.
+	diskPath := p.DiskPath
+	if vol, err := s.volStore.Get(p.VolumeName); err == nil {
+		if filepath.Clean(p.DiskPath) != filepath.Clean(vol.DiskPath) {
+			drain(stream)
+			s.writeError(conn, reqID, &api.RPCError{Code: -32602, Message: "disk_path does not match the requested volume"})
+			return
+		}
+		diskPath = vol.DiskPath
+	}
+
+	// Seeding writes a filesystem into an existing disk image; it never creates the
+	// backing file. Require it to exist so a typo'd name or an unseeded create fails
+	// with a clear message instead of erroring deep inside mkfs.
+	if info, statErr := os.Stat(diskPath); statErr != nil || info.IsDir() {
 		drain(stream)
-		s.writeError(conn, reqID, &api.RPCError{Code: -32602, Message: "resolve volume: " + err.Error()})
+		s.writeError(conn, reqID, &api.RPCError{Code: -32602, Message: fmt.Sprintf(
+			"volume disk %q not found; create the volume first with 'jerboa volume create %s'", diskPath, p.VolumeName)})
 		return
 	}
-	if filepath.Clean(p.DiskPath) != filepath.Clean(vol.DiskPath) {
-		drain(stream)
-		s.writeError(conn, reqID, &api.RPCError{Code: -32602, Message: "disk_path does not match the requested volume"})
-		return
-	}
-	diskPath := vol.DiskPath
 
 	seeder, err := s.resolveVolumeSeeder(ctx)
 	if err != nil {

@@ -1,0 +1,10 @@
+# Build spec for hello — a Go program that prints and exits.
+#
+#   jerboa build examples/hello --name hello
+#
+# This directory has no go.mod (it is a package within the repo's root module),
+# so Go can't be auto-detected — declare the language explicitly here.
+
+[build]
+# Go build driver: compiles main.go into a static binary baked into the image.
+lang = "go"

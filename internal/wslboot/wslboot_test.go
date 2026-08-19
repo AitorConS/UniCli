@@ -206,3 +206,61 @@ func TestLoadOrCreateToken_FileModeUnix(t *testing.T) {
 		require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 	}
 }
+
+// TestBuildLaunchArgs_Observability is the F-022 regression: observability flags
+// must be forwarded to jerboad (in a stable order) so the managed daemon serves
+// metrics/UI/traces and structured logs — previously impossible via the CLI.
+func TestBuildLaunchArgs_Observability(t *testing.T) {
+	args, _ := buildLaunchArgs(Config{
+		Endpoint:    "tcp://127.0.0.1:7890",
+		JerboadPath: "jerboad",
+		Hypervisor:  "qemu",
+		Observability: Observability{
+			MetricsAddr: ":9090",
+			UIAddr:      ":8080",
+			TraceAddr:   "otel:4317",
+			LogFormat:   "json",
+		},
+	}, "/dev/null")
+
+	require.Equal(t, []string{
+		"--", "bash", "-c",
+		"setsid 'jerboad' --host 'tcp://127.0.0.1:7890' --hypervisor 'qemu'" +
+			" --metrics-addr ':9090' --ui-addr ':8080' --trace-addr 'otel:4317' --log-format 'json'" +
+			" < /dev/null >> '/dev/null' 2>&1 & sleep 0.5",
+	}, args)
+}
+
+// TestBuildLaunchArgs_ObservabilityOmitsEmpty confirms unset observability fields
+// add nothing, so the daemon keeps its own defaults.
+func TestBuildLaunchArgs_ObservabilityOmitsEmpty(t *testing.T) {
+	args, _ := buildLaunchArgs(Config{
+		Endpoint:      "tcp://127.0.0.1:7890",
+		JerboadPath:   "jerboad",
+		Observability: Observability{MetricsAddr: ":9090"},
+	}, "/dev/null")
+
+	require.Equal(t, []string{
+		"--", "bash", "-c",
+		"setsid 'jerboad' --host 'tcp://127.0.0.1:7890' --metrics-addr ':9090'" +
+			" < /dev/null >> '/dev/null' 2>&1 & sleep 0.5",
+	}, args)
+}
+
+// TestRotateIfLarge is the F-011 regression: the launch log is rotated once it
+// exceeds the cap, so it cannot grow without bound across restarts/reinstalls.
+func TestRotateIfLarge(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "jerboad-wsl.log")
+	require.NoError(t, os.WriteFile(path, make([]byte, 100), 0o600))
+
+	// Under the cap: left in place, no .old generation.
+	rotateIfLarge(path, 1000)
+	require.FileExists(t, path)
+	require.NoFileExists(t, path+".old")
+
+	// Over the cap: rotated to .old, a fresh log will be created by the opener.
+	rotateIfLarge(path, 50)
+	require.NoFileExists(t, path)
+	require.FileExists(t, path+".old")
+}

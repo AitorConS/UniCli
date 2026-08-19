@@ -52,6 +52,21 @@ type Config struct {
 	// HealthTimeout bounds how long to wait for a freshly launched daemon to
 	// answer. Zero defaults to 20s.
 	HealthTimeout time.Duration
+	// Observability turns on the managed daemon's metrics/UI/tracing/log-format,
+	// which are otherwise reachable only by hand-launching jerboad inside the
+	// distro (E2E finding F-022). Persisted in config so both `daemon start` and
+	// the auto-boot path enable them.
+	Observability Observability
+}
+
+// Observability holds jerboad flags forwarded verbatim to enable the daemon's
+// metrics endpoint, dashboard, OTLP trace export, and structured logging. Empty
+// fields are omitted so the daemon keeps its own defaults.
+type Observability struct {
+	MetricsAddr string
+	UIAddr      string
+	TraceAddr   string
+	LogFormat   string
 }
 
 // EnsureDaemon returns nil once the daemon is reachable. If it is not already
@@ -265,6 +280,18 @@ func buildLaunchArgs(cfg Config, wslLog string) (args, env []string) {
 	if cfg.Hypervisor != "" {
 		inner += " --hypervisor " + shQuote(cfg.Hypervisor)
 	}
+	// Forward observability flags in a fixed order (kept stable for testability)
+	// so the managed daemon can serve metrics/UI/traces and structured logs.
+	for _, kv := range []struct{ flag, val string }{
+		{"--metrics-addr", cfg.Observability.MetricsAddr},
+		{"--ui-addr", cfg.Observability.UIAddr},
+		{"--trace-addr", cfg.Observability.TraceAddr},
+		{"--log-format", cfg.Observability.LogFormat},
+	} {
+		if kv.val != "" {
+			inner += " " + kv.flag + " " + shQuote(kv.val)
+		}
+	}
 	// The trailing sleep keeps bash alive just long enough for setsid to enter
 	// its new session; when bash exits immediately, WSL's session teardown
 	// still kills the freshly forked child (observed empirically).
@@ -291,11 +318,29 @@ func openLaunchLog() (*os.File, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("wslboot: create log dir: %w", err)
 	}
-	f, err := os.OpenFile(filepath.Join(dir, "jerboad-wsl.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	logPath := filepath.Join(dir, "jerboad-wsl.log")
+	rotateIfLarge(logPath, maxLaunchLogBytes)
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("wslboot: open launch log: %w", err)
 	}
 	return f, nil
+}
+
+// maxLaunchLogBytes caps the daemon launch log before it is rotated. The log is
+// appended to on every (re)start and previously grew without bound and survived
+// reinstalls (E2E finding F-011).
+const maxLaunchLogBytes = 8 << 20 // 8 MiB
+
+// rotateIfLarge renames path to path+".old" (replacing any previous .old) once it
+// exceeds maxBytes, bounding the launch log to at most one prior generation
+// instead of unbounded growth. Best-effort: any error just leaves the log as is.
+func rotateIfLarge(path string, maxBytes int64) {
+	info, err := os.Stat(path)
+	if err != nil || info.Size() <= maxBytes {
+		return
+	}
+	_ = os.Rename(path, path+".old")
 }
 
 // daemonFile is the on-disk shape of ~/.jerboa/daemon.json.

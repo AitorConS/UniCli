@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime"
 	"time"
@@ -29,7 +30,11 @@ func newVersionCmd() *cobra.Command {
 
 			m, err := fetchChannelManifest(cmd.Context(), channel)
 			if err != nil {
-				fmt.Fprintf(out, "\nLatest release: (unavailable — %v)\n", err)
+				if errors.Is(err, release.ErrChannelNotPublished) {
+					fmt.Fprintf(out, "\nThe %q release channel is not published yet.\n", channel)
+				} else {
+					fmt.Fprintf(out, "\nLatest release: (unavailable — %v)\n", err)
+				}
 				return nil
 			}
 			fmt.Fprintf(out, "\nLatest release (channel %s):\n", m.Channel)
@@ -41,7 +46,10 @@ func newVersionCmd() *cobra.Command {
 					fmt.Fprintf(out, "  %-8s %s\n", name+":", c.Version)
 				}
 			}
-			if cli, ok := m.Component(release.ComponentCLI); ok && release.IsNewer(version, cli.Version) {
+			// Only nag a real release build. A local/dev build's version ("dev", a
+			// git hash) is not a semver, so it would always look out of date against
+			// the manifest and print a misleading update prompt (F-001).
+			if cli, ok := m.Component(release.ComponentCLI); ok && release.IsReleaseVersion(version) && release.IsNewer(version, cli.Version) {
 				fmt.Fprintf(out, "\nA newer jerboa CLI (%s) is available.\n", cli.Version)
 				if runtime.GOOS == "windows" {
 					fmt.Fprintln(out, "Update through the Jerboa Desktop app.")

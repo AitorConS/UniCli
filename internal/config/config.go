@@ -11,24 +11,41 @@ import (
 
 // Config holds global jerboa configuration stored at ~/.jerboa/config.toml.
 type Config struct {
-	Hypervisor string       `toml:"hypervisor"`
-	Daemon     DaemonConfig `toml:"daemon"`
+	Hypervisor string `toml:"hypervisor"`
+	// Daemon is omitted when empty so writing an unrelated key (e.g.
+	// `config set hypervisor`) does not materialize a [daemon] table full of
+	// empty endpoint/token/distro strings — which read as "explicitly set to
+	// blank" and risked shadowing the real rendezvous in ~/.jerboa/daemon.json
+	// (E2E finding F-002).
+	Daemon DaemonConfig `toml:"daemon,omitempty"`
 }
 
-// DaemonConfig holds client-side daemon connection settings.
+// DaemonConfig holds client-side daemon connection settings. Every field is
+// omitempty so a partially-populated [daemon] table (e.g. only a token) never
+// writes back blank siblings.
 type DaemonConfig struct {
 	// Endpoint is the daemon address (e.g. unix:///var/run/jerboad.sock or
 	// tcp://127.0.0.1:7890). Empty falls back to the per-platform default.
-	Endpoint string `toml:"endpoint"`
+	Endpoint string `toml:"endpoint,omitempty"`
 	// Distro is the WSL2 distribution to host the daemon on Windows. Empty uses
 	// the WSL default distro.
-	Distro string `toml:"distro"`
+	Distro string `toml:"distro,omitempty"`
 	// JerboadPath is the jerboad binary path inside the WSL distro. Empty resolves
 	// "jerboad" on the distro's PATH.
-	JerboadPath string `toml:"jerboad_path"`
+	JerboadPath string `toml:"jerboad_path,omitempty"`
 	// Token is the shared secret sent to the daemon via the Auth.Hello
 	// handshake. Overridden by the JERBOA_AUTH_TOKEN environment variable.
-	Token string `toml:"token"`
+	Token string `toml:"token,omitempty"`
+
+	// Observability flags below are forwarded to the managed daemon at launch so
+	// metrics/UI/tracing/structured logs can be enabled through the CLI rather
+	// than by hand-launching jerboad inside the distro (E2E finding F-022).
+	// Persisting them here means both `jerboa daemon start` and the auto-boot path
+	// honor them. Empty leaves the daemon's own default.
+	MetricsAddr string `toml:"metrics_addr,omitempty"`
+	UIAddr      string `toml:"ui_addr,omitempty"`
+	TraceAddr   string `toml:"trace_addr,omitempty"`
+	LogFormat   string `toml:"log_format,omitempty"`
 }
 
 // DefaultEndpoint returns the per-platform default daemon endpoint. Windows

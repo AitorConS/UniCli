@@ -17,7 +17,7 @@ The compose file references two images by name, so build both first.
 MySQL (uses the `unikernel.toml` from the `mysql` example, `raw` build):
 
 ```bash
-jerboa build ../mysql --name mysql --pkg eyberg/mysql:5.7.29 --pkg-source ops
+jerboa build ../mysql --name mysql
 ```
 
 Flask front-end (python build; `requirements.txt` is pip-installed into the

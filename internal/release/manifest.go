@@ -124,6 +124,32 @@ func IsNewer(local, remote string) bool {
 	return semverGT(remote, local)
 }
 
+// IsReleaseVersion reports whether v looks like a published semantic version
+// (X.Y or X.Y.Z, optionally v-prefixed) rather than a local/dev build such as
+// "dev" or a git short hash. Update prompts compare against manifest semvers, so
+// a non-release build (which sorts as 0.0.0) would always look out of date — the
+// caller suppresses the "newer version available" nag for these (E2E finding
+// F-001).
+func IsReleaseVersion(v string) bool {
+	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	parts := strings.SplitN(v, ".", 3)
+	if len(parts) < 2 {
+		return false
+	}
+	for _, p := range parts {
+		if i := strings.IndexAny(p, "-+"); i >= 0 {
+			p = p[:i]
+		}
+		if p == "" {
+			return false
+		}
+		if _, err := strconv.Atoi(p); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
 func semverGT(a, b string) bool {
 	av, bv := parseSemver(a), parseSemver(b)
 	for i := range av {
