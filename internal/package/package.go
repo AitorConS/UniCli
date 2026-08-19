@@ -366,7 +366,7 @@ func (s *Store) ExtractedFiles(name, version string) ([]string, error) {
 // yields basename guest paths — unchanged from before; a structured archive
 // (from CreateFromFiles / from-docker) yields the preserved absolute layout so
 // interpreters and libraries land where the ELF references them. This is the
-// jerboa-store analogue of OpsStore.ExtractedFiles.
+// jerboa-store analog of OpsStore.ExtractedFiles.
 func (s *Store) ExtractedFileList(name, version string) ([]File, error) {
 	if err := validatePackageRef(name, version); err != nil {
 		return nil, err

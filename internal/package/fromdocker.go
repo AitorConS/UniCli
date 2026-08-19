@@ -164,7 +164,7 @@ func exportContainerFS(image string) (*containerFS, func(), error) {
 func indexTar(tarPath string) (map[string]cfsEntry, error) {
 	f, err := os.Open(tarPath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open export tar: %w", err)
 	}
 	defer func() { _ = f.Close() }()
 
@@ -172,7 +172,7 @@ func indexTar(tarPath string) (map[string]cfsEntry, error) {
 	tr := tar.NewReader(f)
 	for {
 		hdr, err := tr.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -235,7 +235,7 @@ func (c *containerFS) resolve(p string) (string, error) {
 			work = append(base, work[i+1:]...)
 			out = out[:0]
 			i = -1
-		case tar.TypeReg, tar.TypeRegA:
+		case tar.TypeReg:
 			if i != len(work)-1 {
 				return "", fmt.Errorf("%q: %q is not a directory", p, cur)
 			}
@@ -250,7 +250,7 @@ func (c *containerFS) resolve(p string) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("%q not found in image", final)
 	}
-	if entry.typeflag != tar.TypeReg && entry.typeflag != tar.TypeRegA {
+	if entry.typeflag != tar.TypeReg {
 		return "", fmt.Errorf("%q is not a regular file", final)
 	}
 	return final, nil
@@ -270,14 +270,14 @@ func splitAbs(p string) []string {
 func (c *containerFS) readFile(real string) ([]byte, error) {
 	f, err := os.Open(c.tarPath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open export tar: %w", err)
 	}
 	defer func() { _ = f.Close() }()
 
 	tr := tar.NewReader(f)
 	for {
 		hdr, err := tr.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -286,7 +286,11 @@ func (c *containerFS) readFile(real string) ([]byte, error) {
 		if absClean(hdr.Name) != real {
 			continue
 		}
-		return io.ReadAll(io.LimitReader(tr, maxExtractedBytes))
+		data, err := io.ReadAll(io.LimitReader(tr, maxExtractedBytes))
+		if err != nil {
+			return nil, fmt.Errorf("read %q from export: %w", real, err)
+		}
+		return data, nil
 	}
 	return nil, fmt.Errorf("%q not present in export", real)
 }
@@ -363,7 +367,7 @@ type elfInfo struct {
 func readELFInfo(data []byte) (*elfInfo, error) {
 	f, err := elf.NewFile(bytes.NewReader(data))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse elf: %w", err)
 	}
 	defer func() { _ = f.Close() }()
 

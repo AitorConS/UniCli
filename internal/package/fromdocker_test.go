@@ -123,8 +123,8 @@ func TestTarEntryName_NormalizesAndNeutralizesTraversal(t *testing.T) {
 	for in, want := range cases {
 		require.Equalf(t, want, tarEntryName(in), "tarEntryName(%q)", in)
 	}
-	require.Equal(t, "", tarEntryName("/"))
-	require.Equal(t, "", tarEntryName("."))
+	require.Empty(t, tarEntryName("/"))
+	require.Empty(t, tarEntryName("."))
 }
 
 // TestCreateFromFiles_PreservesGuestPaths is the direct F-024 regression: a

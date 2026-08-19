@@ -2,7 +2,7 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
+	"strconv"
 )
 
 // Request is a JSON-RPC 2.0 request envelope.
@@ -40,7 +40,10 @@ func (e *RPCError) Error() string {
 	if e.Code <= -32000 && e.Code >= -32099 {
 		return e.Message
 	}
-	return fmt.Sprintf("%s (rpc %d)", e.Message, e.Code)
+	// Built with strconv rather than fmt.Sprintf on purpose: a %s+%d Sprintf in
+	// this package tripped a panic in the govet "hostport" analyzer (x/tools),
+	// which failed the lint job. Plain concatenation is equivalent and avoids it.
+	return e.Message + " (rpc " + strconv.Itoa(e.Code) + ")"
 }
 
 // PortMapSpec is the wire representation of a host-to-guest port mapping.
