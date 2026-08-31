@@ -227,6 +227,10 @@ func (m *QEMUManager) Stop(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("qemu stop %s: %w", id, err)
 	}
+	// Stopping an already-stopped VM is a no-op (idempotent), like `docker stop`.
+	if v.GetState() == StateStopped {
+		return nil
+	}
 	if err := v.transition(StateStopping); err != nil {
 		return fmt.Errorf("qemu stop %s: %w", id, err)
 	}
@@ -278,6 +282,10 @@ func (m *QEMUManager) Kill(_ context.Context, id string) error {
 	v, err := m.store.Resolve(id)
 	if err != nil {
 		return fmt.Errorf("qemu kill %s: %w", id, err)
+	}
+	// Killing an already-stopped VM is a no-op (idempotent).
+	if v.GetState() == StateStopped {
+		return nil
 	}
 	if err := v.transition(StateStopping); err != nil {
 		return fmt.Errorf("qemu kill %s: %w", id, err)

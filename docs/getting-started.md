@@ -251,13 +251,25 @@ Important:
 ### Publish bind address
 
 By default a published port listens on **all interfaces** (`0.0.0.0`), so it is
-reachable from the LAN — and, on Windows, mirrored to the host by WSL2. To
-restrict a port to the local host, prefix the mapping with a bind address,
-Docker-style:
+reachable from the LAN. To restrict a port to the local host, prefix the mapping
+with a bind address, Docker-style:
 
 ```bash
 jerboa run myapp:latest --network app -p 127.0.0.1:8080:80   # localhost only
 jerboa run myapp:latest --network app -p 8080:80             # all interfaces
+```
+
+**Windows / WSL2:** the daemon and the published port live inside the dedicated
+`jerboa` WSL2 distro. With WSL2's default NAT networking the port is **not**
+reachable at `localhost:<port>` on the Windows host — reach it at the distro IP
+instead (the host shown by `jerboa daemon status`, e.g.
+`http://172.25.x.x:8080`). To make `localhost` work like Docker Desktop, enable
+mirrored networking by adding the following to `%USERPROFILE%\.wslconfig` and
+running `wsl --shutdown`:
+
+```ini
+[wsl2]
+networkingMode=mirrored
 ```
 
 ---

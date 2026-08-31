@@ -122,8 +122,13 @@ func validateVolumeSpec(s string) error {
 	return nil
 }
 
+// validateHealthCheckSpec accepts the same grammar as the `jerboa run
+// --health-check` parser (parseHealthCheck): "tcp:PORT" or "http:PORT:/path".
+// It must stay in lockstep with that parser — an earlier split-on-2 version
+// rejected the documented "http:PORT:/path" form that the parser accepts, so a
+// valid compose health_check failed at parse time with "port must be a number".
 func validateHealthCheckSpec(s string) error {
-	parts := strings.SplitN(s, ":", 2)
+	parts := strings.SplitN(s, ":", 3)
 	if len(parts) < 2 {
 		return fmt.Errorf("expected tcp:PORT or http:PORT:/path")
 	}
@@ -131,15 +136,11 @@ func validateHealthCheckSpec(s string) error {
 	if hcType != "tcp" && hcType != "http" {
 		return fmt.Errorf("type must be tcp or http, got %q", hcType)
 	}
-	rest := parts[1]
-	if hcType == "http" {
-		slashIdx := strings.Index(rest, "/")
-		if slashIdx >= 0 {
-			rest = rest[:slashIdx]
-		}
-	}
-	if _, err := strconv.Atoi(rest); err != nil {
+	if _, err := strconv.Atoi(parts[1]); err != nil {
 		return fmt.Errorf("port must be a number")
+	}
+	if hcType == "http" && len(parts) == 3 && !strings.HasPrefix(parts[2], "/") {
+		return fmt.Errorf("http path must start with /")
 	}
 	return nil
 }

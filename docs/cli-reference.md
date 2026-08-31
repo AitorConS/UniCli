@@ -86,6 +86,11 @@ Notes:
 - Every VM on a managed network gets a guest IP: `--ip` pins it, otherwise the daemon's IPAM allocates the next free address from the network's subnet.
 - TCP forwarding works today.
 - UDP mappings are currently skipped by the userspace forwarder with a warning.
+- On Windows the published port lives inside the `jerboa` WSL2 distro. With
+  WSL2's default NAT networking it is reachable at the distro IP (the host from
+  `jerboa daemon status`), not at `localhost` on the Windows host — set
+  `networkingMode=mirrored` in `%USERPROFILE%\.wslconfig` for Docker-Desktop-style
+  `localhost` publishing. See [Getting Started]({% link getting-started.md %}).
 
 ### `jerboa ps`
 
@@ -124,7 +129,9 @@ Flags:
 
 ### `jerboa stop <id>`
 
-Graceful stop by default.
+Graceful stop by default. Idempotent: stopping a VM that is already stopped
+(for example a program that ran to completion and exited on its own) is a no-op
+that succeeds, matching `docker stop`.
 
 Flag:
 
@@ -256,7 +263,9 @@ List images stored by the daemon.
 
 ### `jerboa rmi <ref>`
 
-Remove an image from the daemon store.
+Remove an image from the daemon store. Refused with an error if any VM (running
+or stopped) still references the image; remove those VMs first. This mirrors
+`docker rmi` and prevents leaving a VM pointing at a disk that no longer exists.
 
 ### `jerboa sign <image>`
 
@@ -276,14 +285,14 @@ Subcommands:
 
 | Command | Purpose |
 |---|---|
-| `pkg list` | List locally cached packages |
+| `pkg list` | List locally cached packages; with no `--source` it lists **both** the ops and jerboa sources (so `pkg create` packages are visible), `--source ops\|jerboa` filters to one |
 | `pkg search <query>` | Search remote index |
 | `pkg get <ref>` | Download package |
 | `pkg remove <ref>` | Remove cached package |
 | `pkg create <name>[:version] <binary>` | Create a local package |
 | `pkg from-docker <name>[:version] <image>` | Extract a binary and libraries from a Docker image |
 | `pkg push <name>:<version> <index-url>` | Push a local package to a remote index |
-| `pkg load <package>` | Download, build, and prepare a runnable image in one step |
+| `pkg load <package>` | Download a package, build an image from it, and run it in one step (`-d/--detach` builds only) |
 
 Supported package sources (`--source`, default `ops`):
 
@@ -416,8 +425,12 @@ Current behavior to know:
 
 - top-level volumes are auto-created on `compose up`
 - declared networks are auto-created on `compose up`
-- `compose down --volumes` removes only volumes created by that stack
+- `compose down` stops **and removes** the stack's service VMs (no stopped
+  remnants left behind), and removes the networks it created
+- `compose down --volumes` additionally removes volumes created by that stack
 - `compose logs` is snapshot-only; there is no follow mode today
+- a service `health_check` uses the same grammar as `run --health-check`:
+  `tcp:PORT` or `http:PORT:/path` (e.g. `"tcp:8080"`, `"http:8080:/healthz"`)
 
 ---
 

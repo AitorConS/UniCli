@@ -244,6 +244,11 @@ func newComposeDownCmd(socketPath, storePath *string) *cobra.Command {
 						fmt.Fprintf(cmd.ErrOrStderr(), "warning: release ip for %s (%s): %v\n", name, releaseIP, relErr)
 					}
 				}
+				// Remove the VM from the daemon registry so `compose down` leaves no
+				// stopped remnants behind, matching `docker compose down`.
+				if rmErr := client.Remove(cmd.Context(), id); rmErr != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: remove %s (%s): %v\n", name, id, rmErr)
+				}
 			}
 
 			if removeVolumes && len(state.CreatedVolumes) > 0 {

@@ -132,6 +132,15 @@ func needsDaemon(cmd *cobra.Command) bool {
 	if cmd.Name() == "create" && cmd.Flags().Changed("seed-pkg") {
 		return true
 	}
+	// `pkg load` downloads a package and then builds AND runs an image through
+	// the daemon (api.Dial → Image.Build/VM.Run), so despite living in the
+	// otherwise-local `pkg` group it must trigger the same Windows distro
+	// auto-boot and endpoint resolution — otherwise it dials the loopback
+	// default and fails with "connection refused" (E2E finding, same class as
+	// F-019 for sign/verify).
+	if cmd.Name() == "load" && cmd.Parent() != nil && cmd.Parent().Name() == "pkg" {
+		return true
+	}
 	// sign/verify are intentionally NOT excluded here: they resolve the image's
 	// disk digest through the daemon (api.Dial → Image.Get), so on Windows they
 	// must trigger the same distro auto-boot and endpoint/token resolution as any
