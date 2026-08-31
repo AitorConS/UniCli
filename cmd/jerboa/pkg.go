@@ -113,7 +113,10 @@ func pkgListJerboa(cmd *cobra.Command, outputJSON bool) error {
 	for _, p := range pkgs {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", p.Name, p.Version, p.Runtime, p.Description)
 	}
-	return w.Flush()
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("pkg list jerboa: %w", err)
+	}
+	return nil
 }
 
 // pkgListBothJSON emits both package sources as a single JSON object so the
