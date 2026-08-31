@@ -36,12 +36,15 @@ func runSmokeTest(cmd *cobra.Command, client *api.Client, ref string) error {
 	id := info.ID
 
 	// Always tear the test VM down, even on failure paths: stop is best-effort
-	// (the VM may already have exited), remove cleans the record.
+	// (the VM may already have exited), remove cleans the record. A server image
+	// (e.g. webenv) is still "running" at teardown, so a force-stop returns while
+	// the VM is transitioning through "stopping"; removeWhenStopped retries until
+	// it settles so no orphan VM is left behind (E2E finding).
 	defer func() {
-		stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		stopCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		_ = client.Stop(stopCtx, id, true)
-		_ = client.Remove(stopCtx, id)
+		_ = removeWhenStopped(stopCtx, client, id)
 	}()
 
 	deadline := time.After(smokeWindow)

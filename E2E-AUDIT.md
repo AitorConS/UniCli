@@ -71,6 +71,19 @@ All commands and documented flags were exercised end-to-end.
   `ProcStatsCollector` (process PID + tap device) like QEMU, so CPU/mem/net read
   from `procfs`/tap instead of reporting the `fallback` source.
 
+**Found during the fixed-build re-test — now fixed:**
+
+- **`compose down` VM-remove race** — `client.Stop` returns while the VM is still
+  transitioning through "stopping", so the immediate `Remove` failed "must be
+  stopped first" and left the VM behind. Added `removeWhenStopped` (retry until
+  settled); `compose down` now removes cleanly with no warnings.
+- **`build --smoke` orphaned a server VM** — for an image that does not self-exit
+  (a server like `webenv`), the smoke teardown's force-stop returned mid-
+  transition and the ignored `Remove` left a stopped orphan. The teardown now
+  uses `removeWhenStopped`, so `ps` is empty after `build --smoke` for both batch
+  and server images. (`hello --smoke` was always clean; only long-running images
+  were affected.)
+
 **Not a defect (verified):**
 
 - `run --env-file` is validated client-side *before* the VM is created
