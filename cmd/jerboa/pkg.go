@@ -66,35 +66,79 @@ func newPkgListCmd() *cobra.Command {
 		Short:   "List locally cached packages",
 		Aliases: []string{"ls"},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// With no explicit --source, list BOTH sources so packages created
+			// locally with `pkg create` (jerboa source) are visible without
+			// knowing to pass --source jerboa.
+			if !cmd.Flags().Changed("source") {
+				if outputJSON {
+					return pkgListBothJSON(cmd)
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), "OPS PACKAGES")
+				if err := pkgListOps(cmd, false); err != nil {
+					return err
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), "\nJERBOA PACKAGES")
+				return pkgListJerboa(cmd, false)
+			}
 			if source == "ops" {
 				return pkgListOps(cmd, outputJSON)
 			}
-			store, err := pkg.NewStore(pkgStorePath())
-			if err != nil {
-				return fmt.Errorf("pkg list: %w", err)
-			}
-			pkgs, err := store.List()
-			if err != nil {
-				return fmt.Errorf("pkg list: %w", err)
-			}
-			if len(pkgs) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "No packages installed. Use 'jerboa pkg search <term>' to find packages.")
-				return nil
-			}
-			if outputJSON {
-				return printJSON(cmd.OutOrStdout(), pkgs)
-			}
-			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "NAME\tVERSION\tRUNTIME\tDESCRIPTION")
-			for _, p := range pkgs {
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", p.Name, p.Version, p.Runtime, p.Description)
-			}
-			return w.Flush()
+			return pkgListJerboa(cmd, outputJSON)
 		},
 	}
 	cmd.Flags().BoolVar(&outputJSON, "output-json", false, "output as JSON")
-	cmd.Flags().StringVar(&source, "source", "ops", "package source: \"ops\" (default) or \"jerboa\"")
+	cmd.Flags().StringVar(&source, "source", "ops", "package source: \"ops\" (default) or \"jerboa\"; omit to list both")
 	return cmd
+}
+
+// pkgListJerboa lists locally created (jerboa-source) packages.
+func pkgListJerboa(cmd *cobra.Command, outputJSON bool) error {
+	store, err := pkg.NewStore(pkgStorePath())
+	if err != nil {
+		return fmt.Errorf("pkg list --source jerboa: %w", err)
+	}
+	pkgs, err := store.List()
+	if err != nil {
+		return fmt.Errorf("pkg list jerboa: %w", err)
+	}
+	if len(pkgs) == 0 {
+		fmt.Fprintln(cmd.OutOrStdout(), "No jerboa packages installed. Create one with 'jerboa pkg create <name> <binary>'.")
+		return nil
+	}
+	if outputJSON {
+		return printJSON(cmd.OutOrStdout(), pkgs)
+	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tVERSION\tRUNTIME\tDESCRIPTION")
+	for _, p := range pkgs {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", p.Name, p.Version, p.Runtime, p.Description)
+	}
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("pkg list jerboa: %w", err)
+	}
+	return nil
+}
+
+// pkgListBothJSON emits both package sources as a single JSON object so the
+// default `pkg list --output-json` stays valid JSON (not two concatenated arrays).
+func pkgListBothJSON(cmd *cobra.Command) error {
+	opsStore, err := openOpsStore()
+	if err != nil {
+		return fmt.Errorf("pkg list ops: %w", err)
+	}
+	opsPkgs, err := opsStore.List()
+	if err != nil {
+		return fmt.Errorf("pkg list ops: %w", err)
+	}
+	jStore, err := pkg.NewStore(pkgStorePath())
+	if err != nil {
+		return fmt.Errorf("pkg list jerboa: %w", err)
+	}
+	jPkgs, err := jStore.List()
+	if err != nil {
+		return fmt.Errorf("pkg list jerboa: %w", err)
+	}
+	return printJSON(cmd.OutOrStdout(), map[string]any{"ops": opsPkgs, "jerboa": jPkgs})
 }
 
 func pkgListOps(cmd *cobra.Command, outputJSON bool) error {

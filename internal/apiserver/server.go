@@ -337,7 +337,9 @@ func (s *Server) resolveImageRef(image string) (string, error) {
 	}
 	_, diskPath, err := s.imgStore.Get(image)
 	if err != nil {
-		return "", fmt.Errorf("image %q not found: %w", image, err)
+		// The store error nests its own "image store get <ref>: <ref> not found"
+		// which is internal plumbing; users only need the clean statement.
+		return "", fmt.Errorf("image %q not found", image)
 	}
 	return diskPath, nil
 }
@@ -1132,7 +1134,10 @@ func (s *Server) handleDNSList(params json.RawMessage) (any, *api.RPCError) {
 
 func (s *Server) handleNodeList() (any, *api.RPCError) {
 	if s.cluster == nil {
-		return nil, &api.RPCError{Code: -32601, Message: "method not found: Node.List (cluster disabled)"}
+		// Cluster mode is an application-level feature toggle, not a protocol
+		// mismatch, so return an app-range code (no "(rpc -32601)" suffix) with
+		// actionable guidance instead of a raw method-not-found (E2E follow-up).
+		return nil, &api.RPCError{Code: -32000, Message: "Node.List unavailable: cluster is disabled; start the daemon with --cluster-addr to enable it"}
 	}
 	members := s.cluster.Members()
 	rows := make([]api.NodeRow, len(members))

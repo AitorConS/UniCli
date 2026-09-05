@@ -11,7 +11,7 @@ import (
 func newPsCmd(socketPath *string, outputFmt *string) *cobra.Command {
 	return &cobra.Command{
 		Use:   "ps",
-		Short: "List running VMs",
+		Short: "List VMs (running and stopped)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			client, err := api.Dial(*socketPath)

@@ -122,6 +122,24 @@ func TestQEMUManager_Stop_WrongState(t *testing.T) {
 	require.Error(t, err)
 }
 
+// Stopping (or killing) a VM that is already stopped must be a no-op, not an
+// "invalid transition stopped → stopping" error. Regression for the E2E finding
+// where `jerboa stop <id>` on a self-exited VM failed with exit 1.
+func TestQEMUManager_Stop_AlreadyStopped_NoOp(t *testing.T) {
+	mgr := fakeManager(true)
+	v, err := mgr.Create(context.Background(), Config{ImagePath: "test.img", Memory: "256M"})
+	require.NoError(t, err)
+	require.NoError(t, mgr.Start(context.Background(), v.ID))
+	require.NoError(t, mgr.Stop(context.Background(), v.ID))
+	<-v.Done()
+	require.Equal(t, StateStopped, v.GetState())
+
+	// Second stop and a kill on the already-stopped VM are no-ops.
+	require.NoError(t, mgr.Stop(context.Background(), v.ID))
+	require.NoError(t, mgr.Kill(context.Background(), v.ID))
+	require.Equal(t, StateStopped, v.GetState())
+}
+
 func TestQEMUManager_Start_AlreadyRunning(t *testing.T) {
 	mgr := fakeManager(true)
 	v, err := mgr.Create(context.Background(), Config{ImagePath: "test.img", Memory: "256M"})

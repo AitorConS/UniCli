@@ -202,6 +202,15 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 	v.StartedAt = &now
 	v.mu.Unlock()
 
+	// Wire per-VM runtime stats from the firecracker process PID + tap device,
+	// same as the QEMU backend. Without this the VM reported the "fallback"
+	// source with zero CPU/mem/net counters.
+	if newStatsCollector != nil {
+		v.SetStatsProvider(func() RuntimeStats {
+			return newStatsCollector(cmd.Process.Pid, v).Collect()
+		})
+	}
+
 	// abort tears down a process whose post-launch setup failed, before the VM is
 	// committed as a monitored "running" instance. It reuses the normal monitor
 	// with explicit-stop set so teardown (tap, temp files) and restart-suppression
@@ -262,6 +271,10 @@ func (m *FirecrackerManager) Stop(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("firecracker stop %s: %w", id, err)
 	}
+	// Stopping an already-stopped VM is a no-op (idempotent), like `docker stop`.
+	if v.GetState() == StateStopped {
+		return nil
+	}
 	if err := v.transition(StateStopping); err != nil {
 		return fmt.Errorf("firecracker stop %s: %w", id, err)
 	}
@@ -301,6 +314,10 @@ func (m *FirecrackerManager) Kill(_ context.Context, id string) error {
 	v, err := m.store.Resolve(id)
 	if err != nil {
 		return fmt.Errorf("firecracker kill %s: %w", id, err)
+	}
+	// Killing an already-stopped VM is a no-op (idempotent).
+	if v.GetState() == StateStopped {
+		return nil
 	}
 	if err := v.transition(StateStopping); err != nil {
 		return fmt.Errorf("firecracker kill %s: %w", id, err)

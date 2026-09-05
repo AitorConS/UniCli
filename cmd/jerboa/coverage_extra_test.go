@@ -21,7 +21,15 @@ func TestNeedsDaemon(t *testing.T) {
 	sign := &cobra.Command{Use: "sign"}
 	verify := &cobra.Command{Use: "verify"}
 	run := &cobra.Command{Use: "run"}
-	root.AddCommand(config, sign, verify, run)
+
+	// The pkg group is otherwise local-only, but `pkg load` builds and runs an
+	// image through the daemon, so it must need the daemon while its siblings
+	// (e.g. pkg list) do not.
+	pkg := &cobra.Command{Use: "pkg"}
+	pkgLoad := &cobra.Command{Use: "load"}
+	pkgList := &cobra.Command{Use: "list"}
+	pkg.AddCommand(pkgLoad, pkgList)
+	root.AddCommand(config, sign, verify, run, pkg)
 
 	require.False(t, needsDaemon(root), "root itself needs no daemon")
 	require.False(t, needsDaemon(configSet), "offline group descendants need no daemon")
@@ -29,6 +37,8 @@ func TestNeedsDaemon(t *testing.T) {
 	require.True(t, needsDaemon(run), "remote verbs need the daemon")
 	require.True(t, needsDaemon(sign), "sign resolves the image digest via the daemon (F-019)")
 	require.True(t, needsDaemon(verify), "verify resolves the image digest via the daemon (F-019)")
+	require.False(t, needsDaemon(pkgList), "pkg list is local-only")
+	require.True(t, needsDaemon(pkgLoad), "pkg load builds and runs through the daemon")
 }
 
 func TestSigningStorePath(t *testing.T) {

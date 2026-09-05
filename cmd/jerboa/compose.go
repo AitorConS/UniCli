@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -15,6 +17,24 @@ import (
 	"github.com/AitorConS/jerboa/internal/volume"
 	"github.com/spf13/cobra"
 )
+
+// removeWhenStopped removes a VM, retrying briefly while a graceful stop is still
+// completing. `client.Stop` can return while the VM is transitioning through
+// "stopping" (the monitor flips it to "stopped" once the process exits), so an
+// immediate Remove races with that and fails "must be stopped first".
+func removeWhenStopped(ctx context.Context, client *api.Client, id string) error {
+	var err error
+	for i := 0; i < 25; i++ {
+		if err = client.Remove(ctx, id); err == nil {
+			return nil
+		}
+		if !strings.Contains(err.Error(), "must be stopped first") {
+			return err
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return err
+}
 
 const stateFileName = ".jerboa-compose-state.json"
 
@@ -243,6 +263,14 @@ func newComposeDownCmd(socketPath, storePath *string) *cobra.Command {
 					if relErr := client.NetworkReleaseIP(cmd.Context(), releaseNetwork, releaseIP); relErr != nil {
 						fmt.Fprintf(cmd.ErrOrStderr(), "warning: release ip for %s (%s): %v\n", name, releaseIP, relErr)
 					}
+				}
+				// Remove the VM from the daemon registry so `compose down` leaves no
+				// stopped remnants behind, matching `docker compose down`. A graceful
+				// Stop can return while the VM is still transitioning through
+				// "stopping" (the monitor flips it to "stopped" once the process
+				// exits), so retry Remove briefly until it settles.
+				if rmErr := removeWhenStopped(cmd.Context(), client, id); rmErr != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: remove %s (%s): %v\n", name, id, rmErr)
 				}
 			}
 

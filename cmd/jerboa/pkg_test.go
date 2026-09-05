@@ -262,7 +262,7 @@ func TestPkg_List_Empty(t *testing.T) {
 	storePath := t.TempDir()
 
 	out := execRoot(t, socketPath, storePath, "pkg", "list", "--source", "jerboa")
-	require.Contains(t, out, "No packages installed")
+	require.Contains(t, out, "No jerboa packages installed")
 }
 
 func TestParsePkgRef(t *testing.T) {

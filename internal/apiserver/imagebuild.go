@@ -282,6 +282,28 @@ func (s *Server) handleImageRemove(params json.RawMessage) (any, *api.RPCError) 
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
+	// Refuse to remove an image that a VM still references, like `docker rmi`.
+	// A VM created from this image would otherwise be left pointing at a disk
+	// that no longer exists. Match by resolved disk path so any ref (name,
+	// name:tag, or digest) pointing at the same image is caught.
+	if s.mgr != nil {
+		if _, targetDisk, err := s.imgStore.Get(p.Ref); err == nil {
+			for _, v := range s.mgr.List() {
+				ref := v.Cfg.ImageRef
+				if ref == "" {
+					continue
+				}
+				if _, vmDisk, err := s.imgStore.Get(ref); err == nil && vmDisk == targetDisk {
+					name := v.Cfg.Name
+					if name == "" {
+						name = v.ID
+					}
+					return nil, &api.RPCError{Code: -32000, Message: fmt.Sprintf(
+						"image %q is in use by VM %s (%s); remove the VM first", p.Ref, name, v.GetState())}
+				}
+			}
+		}
+	}
 	if err := s.imgStore.Remove(p.Ref); err != nil {
 		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}

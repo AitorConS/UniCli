@@ -214,6 +214,29 @@ func TestVMRun_ByRef(t *testing.T) {
 	require.NotEmpty(t, info.ID)
 }
 
+// Removing an image that a VM still references must be refused, like
+// `docker rmi`. Regression for the E2E finding where `jerboa rmi <img>`
+// succeeded while a VM was running on that image.
+func TestImageRemove_InUse(t *testing.T) {
+	store, err := image.NewStore(t.TempDir())
+	require.NoError(t, err)
+	client := startBuildServer(t, store)
+
+	buildImage(t, client, "web", "latest")
+
+	info, err := client.Run(context.Background(), api.RunParams{
+		Image:  "web:latest",
+		Memory: "256M",
+		CPUs:   1,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, info.ID)
+
+	err = client.ImageRemove(context.Background(), "web:latest")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "in use")
+}
+
 func TestVMRun_ByRef_NotFound(t *testing.T) {
 	store, err := image.NewStore(t.TempDir())
 	require.NoError(t, err)

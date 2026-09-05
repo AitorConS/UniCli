@@ -331,16 +331,17 @@ services:
 }
 
 func TestParse_HealthCheckHTTP(t *testing.T) {
+	// Canonical HTTP form matches `jerboa run --health-check`: http:PORT:/path.
 	data := []byte(`
 version: "1"
 services:
   web:
     image: web:latest
-    health_check: "http:80/health"
+    health_check: "http:80:/health"
 `)
 	f, err := compose.Parse(data)
 	require.NoError(t, err)
-	require.Equal(t, "http:80/health", f.Services["web"].HealthCheck)
+	require.Equal(t, "http:80:/health", f.Services["web"].HealthCheck)
 }
 
 func TestParse_HealthCheckInvalid(t *testing.T) {
