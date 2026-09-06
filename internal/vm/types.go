@@ -117,6 +117,7 @@ type HealthCheckConfig struct {
 
 // Config holds the parameters used to create a VM.
 type Config struct {
+	ImageDigest string `json:"image_digest,omitempty"`
 	// ImagePath is the raw disk image containing the kernel and application.
 	ImagePath string
 	// ImageRef is the image reference the VM was created from (e.g.

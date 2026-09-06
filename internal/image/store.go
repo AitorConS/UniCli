@@ -96,6 +96,13 @@ func (s *Store) Get(ref string) (Manifest, string, error) {
 		return Manifest{}, "", fmt.Errorf("image store get %s: %w", ref, err)
 	}
 	diskPath := filepath.Join(s.root, sha, "disk.img")
+	digest, err := fileSHA256(diskPath)
+	if err != nil {
+		return Manifest{}, "", err
+	}
+	if digest != m.DiskDigest || stripPrefix(digest) != sha {
+		return Manifest{}, "", fmt.Errorf("image integrity mismatch: %s", ref)
+	}
 	return m, diskPath, nil
 }
 
@@ -148,7 +155,15 @@ func (s *Store) Remove(ref string) error {
 	if !ok {
 		return fmt.Errorf("image store remove: %s not found", ref)
 	}
-	delete(refs, ref)
+	if _, named := refs[ref]; named {
+		delete(refs, ref)
+	} else {
+		for name, digest := range refs {
+			if digest == sha {
+				delete(refs, name)
+			}
+		}
+	}
 	if err := s.writeRefs(refs); err != nil {
 		return fmt.Errorf("image store remove write refs: %w", err)
 	}
@@ -196,12 +211,16 @@ func (s *Store) resolveRef(ref string) (string, error) {
 
 func (s *Store) findBySHA(refs map[string]string, ref string) (string, bool) {
 	needle := strings.TrimPrefix(ref, "sha256:")
+	match := ""
 	for _, sha := range refs {
 		if sha == needle || strings.HasPrefix(sha, needle) {
-			return sha, true
+			if match != "" && match != sha {
+				return "", false
+			}
+			match = sha
 		}
 	}
-	return "", false
+	return match, match != ""
 }
 
 func (s *Store) readManifest(sha string) (Manifest, error) {

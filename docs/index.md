@@ -68,7 +68,7 @@ The daemon is Linux-only. On Windows, the CLI runs on the host and boots the dae
 
 ## Versions In This Repo
 
-- CLI version source: `VERSION`
+- CLI version source: `VERSION.md`
 - Kernel version source: `kernel/VERSION`
 
 Current released versions (regenerated from those files on every docs deploy):

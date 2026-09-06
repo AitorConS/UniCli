@@ -154,6 +154,11 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 		return fmt.Errorf("firecracker start %s: copy rootfs: %w", id, err)
 	}
 
+	if err := verifyBootCopy(rootfs, v.Cfg.ImageDigest); err != nil {
+		_ = os.Remove(rootfs)
+		_ = v.transition(StateStopped)
+		return err
+	}
 	sockPath := m.vmSockPath(id)
 	cfgPath, err := m.writeFCConfig(id, v.Cfg, rootfs)
 	if err != nil {
@@ -372,7 +377,7 @@ func (m *FirecrackerManager) Remove(_ context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("firecracker remove %s: %w", id, err)
 	}
-	if st := v.GetState(); st != StateStopped {
+	if st := v.GetState(); st != StateStopped && st != StateCreated {
 		return fmt.Errorf("firecracker remove %s: vm is %s, must be stopped first", id, st)
 	}
 	m.hchecker.Stop(v.ID)

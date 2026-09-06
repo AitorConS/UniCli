@@ -101,16 +101,17 @@ jobs:
           echo "Changed files:"; echo "$FILES"
           CODE=false
           # Whether the VERSION file (the source of the release version — see the
-          # publish-r2 job's `cat VERSION`) changed in this push. Gates the
+          # publish-r2 job's `cat VERSION.md`) changed in this push. Gates the
           # build/publish-release chain so it only runs on a version bump.
           VERSION_CHANGED=false
           while IFS= read -r f; do
             [ -z "$f" ] && continue
             case "$f" in
+              VERSION.md) CODE=true ;;
               docs/*|*.md) ;;   # documentation only — no code CI needed
               *) CODE=true ;;
             esac
-            if [ "$f" = "VERSION" ]; then VERSION_CHANGED=true; fi
+            if [ "$f" = "VERSION.md" ]; then VERSION_CHANGED=true; fi
           done <<< "$FILES"
           echo "code=${CODE}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION_CHANGED}" >> "$GITHUB_OUTPUT"
@@ -306,7 +307,7 @@ jobs:
         run: make build
 
       - name: Run integration tests
-        run: go test -tags integration -count=1 -timeout 10m -v ./tests/integration/...
+        run: go test -tags integration -count=1 -timeout 10m -v ./tests/integration/... ./internal/tools
 
   e2e-tests:
     name: E2E Tests
@@ -599,7 +600,7 @@ jobs:
       - name: Read version
         id: read-version
         run: |
-          VERSION="v$(cat VERSION | tr -d '[:space:]')"
+          VERSION="v$(cat VERSION.md | tr -d '[:space:]')"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "CLI_VERSION=$VERSION" >> "$GITHUB_ENV"
 
@@ -691,7 +692,7 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
           set -euo pipefail
-          echo "TAG=v$(cat VERSION | tr -d '[:space:]')" >> "$GITHUB_ENV"
+          echo "TAG=v$(cat VERSION.md | tr -d '[:space:]')" >> "$GITHUB_ENV"
           # The kernel component (incl. kernel-fc.img) is not rebuilt here — reuse
           # whatever version the current signed manifest points at; its files
           # already live in R2 under kernel/<ver>/.
@@ -801,6 +802,16 @@ jobs:
           aws s3 cp pub/channels/stable.json.minisig "s3://$BUCKET/channels/stable.json.minisig" \
             --endpoint-url "$ENDPOINT" \
             --cache-control 'no-cache'
+
+      - name: Verify downloaded public release artifacts
+        run: python3 scripts/verify-release.py pub/channels/stable.json "$BASE_URL" "$TAG"
+
+  publish-packages:
+    needs: publish-r2
+    permissions:
+      contents: write
+    uses: ./.github/workflows/packages.yml
+    secrets: inherit
 
   coverage:
     name: Coverage Report
