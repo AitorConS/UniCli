@@ -149,16 +149,11 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 	// scratch space and leaves the base pristine (mirrors QEMU's snapshot=on).
 	// Attached volumes stay shared and persistent — only the rootfs is copied.
 	rootfs := fcRootfsPath(id)
-	if err := copyFile(rootfs, v.Cfg.ImagePath); err != nil {
+	if err := copyBootImage(rootfs, v.Cfg.ImagePath, v.Cfg.ImageDigest); err != nil {
 		_ = v.transition(StateStopped)
 		return fmt.Errorf("firecracker start %s: copy rootfs: %w", id, err)
 	}
 
-	if err := verifyBootCopy(rootfs, v.Cfg.ImageDigest); err != nil {
-		_ = os.Remove(rootfs)
-		_ = v.transition(StateStopped)
-		return err
-	}
 	sockPath := m.vmSockPath(id)
 	cfgPath, err := m.writeFCConfig(id, v.Cfg, rootfs)
 	if err != nil {

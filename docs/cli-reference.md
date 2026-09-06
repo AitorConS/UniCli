@@ -278,7 +278,8 @@ Resolve the image through the daemon and sign its disk digest with the default E
 
 Resolve the image through the daemon, hash its actual disk contents, and verify the
 signature against that digest. `run --verify enforce` pins the verified digest;
-each hypervisor checks its private boot copy before starting the VM.
+each hypervisor verifies the bytes while writing its private boot copy and starts
+the VM only if the digest matches.
 
 ---
 

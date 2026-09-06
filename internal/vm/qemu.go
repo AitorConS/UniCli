@@ -125,11 +125,7 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 		bootPath := private.Name()
 		_ = private.Close()
 		go func(done <-chan struct{}) { <-done; _ = os.Remove(bootPath) }(v.Done())
-		if err := copyFile(bootPath, bootCfg.ImagePath); err != nil {
-			_ = v.transition(StateStopped)
-			return fmt.Errorf("qemu boot image: %w", err)
-		}
-		if err := verifyBootCopy(bootPath, bootCfg.ImageDigest); err != nil {
+		if err := copyBootImage(bootPath, bootCfg.ImagePath, bootCfg.ImageDigest); err != nil {
 			_ = v.transition(StateStopped)
 			return fmt.Errorf("qemu boot image: %w", err)
 		}

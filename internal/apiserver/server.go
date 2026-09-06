@@ -371,12 +371,14 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 	defer s.resourceMu.Unlock()
 	imagePath := p.ImagePath
 	imageDigest := ""
+	var resolvedManifest *image.Manifest
 	if p.Image != "" {
 		if s.imgStore != nil && !looksLikePath(p.Image) {
-			m, disk, err := s.imgStore.Get(p.Image)
+			m, disk, err := s.imgStore.Resolve(p.Image)
 			if err != nil {
 				return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 			}
+			resolvedManifest = &m
 			imagePath = disk
 			imageDigest = m.DiskDigest
 			p.Image = imageDigest
@@ -433,20 +435,18 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 	// for any run parameter the client left unset. Explicit run flags always win.
 	memory, cpus := p.Memory, p.CPUs
 	portMaps := portMapsFromSpec(p.PortMaps)
-	if p.Image != "" && !looksLikePath(p.Image) && s.imgStore != nil {
-		if m, _, err := s.imgStore.Get(p.Image); err == nil {
-			if memory == "" {
-				memory = m.Config.Memory
-			}
-			if cpus == 0 {
-				cpus = m.Config.CPUs
-			}
-			// Baked ports only publish when the VM joins a network; without one
-			// there is nothing to forward through, so leave them inert.
-			if len(portMaps) == 0 && p.NetworkName != "" && len(m.Config.Ports) > 0 {
-				if specs, perr := api.ParsePortMaps(m.Config.Ports); perr == nil {
-					portMaps = portMapsFromSpec(specs)
-				}
+	if m := resolvedManifest; m != nil {
+		if memory == "" {
+			memory = m.Config.Memory
+		}
+		if cpus == 0 {
+			cpus = m.Config.CPUs
+		}
+		// Baked ports only publish when the VM joins a network; without one
+		// there is nothing to forward through, so leave them inert.
+		if len(portMaps) == 0 && p.NetworkName != "" && len(m.Config.Ports) > 0 {
+			if specs, perr := api.ParsePortMaps(m.Config.Ports); perr == nil {
+				portMaps = portMapsFromSpec(specs)
 			}
 		}
 	}
